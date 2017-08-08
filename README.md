@@ -20,4 +20,4 @@ Now it has become a useful tool here at [Stratio](http://www.stratio.com)
 * Can be exited with Ctrl+c, Ctrl+d or with exit command
 
 # Demo
-[![asciicast](https://asciinema.org/a/132636.png)](https://asciinema.org/a/132636.png)
+[![asciicast](https://asciinema.org/a/132636.png)](https://asciinema.org/a/132636)
