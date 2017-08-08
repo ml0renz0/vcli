@@ -1,0 +1,57 @@
+###BASH
+# we'll export some vars to use in vcli
+export KEY="this is my key"
+export VALUE="this is my value"
+# Vault is in dev mode, so token is null
+vcli -v 0.0.0.0 -t null -i
+
+###VCLI
+help
+help put
+help cat
+put secret/test { "key": "value" }
+cat !$
+put secret/test1 { "$KEY": "$VALUE" }
+cat !$
+put secret/test2 { "${KEY}2": "${VALUE}2" }
+cat !$
+# we can use tree to see all the Vault's content
+tree
+# tab can be used to complete vcli commands & secrets paths
+rm secret/test
+ls secret
+rm secret/test1
+ls secret
+rm secret/test2
+# now we cannot ls on path /secret anymore because it contains no secrets
+ls secret
+# we can see the http status code on vcli's prompt
+# with Ctrl+r we can access vcli's history or we can search it after typing something to search
+\Ctrl+r
+put \Ctrl+r
+# it rotates through all the matches found in history
+exit
+
+###BASH
+# this is where vcli stores the command history
+cat ~/.vclistory
+# we can export some variables that vcli will use by default when connecting to Vault:
+export VAULT_HOST=0.0.0.0
+export VAULT_TOKEN=null
+# VAULT_PORT defaults to 8200
+vcli -i
+
+###VCLI
+ls /
+# when listing / vcli actually shows all mountpoints in /sys/mounts
+cat /sys/mounts
+# we can create a new mount
+mount /mymount
+put /mymount/test { "key": "value" }
+ls /mymount
+cat !$
+rm !$
+ls /
+umount /mymount
+# mymount has been deleted
+ls /
