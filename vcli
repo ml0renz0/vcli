@@ -120,36 +120,41 @@ function completion(){
         debug "paths_found $found: " "${tmparray[@]}"
         debug "cmd: $_cmd $_path"
         local tmpath_so_far path_so_far
-        if [[ $found -gt 0 ]]; then
+        if [[ $found == 1 ]]; then
+            cmd="$_cmd $_path${tmparray[0]}"
+            debug "new_cmd2: $cmd"
+        elif [[ $found -gt 1 ]]; then
             echo
             for p in "${tmparray[@]}"; do
-                echo "${p/\//$CYAN\/$NONE}"
+                echo "$p" | sed -e "s/\//$CYAN\/$NONE/"
             done
             local n=1
             local i=0
-            # compare first match's character against all found occurrences and build the common substring
-            while [[ $found != 1 ]]; do
-                tmpath_so_far=${tmparray[0]::$((n+1))}
-                for p in "${tmparray[@]}"; do
-                    debug "pathsofar: ${p::$((n+1))} != $tmpath_so_far"
-                    if [[ ${p::$((n+1))} != $tmpath_so_far ]]; then
-                        debug "common substring: $tmpath_so_far"
+            # compare all found occurrences and build the common substring
+            while true ; do
+                tmpath_so_far=${tmparray[$i]::$n}
+                debug "tmpath_so_far: $tmpath_so_far"
+                while [[ $i -lt ${#tmparray[@]} ]]; do
+                    debug "pathmatch: i=$i n=$n ${tmparray[$i]::$n} == $tmpath_so_far"
+                    if [[ ${tmparray[$i]::$n} != $tmpath_so_far ]]; then
                         end="true"
                         break 2
                     fi
+                    tmpath_so_far=${tmparray[$i]::$n}
+                    let i++
                 done
                 if [[ ! $end ]]; then
                     path_so_far=$tmpath_so_far
+                    debug "pathsofar: $path_so_far"
                 fi
                 let n++
+                let i=0
             done
             cmd="$_cmd $_path$path_so_far"
             debug "new_cmd1: $cmd"
+            unset tmparray tmpath_so_far path_so_far end
             prompt
             return 1
-        elif [[ $found == 1 ]]; then
-            cmd="$_cmd $_path${tmparray[0]}"
-            debug "new_cmd2: $cmd"
         fi
     fi
     unset tmparray found
@@ -337,8 +342,6 @@ function check_arg(){
 # save & clean & exit
 function clean_n_exit(){
     save_history
-    debug "save & clean & exit"
-    rm -f "$SEARCHIST" "$search_cmd" "$http_code"
     echo
     exit
 }
@@ -656,9 +659,6 @@ function main(){
 
     # print prompt
     prompt
-
-    # trap Ctrl+c
-    trap "clean_n_exit" INT
 
     # Begin iteration
     IFS=
