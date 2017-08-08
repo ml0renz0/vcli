@@ -432,6 +432,7 @@ function run_cmd(){
             disable-debug)          echo "debug disabled" ; DEBUG="no";;
             enable-hexdump-debug)   echo "hexdump debug enabled" ; DEBUG_HEXDUMP="yes";;
             disable-hexdump-debug)  echo "hexdump debug disabled" ; DEBUG_HEXDUMP="no";;
+            \#*)                    return;; # ignore commented lines
             *)                      commands_help "$cmd" ; return 1 ;;
         esac
         add_cmd "$cmd $arg1 $arg2"
