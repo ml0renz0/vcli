@@ -1,12 +1,25 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# DECLARE GLOBAL VARIABLES
+# vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
 declare VERBOSE="no"
-declare vault_host vault_port vault_token current_pwd
+declare DEBUG="no"
+declare DEBUG_HEXDUMP="no"
+declare DEBUGFILE="/tmp/vcli.debug"
+declare is_command cmd cmd_history restcmd key len pos history_index
 declare -a mounted_paths
-declare timeout="2"
+declare timeout="2" # timeout to verify connection to Vault
+declare http_code
+declare vault_host vault_port vault_token current_pwd
+
+# History related vars
+declare VCLISTORY="$HOME/.vclistory"
+declare SEARCHIST ENDHIST ADDTMPCMD search_cmd
+declare -a cmd_history tmp_history
+
+# vcli dependencies
+declare DEPENDENCIES="curl jq"
 
 # COLOURS
 TAB=$(tput setaf 4; tput bold)
@@ -17,22 +30,24 @@ CYAN="$(tput setaf 6; tput bold)"
 NONE="$(tput sgr0)"
 BOLD="$(tput bold)"
 
+# Check dependencies
+function check_dependency(){
+    local dependencies
+    dependencies=$*
+    for dependency in $dependencies; do
+        if ! command -v "$dependency" >/dev/null; then
+            echo "$SCRIPTNAME: command '$dependency' not found"
+            exit 1
+        fi
+    done
+}
 
-# CLI GLOBAL VARIABLES
-declare is_command cmd cmd_history restcmd key len pos history_index
-declare -a cmd_history
-declare DEBUG="no"
-declare DEBUG_HEXDUMP="no"
-declare DEBUGFILE
-declare ENDHIST
-declare ADDTMPCMD
-declare VCLISTORY
-declare SEARCHIST
-declare search_cmd
-declare -a tmp_history
-declare http_code
-VCLISTORY="$HOME/.vclistory"
-DEBUGFILE="/tmp/debug"
+function check_connectivity(){
+    if ! timeout $timeout bash -c "</dev/tcp/$vault_host/$vault_port"; then
+        echo "Cannot establish connection to $protocol://$vault_host:$vault_port"
+        exit 1
+    fi
+}
 
 # Print prompt
 function prompt(){
@@ -554,7 +569,7 @@ function _tree(){
     if [[ ! $1 =~ ^/ ]]; then
         url="$current_pwd/$1"
     else
-        url="${1/\/\//\/}"
+        url="$(echo "$1" | tr -s '/')"
     fi
     local depth="$2"
     local space="$3"
@@ -616,6 +631,9 @@ function _put(){
 
 # main function
 function main(){
+    # First of all: check command dependencies
+    check_dependency "$DEPENDENCIES"
+
     local tmpmsg
     protocol="https"
     while getopts "v:p:t:hi" opt; do
@@ -638,7 +656,7 @@ function main(){
     check_arg "$vault_token" "Vault token"
 
     # Check connectivity
-    timeout $timeout bash -c "</dev/tcp/$vault_host/$vault_port" || exit 1
+    check_connectivity
 
     # BEGIN
     # initialize variables
