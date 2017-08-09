@@ -491,13 +491,15 @@ function _umount(){
 function _cd(){
     local url="$1"
     if [[ $url == ".." ]]; then
-        url="${current_pwd%/*}"
+        url="${current_pwd%%/*}"
     elif [[ $url =~ ^/ ]]; then
         : # do nothing url is perfect as it is
     elif [[ $url ]]; then
-        url="$current_pwd/$url"
+        url="$current_pwd/$url/"
+        url=${url//\/\//\/}
     elif [[ $current_pwd ]]; then
-        url="$current_pwd"
+        url="$current_pwd/"
+        url=${url//\/\//\/}
     else
         current_pwd="/"
     fi
