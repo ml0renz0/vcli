@@ -491,7 +491,8 @@ function _umount(){
 function _cd(){
     local url="$1"
     if [[ $url == ".." ]]; then
-        url="${current_pwd%%/*}"
+        url=${current_pwd%*/}
+        url=${url%/*}
     elif [[ $url =~ ^/ ]]; then
         : # do nothing url is perfect as it is
     elif [[ $url ]]; then
