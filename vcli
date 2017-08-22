@@ -617,7 +617,11 @@ function _rm(){
 
 # put function
 function _put(){
-    local url="$current_pwd/$1"
+    local url="$1"
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd/$1"
+    fi
+    debug "put: url=$url"
     local data=${2//\"/\\\"}
     if [[ ! $data ]]; then
         echo "Error! Missing path and secret"
