@@ -645,6 +645,16 @@ function main(){
             h|*) help ; exit 1; ;;
         esac
     done
+
+    # Use VAULT_ADDR as the primary default as it is the most common setting.
+    # If VAULT_ADDR is set it will overwrite VAULT_HOST and VAULT_PORT
+    if [[ $VAULT_ADDR ]] && [[ $VAULT_ADDR =~ ^http[s]*://[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+ ]]; then
+        protocol=${VAULT_ADDR%%:*}
+        local host_port=${VAULT_ADDR#*//}
+        VAULT_HOST=${host_port%:*}
+        VAULT_PORT=${host_port#*:}
+    fi
+
     # Use environment variables VAULT_HOST VAULT_TOKEN and VAULT_PORT if defined
     vault_port=${VAULT_PORT:-"$vault_port"}
     vault_port=${vault_port:-"8200"} # Define Vault default port if not specified
