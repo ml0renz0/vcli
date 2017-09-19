@@ -507,7 +507,7 @@ function _cd(){
     local url="$1"
     if [[ $url == ".." ]]; then
         url=${current_pwd%*/}
-        url=${url%/*}
+        url=${url%/*}/
     elif [[ $url =~ ^/ ]]; then
         : # do nothing url is perfect as it is
     elif [[ $url ]]; then
@@ -567,7 +567,7 @@ function padecho(){
 function _tree(){
     local url
     if [[ ! $1 =~ ^/ ]]; then
-        url="$current_pwd/$1"
+        url="$current_pwd$1"
     else
         url="$(echo "$1" | tr -s '/')"
     fi
@@ -604,14 +604,22 @@ function _tree(){
 
 # cat function
 function _cat(){
-    local url="$current_pwd/$1"
+    local url="$1"
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd$1"
+    fi
+    debug "cat: url=$url"
     local arg="$2"
     _curl "$url" "$arg"
 }
 
 # rm function
 function _rm(){
-    local url="$current_pwd/$1"
+    local url="$1"
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd$1"
+    fi
+    debug "rm: url=$url"
     _curl "$url" "" "DELETE"
 }
 
@@ -619,7 +627,7 @@ function _rm(){
 function _put(){
     local url="$1"
     if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd/$1"
+        url="$current_pwd$1"
     fi
     debug "put: url=$url"
     local data=${2//\"/\\\"}
