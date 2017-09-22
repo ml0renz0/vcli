@@ -21,3 +21,7 @@ Now it has become a useful tool here at [Stratio](http://www.stratio.com)
 
 # Demo
 [![asciicast](https://asciinema.org/a/132636.png)](https://asciinema.org/a/132636)
+
+# Known bugs
+* If you type really fast enough you may incurr a race condition on the loop that manages the keyboard input.
+* Home/End keys do not work when ran within a screen shell
