@@ -75,7 +75,7 @@ function debug(){
 function is_cmd(){
     local cmd="$1"
     case $cmd in
-        mount*|umount*|cd*|ls*|tree*|cat*|put*|rm*|exit*|help*|history|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
+        mount*|umount*|cd*|ls*|tree*|cat*|cp*|mv*|put*|rm*|exit*|help*|history|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
         ""|*) return 1;;
     esac
 }
@@ -85,7 +85,7 @@ function completion(){
     debug "run completion"
     local -a tmparray
     local found _cmd _path _args _secret paths
-    local commands=( "mount" "umount" "cd" "ls" "tree" "cat" "put" "rm" "exit" "help" "history" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
+    local commands=( "mount" "umount" "cd" "ls" "tree" "cat" "cp" "mv" "put" "rm" "exit" "help" "history" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
     IFS=' ' read _cmd _path _args< <(echo "$@")
     debug "cmd: $_cmd, path: $_path"
     # complete command
@@ -326,7 +326,7 @@ EOH
 function commands_help(){
     local arg="$1"
     if [[ ! $arg ]]; then
-        echo -e "available commands [mount|umount|cd|ls|tree|cat|put|rm|history|exit]"
+        echo -e "available commands [mount|umount|cd|ls|tree|cat|cp|mv|put|rm|history|exit]"
         return
     fi
     case $arg in
@@ -336,6 +336,8 @@ function commands_help(){
         ls)      echo -e "ls path/to/secret \n  lists paths and keys on $current_pwd/path/to/secret" ;;
         tree)    echo -e "tree path/to/secret \n  prints vault's secrets tree with $current_pwd/path/to/secret as its root" ;;
         cat)     echo -e "cat path/to/secret \n  shows contents of key $current_pwd/path/to/secret" ;;
+        cp)      echo -e "cp path/to/secret path/to/other_secret \n  copies contents of path to path $current_pwd/path/to/other_secret" ;;
+        mv)      echo -e "mv path/to/secret path/to/other_secret \n  moves contents of path to path $current_pwd/path/to/other_secret" ;;
         put)     echo -e "put path/to/secret { \"key\": \"value\" } \n  adds json={ \"key\": \"value\" } to $current_pwd/path/to/secret" ;;
         rm)      echo -e "rm path/to/secret \n  removes key $current_pwd/path/to/secret" ;;
         history) echo -e "history \n  shows vcli history" ;;
@@ -438,6 +440,8 @@ function run_cmd(){
             cat)                    _cat "$arg1" ;;
             put)                    _put "$arg1" "$arg2" ;;
             rm)                     _rm "$arg1" ;;
+            cp)                     _cp "$arg1" "$arg2" ;;
+            mv)                     _mv "$arg1" "$arg2" ;;
             mount)                  _mount "$arg1" ;;
             umount)                 _umount "$arg1" ;;
             history)                print_history ;;
@@ -611,6 +615,37 @@ function _cat(){
     debug "cat: url=$url"
     local arg="$2"
     _curl "$url" "$arg"
+}
+
+# cp function
+function _cp(){
+    local url="$1"
+    local dest="$2"
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd$url"
+    fi
+    if [[ ! $dest =~ ^/ ]]; then
+        dest="$current_pwd$dest"
+    fi
+    debug "cp: url=$url dest=$dest"
+    secret=$(_cat "$url")
+    debug "$secret"
+    _put "$dest" "$secret"
+}
+
+# mv function
+function _mv(){
+    local url="$1"
+    local dest="$2"
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd$url"
+    fi
+    if [[ ! $dest =~ ^/ ]]; then
+        dest="$current_pwd$dest"
+    fi
+    debug "mv: url=$url dest=$dest"
+    secret=$(_cat "$url")
+    _put "$dest" "$secret" && _rm "$url"
 }
 
 # rm function
