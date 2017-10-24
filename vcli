@@ -657,7 +657,7 @@ function _certinfo(){
         _cat "$url" | jq ".data .$cert" | \
                       sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
                           -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
-                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | \
+                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | tr -d '"' | \
                       openssl x509 -text -noout
     done
     IFS=$backIFS
