@@ -630,7 +630,8 @@ function _krbinfo(){
     eval "$(_cat "$url" | jq '.data | to_entries | map(select(.key | match("_principal"))) | map("princs[\(.key)]=\"\(.value|tostring)\"") | .[] | @sh' | sed -e "s/^\"//" -e "s/\"$//" -e "s/^'//" -e "s/'$//" -e "s/_principal//")"
     backIFS=$IFS
     IFS=$' '
-    for key in "${!princs[@]}" ; do
+    keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
+    for key in $keys ; do
         value=${princs[$key]}
         echo -e "\n${BOLD}principal$NONE: $CYAN${value//\"/}$NONE"
         key="\"${key}_keytab\""
@@ -649,7 +650,7 @@ function _krbinfo(){
 function _certinfo(){
     local url="$1"
     local certs
-    certs=$(_cat "$url" | jq '.data | to_entries | map(select(.key | match("_crt"))) | .[] .key' | tr -t '\n' ' ')
+    certs=$(_cat "$url" | jq '.data | to_entries | map(select(.key | match("_crt"))) | .[] .key' | tr -t '\n' ' ' | sort)
     backIFS=$IFS
     IFS=$' '
     for cert in $certs; do
