@@ -75,7 +75,7 @@ function debug(){
 function is_cmd(){
     local cmd="$1"
     case $cmd in
-        mount*|umount*|cd*|ls*|tree*|cat*|cp*|mv*|put*|rm*|exit*|help*|history|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
+        mount*|umount*|cd*|ls*|tree*|cat*|cp*|certinfo*|krbinfo*|mv*|put*|rm*|exit*|help*|history|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
         ""|*) return 1;;
     esac
 }
@@ -85,7 +85,7 @@ function completion(){
     debug "run completion"
     local -a tmparray
     local found _cmd _path _args _secret paths
-    local commands=( "mount" "umount" "cd" "ls" "tree" "cat" "cp" "mv" "put" "rm" "exit" "help" "history" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
+    local commands=( "mount" "umount" "cd" "ls" "tree" "cat" "cp" "certinfo" "krbinfo" "mv" "put" "rm" "exit" "help" "history" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
     IFS=' ' read _cmd _path _args< <(echo "$@")
     debug "cmd: $_cmd, path: $_path"
     # complete command
@@ -326,23 +326,25 @@ EOH
 function commands_help(){
     local arg="$1"
     if [[ ! $arg ]]; then
-        echo -e "available commands [mount|umount|cd|ls|tree|cat|cp|mv|put|rm|history|exit]"
+        echo -e "available commands [mount|umount|cd|ls|tree|cat|cp|certinfo|krbinfomv|put|rm|history|exit]"
         return
     fi
     case $arg in
-        mount)   echo -e "mount path/to/mount \n  creates mount $current_pwd/path/to/mount" ;;
-        umount)  echo -e "umount path/to/mount \n  destroys mount $current_pwd/path/to/mount" ;;
-        cd)      echo -e "cd path/to/secret \n  changes to directory $current_pwd/path/to/secret" ;;
-        ls)      echo -e "ls path/to/secret \n  lists paths and keys on $current_pwd/path/to/secret" ;;
-        tree)    echo -e "tree path/to/secret \n  prints vault's secrets tree with $current_pwd/path/to/secret as its root" ;;
-        cat)     echo -e "cat path/to/secret \n  shows contents of key $current_pwd/path/to/secret" ;;
-        cp)      echo -e "cp path/to/secret path/to/other_secret \n  copies contents of path to path $current_pwd/path/to/other_secret" ;;
-        mv)      echo -e "mv path/to/secret path/to/other_secret \n  moves contents of path to path $current_pwd/path/to/other_secret" ;;
-        put)     echo -e "put path/to/secret { \"key\": \"value\" } \n  adds json={ \"key\": \"value\" } to $current_pwd/path/to/secret" ;;
-        rm)      echo -e "rm path/to/secret \n  removes key $current_pwd/path/to/secret" ;;
-        history) echo -e "history \n  shows vcli history" ;;
-        exit)    echo -e "exit \n  exits vcli" ;;
-        *)       echo -e "unkown '$arg' vcli command\navailable commands [mount|umount|cd|ls|cat|put|rm|history|exit]" ;;
+        mount)     echo -e "mount path/to/mount \n  creates mount $current_pwd/path/to/mount" ;;
+        umount)    echo -e "umount path/to/mount \n  destroys mount $current_pwd/path/to/mount" ;;
+        cd)        echo -e "cd path/to/secret \n  changes to directory $current_pwd/path/to/secret" ;;
+        ls)        echo -e "ls path/to/secret \n  lists paths and keys on $current_pwd/path/to/secret" ;;
+        tree)      echo -e "tree path/to/secret \n  prints vault's secrets tree with $current_pwd/path/to/secret as its root" ;;
+        cat)       echo -e "cat path/to/secret \n  shows contents of key $current_pwd/path/to/secret" ;;
+        cp)        echo -e "cp path/to/secret path/to/other_secret \n  copies contents of path to path $current_pwd/path/to/other_secret" ;;
+        certinfo)  echo -e "certinfo path/to/secret \n  shows certificate info stored in $current_pwd/path/to/secret" ;;
+        krbinfo)   echo -e "krbinfo path/to/secret \n  shows principal & keytab info stored in $current_pwd/path/to/secret" ;;
+        mv)        echo -e "mv path/to/secret path/to/other_secret \n  moves contents of path to path $current_pwd/path/to/other_secret" ;;
+        put)       echo -e "put path/to/secret { \"key\": \"value\" } \n  adds json={ \"key\": \"value\" } to $current_pwd/path/to/secret" ;;
+        rm)        echo -e "rm path/to/secret \n  removes key $current_pwd/path/to/secret" ;;
+        history)   echo -e "history \n  shows vcli history" ;;
+        exit)      echo -e "exit \n  exits vcli" ;;
+        *)         echo -e "unkown '$arg' vcli command\navailable commands [mount|umount|cd|ls|cat|put|rm|history|exit]" ;;
     esac
 }
 
@@ -441,6 +443,8 @@ function run_cmd(){
             put)                    _put "$arg1" "$arg2" ;;
             rm)                     _rm "$arg1" ;;
             cp)                     _cp "$arg1" "$arg2" ;;
+            certinfo)               _certinfo "$arg1" ;;
+            krbinfo)                _krbinfo "$arg1" ;;
             mv)                     _mv "$arg1" "$arg2" ;;
             mount)                  _mount "$arg1" ;;
             umount)                 _umount "$arg1" ;;
@@ -617,6 +621,48 @@ function _cat(){
     _curl "$url" "$arg"
 }
 
+
+function _krbinfo(){
+    local url="$1"
+    local certs tmp
+    # Get principals and store them in ${princs[@]}
+    declare -A princs
+    eval "$(_cat "$url" | jq '.data | to_entries | map(select(.key | match("_principal"))) | map("princs[\(.key)]=\"\(.value|tostring)\"") | .[] | @sh' | sed -e "s/^\"//" -e "s/\"$//" -e "s/^'//" -e "s/'$//" -e "s/_principal//")"
+    backIFS=$IFS
+    IFS=$' '
+    for key in "${!princs[@]}" ; do
+        value=${princs[$key]}
+        echo -e "\n${BOLD}principal$NONE: $CYAN${value//\"/}$NONE"
+        key="\"${key}_keytab\""
+        tmp=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
+        _cat "$url" | jq ".data .${key}" | tr -d '"' | base64 -d > "$tmp"
+        klist -kt "$tmp" | grep -v "Keytab name:"
+        if ! klist -kt "$tmp" | grep -v "Keytab name:" | grep -q "${value//\"/}"; then
+            echo -e "\n${RED}ERROR!$NONE principal $BOLD'${value//\"/}'$NONE not in keytab!\n"
+        fi
+        rm -f "$tmp"
+    done
+    IFS=$backIFS
+}
+
+# certinfo
+function _certinfo(){
+    local url="$1"
+    local certs
+    certs=$(_cat "$url" | jq '.data | to_entries | map(select(.key | match("_crt"))) | .[] .key' | tr -t '\n' ' ')
+    backIFS=$IFS
+    IFS=$' '
+    for cert in $certs; do
+        echo -e "\n$CYAN${cert//\"/}$NONE"
+        _cat "$url" | jq ".data .$cert" | \
+                      sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
+                          -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
+                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | \
+                      openssl x509 -text -noout
+    done
+    IFS=$backIFS
+}
+
 # cp function
 function _cp(){
     local url="$1"
@@ -738,6 +784,9 @@ function main(){
 
     # print prompt
     prompt
+
+    # trap for Ctrl+c
+    trap clean_n_exit INT
 
     # Begin iteration
     IFS=
