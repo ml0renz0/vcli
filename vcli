@@ -326,7 +326,7 @@ EOH
 function commands_help(){
     local arg="$1"
     if [[ ! $arg ]]; then
-        echo -e "available commands [mount|umount|cd|ls|tree|cat|cp|certinfo|krbinfomv|put|rm|history|exit]"
+        echo -e "available commands [mount|umount|cd|ls|tree|cat|cp|certinfo|krbinfo|mv|put|rm|history|exit]"
         return
     fi
     case $arg in
