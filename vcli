@@ -15,6 +15,8 @@ declare vault_host vault_port vault_token current_pwd
 
 # History related vars
 declare VCLISTORY="$HOME/.vclistory"
+declare pri_suffix="_principal"
+declare crt_suffix="_crt"
 declare SEARCHIST ENDHIST ADDTMPCMD search_cmd
 declare -a cmd_history tmp_history
 
@@ -52,6 +54,7 @@ function check_connectivity(){
 # Print prompt
 function prompt(){
     local COLOUR=$CYAN
+    debug "prompt: http_code=$http_code"
     if [[ $http_code =~ ^2 ]]; then
         COLOUR=$GREEN
     elif [[ $http_code =~ ^3 ]]; then
@@ -362,6 +365,10 @@ function check_arg(){
 function clean_n_exit(){
     save_history
     echo
+    # reset terminal when running inside a container as local echo gets disabled (??)
+    if ! head -n 1 /proc/1/sched | grep -qE "(systemd|init)"; then
+        reset
+    fi
     exit
 }
 
@@ -386,6 +393,11 @@ function _run(){
 
 # simplified curl function
 function _curl(){
+    local enable_f="-f"
+    if [[ "$1" == "-_disable_-f_-" ]]; then
+        unset enable_f
+        shift
+    fi
     local endpoint="${1#/}" # remove initial '/' if exists
     local data="$2"
     local response
@@ -395,11 +407,12 @@ function _curl(){
     # POST, GET, PUT, PATCH, DELETE
     # http://www.restapitutorial.com/lessons/httpmethods.html
     local method="${3:-GET}"
+    debug "curl: _curl '$1' '$2' '$3'"
     if [[ $data ]]; then
         if [[ "$VERBOSE" = "yes" ]]; then
             echo -e "url: $protocol://$vault_host:$vault_port/v1/$endpoint\nmethod: $method\ndata:$data"
         fi
-        mapfile -t response < <(_run "/usr/bin/curl -w \"%{http_code}\n\" -s -f -k -L -X$method -H \"X-Vault-Token:$vault_token\" \
+        mapfile -t response < <(_run "/usr/bin/curl -w \"%{http_code}\n\" -s "$enable_f" -k -L -X$method -H \"X-Vault-Token:$vault_token\" \
                       -H 'Content-type: application/json' \
                       -d \"$data\" \
                       \"$protocol://$vault_host:$vault_port/v1/$endpoint\"")
@@ -407,11 +420,11 @@ function _curl(){
         if [[ "$VERBOSE" = "yes" ]]; then
             echo -e "url: $protocol://$vault_host:$vault_port/v1/$endpoint\nmethod: $method"
         fi
-        mapfile -t response < <(_run "/usr/bin/curl -w \"%{http_code}\n\" -s -f -k -L -X$method -H \"X-Vault-Token:$vault_token\" \
+        mapfile -t response < <(_run "/usr/bin/curl -w \"%{http_code}\n\" -s "$enable_f" -k -L -X$method -H \"X-Vault-Token:$vault_token\" \
                       -H 'Content-type: application/json' \
                       \"$protocol://$vault_host:$vault_port/v1/$endpoint\"")
     fi
-    debug "response_mapfile: ${response[0]} # ${response[1]}"
+    #debug "response_mapfile: ${response[0]} # ${response[1]}"
     if [[ ! ${response[1]} ]]; then
         http_code="${response[0]}"
     else
@@ -458,6 +471,8 @@ function run_cmd(){
             \#*)                    return;; # ignore commented lines
             *)                      commands_help "$cmd" ; return 1 ;;
         esac
+        debug "run_cmd: $cmd $arg1 $arg2"
+        debug "http_code=$http_code"
         add_cmd "$cmd $arg1 $arg2"
     done< <(echo "$cmd")
 }
@@ -527,11 +542,14 @@ function _cd(){
     else
         current_pwd="/"
     fi
-    if [[ $current_pwd != "/" ]] && [[ "$1" != ".." ]] && ! _ls "$url" | grep -q "request_id"; then
+    if [[ $url != "/" ]] && [[ "$1" != ".." ]] && ! _ls "$url" | grep -q "request_id"; then
         echo "Error! '$url' not found"
-    else
+    elif [[ $url != "/" ]]; then
         current_pwd="$url"
+    else
+        current_pwd=""
     fi
+    debug "cd: cd $1 ; current_pwd=$current_pwd"
 }
 
 # ls function
@@ -612,13 +630,17 @@ function _tree(){
 
 # cat function
 function _cat(){
+    if [[ "$1" == "-_disable_-f_-" ]]; then
+        disable_f="$1"
+        shift
+    fi
     local url="$1"
     if [[ ! $url =~ ^/ ]]; then
         url="$current_pwd$1"
     fi
     debug "cat: url=$url"
     local arg="$2"
-    _curl "$url" "$arg"
+    _curl $disable_f "$url" "$arg"
 }
 
 
@@ -627,7 +649,8 @@ function _krbinfo(){
     local certs tmp
     # Get principals and store them in ${princs[@]}
     declare -A princs
-    eval "$(_cat "$url" | jq '.data | to_entries | map(select(.key | match("_principal"))) | map("princs[\(.key)]=\"\(.value|tostring)\"") | .[] | @sh' | sed -e "s/^\"//" -e "s/\"$//" -e "s/^'//" -e "s/'$//" -e "s/_principal//")"
+    _cat "$url" > /dev/null 2>&1
+    eval "$(_cat "$url" | jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" | sed -e "s/^\"//" -e "s/\"$//" -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
     backIFS=$IFS
     IFS=$' '
     keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
@@ -650,15 +673,18 @@ function _krbinfo(){
 function _certinfo(){
     local url="$1"
     local certs
-    certs=$(_cat "$url" | jq '.data | to_entries | map(select(.key | match("_crt"))) | .[] .key' | tr -t '\n' ' ' | sort)
+    _cat "$url" > /dev/null 2>&1
+    certs=$(_cat "$url" | jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" | tr -t '\n' ' ' | sort)
+    debug "certinfo: $certs"
     backIFS=$IFS
     IFS=$' '
     for cert in $certs; do
         echo -e "\n$CYAN${cert//\"/}$NONE"
+        debug "_cat $url | jq .data .$cert"
         _cat "$url" | jq ".data .$cert" | \
                       sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
                           -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
-                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | tr -d '"' | \
+                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64 | tr -d '"' | \
                       openssl x509 -text -noout
     done
     IFS=$backIFS
@@ -771,7 +797,7 @@ function main(){
     # try to get vault health status
     _put secret/-_test_- '{ "key": "value" }'
     if ! _cat secret/-_test_- > /dev/null 2>&1 ; then
-        echo -e "Cannot access vaul's secrets!\nCheck vault_token: '$vault_token'"
+        echo -e "Cannot access vault's secrets!\nCheck vault_token: '$vault_token'"
         exit 1
     else
         _rm secret/-_test_-
@@ -781,7 +807,7 @@ function main(){
     load_history
 
     # Show vault's health
-    _cat sys/health
+    _cat "-_disable_-f_-" sys/health
 
     # print prompt
     prompt
@@ -840,6 +866,7 @@ function main(){
             $'\x0a') # ENTER
                 unset ENDHIST
                 is_command="true"
+                debug "current_pwd=$current_pwd"
                 echo
                 if [[ $cmd ]] && [[ ! "$cmd" =~ ^[[:space:]]+$ ]]; then
                     cmd=$(echo "$cmd" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')
