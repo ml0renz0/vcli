@@ -80,7 +80,7 @@ function debug(){
 function is_cmd(){
     local cmd="$1"
     case $cmd in
-        mount*|umount*|cd*|ls*|tree*|cptree*|rmtree*|cat*|cp*|getcert*|certinfo*|getkrb*|krbinfo*|mv*|put*|rm*|exit*|help*|history|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
+        mount*|umount*|cd*|ls*|tree*|cptree*|rmtree*|backup|restore*|cat*|cp*|getcert*|certinfo*|getkrb*|krbinfo*|mv*|put*|rm*|exit*|help*|history|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
         ""|*) return 1;;
     esac
 }
@@ -90,7 +90,7 @@ function completion(){
     debug "run completion"
     local -a tmparray
     local found _cmd _path _args _secret paths
-    local commands=( "mount" "umount" "cd" "ls" "tree" "cptree" "rmtree" "cat" "cp" "getcert" "certinfo" "getkrb" "krbinfo" "mv" "put" "rm" "exit" "help" "history" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
+    local commands=( "mount" "umount" "cd" "ls" "tree" "cptree" "rmtree" "backup" "restore" "cat" "cp" "getcert" "certinfo" "getkrb" "krbinfo" "mv" "put" "rm" "exit" "help" "history" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
     IFS=' ' read _cmd _path _args< <(echo "$@")
     debug "cmd: $_cmd, path: $_path"
     # complete command
@@ -331,7 +331,7 @@ EOH
 function commands_help(){
     local arg="$1"
     if [[ ! $arg ]]; then
-        echo -e "available commands [mount|umount|cd|ls|tree|cptree|rmtree|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|rm|history|exit]"
+        echo -e "available commands [mount|umount|cd|ls|tree|cptree|rmtree|backup|restore|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|rm|history|exit]"
         return
     fi
     case $arg in
@@ -342,6 +342,8 @@ function commands_help(){
         tree)      echo -e "tree path/to/secret \n  prints vault's secrets tree with $current_pwd/path/to/secret as its root" ;;
         cptree)    echo -e "cptree path/to/secret path/to/other_secret \n  copies tree to destination path $current_pwd/path/to/other_secret" ;;
         rmtree)    echo -e "rmtree path/to/secret \n  removes path $current_pwd/path/to/secret recursively" ;;
+        backup)    echo -e "backup \n  backs up Vault to $TMP folder" ;;
+        restore)   echo -e "restore \n  restores Vault backup" ;;
         cat)       echo -e "cat path/to/secret \n  shows contents of key $current_pwd/path/to/secret" ;;
         cp)        echo -e "cp path/to/secret path/to/other_secret \n  copies contents of path to path $current_pwd/path/to/other_secret" ;;
         getcert)   echo -e "getcert path/to/secret \n  downloads certificate CRT and KEY stored in $current_pwd/path/to/secret" ;;
@@ -353,7 +355,7 @@ function commands_help(){
         rm)        echo -e "rm path/to/secret \n  removes key $current_pwd/path/to/secret" ;;
         history)   echo -e "history \n  shows vcli history" ;;
         exit)      echo -e "exit \n  exits vcli" ;;
-        *)         echo -e "unkown '$arg' vcli command\navailable commands [mount|umount|cd|ls|tree|cptree|rmtree|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|rm|history|exit]" ;;
+        *)         echo -e "unkown '$arg' vcli command\navailable commands [mount|umount|cd|ls|tree|cptree|rmtree|backup|restore|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|rm|history|exit]" ;;
     esac
 }
 
@@ -465,6 +467,8 @@ function run_cmd(){
             tree)                   backIFS=$IFS; IFS=$' ' ; _tree "$arg1" ; IFS=$backIFS;;
             cptree)                 backIFS=$IFS; IFS=$' ' ; _cptree "$arg1" "$arg2" ; IFS=$backIFS;;
             rmtree)                 backIFS=$IFS; IFS=$' ' ; _rmtree "$arg1" ; IFS=$backIFS;;
+            backup)                 backIFS=$IFS; IFS=$' ' ; _backup "/" ; IFS=$backIFS;;
+            restore)                backIFS=$IFS; IFS=$' ' ; _restore "$arg1" ; IFS=$backIFS;;
             cat)                    _cat "$arg1" ;;
             put)                    _put "$arg1" "$arg2" ;;
             rm)                     _rm "$arg1" ;;
@@ -659,6 +663,129 @@ function _tree(){
     done
 }
 
+# backup vault
+function _backup(){
+    local url
+    if [[ ! $1 =~ ^/ ]]; then
+        url="$current_pwd$1"
+    else
+        url="$(echo "$1" | tr -s '/')"
+    fi
+    local first
+    local dest="$2"
+    local depth="$3"
+    local space="$4"
+    local echo_space="$5"
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "backup"
+        return
+    fi
+    if [[ ! $dest ]]; then
+        dest="$(mktemp -d -p /dev/shm -t backup_vault-"$(date +%d-%m-%Y@%H:%M:%S)".XXXX)"
+        destfile="$TMP/backup_vault.$(date +%d-%m-%Y@%H:%M:%S).tgz"
+    fi
+    # If no depth was passed then this iteration is the very first one, so depth=0
+    if [[ ! $depth ]]; then
+        depth=0
+        first="yes"
+        echo -n "Backing up Vault to '$destfile'"
+    # other wise we increment a depth as we go deeper in the structure
+    else
+        unset first
+        let depth++
+    fi
+    debug "${echo_space}backup: '$url', depth: $depth, space: \"$space\""
+    # if $url is /
+    #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
+    if [[ $url == "/" ]] || [[ ! $url ]]; then
+        paths=$(_ls "$url" | grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
+    # if $url is other than root
+    else
+        paths=$(_ls "$url" | jq '.data .keys' |grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
+    fi
+
+    debug "${echo_space}   depth: $depth => found: $paths"
+    for path in $paths; do
+        space=${space/+/ }
+        if [[ $path =~ /$ ]]; then
+            local _path="$url/$path"
+            _path=${_path//\/\//\/}
+            _backup "$_path" "$dest" "$depth" "$space+ " "$echo_space   "
+        else
+            local _dest=${url#*/}
+            mkdir -p "$dest/$_dest"
+            _cat "$url$path" | jq '.data' > "$dest/$_dest$path"
+            echo -n "."
+        fi
+    done
+    if [[ $first ]]; then
+        cd "$dest"
+        tar cfz "$destfile" ./* > /dev/null
+        echo " done"
+    fi
+}
+
+# restore vault backup
+function _restore(){
+    local backup folder mount _url
+    backup="$1"
+    if [[ ! -r $backup ]]; then
+        echo "Error! Missing backup file"
+        commands_help "restore"
+        return
+    fi
+    local first
+    local folder="$2"
+    local _url="$3"
+    local depth="$4"
+    local space="$5"
+    local echo_space="$6"
+    # If no depth was passed then this iteration is the very first one, so depth=0
+    if [[ ! $depth ]]; then
+        depth=0
+        first="yes"
+        echo -n "Restoring Vault backup from '$backup'"
+        folder="$(mktemp -d -p /dev/shm -t backup_vault-"$(date +%d-%m-%Y@%H:%M:%S)".XXXX)"
+        cd "$folder"
+        if ! tar xfz "$backup" > /dev/null 2>&1; then
+            echo "Error while extracting backup '$backup'"
+            rm -fr "$folder"
+            return
+        fi
+    # other wise we increment a depth as we go deeper in the structure
+    else
+        unset first
+        let depth++
+        cd "$folder"
+    fi
+    debug "${echo_space}restore: '$backup', folder: $folder, _url: $_url depth: $depth, space: \"$space\""
+    paths=$(find . -maxdepth 1 -not -iname "." | tr -t '\n' ' ')
+
+    debug "${echo_space}   depth: $depth => found: $paths"
+    for path in $paths; do
+        path=${path/.\/}
+        space=${space/+/ }
+        if [[ -d $path ]]; then
+            mount=$(echo "$_url" | sed -e "s/^\(\/[^/]\+\).*$/\1/")
+            if [[ $mount ]]; then
+                debug "${echo_space}   mount: $mount"
+                _mount -i "$mount" > /dev/null 2>&1
+            fi
+            _restore "$backup" "$PWD/$path" "$_url/$path" "$depth" "$space+ " "$echo_space   "
+        else
+            debug "${echo_space}   put $_url/$path $(tr -d '\n' < "$PWD/$path" | tr -s ' ')"
+            _put "$_url/$path" "$(tr -d '\n' < "$PWD/$path" | tr -s ' ')"
+            echo -n "."
+        fi
+    done
+    if [[ $first ]]; then
+        echo " done"
+    else
+        cd ..
+    fi
+}
+
 # copy secret tree to another location
 function _cptree(){
     local url
@@ -793,6 +920,95 @@ function _cat(){
     debug "cat: url=$url"
     local arg="$2"
     _curl $disable_f "$url" "$arg"
+}
+
+# cp function
+function _cp(){
+    local url="$1"
+    local dest="$2"
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd$url"
+    fi
+    if [[ ! $dest =~ ^/ ]]; then
+        dest="$current_pwd$dest"
+    fi
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "cp"
+        return
+    fi
+    if [[ ! $dest ]]; then
+        echo "Error! Missing destination"
+        commands_help "cp"
+        return
+    fi
+    debug "cp: url=$url dest=$dest"
+    secret=$(_cat "$url" | jq ".data" )
+    debug "$secret"
+    _put "$dest" "$secret"
+}
+
+# mv function
+function _mv(){
+    local url="$1"
+    local dest="$2"
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd$url"
+    fi
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "mv"
+        return
+    fi
+    if [[ ! $dest =~ ^/ ]]; then
+        dest="$current_pwd$dest"
+    fi
+    if [[ ! $dest ]]; then
+        echo "Error! Missing destination"
+        commands_help "mv"
+        return
+    fi
+    debug "mv: url=$url dest=$dest"
+    _cp "$url" "$dest" && _rm "$url"
+}
+
+# rm function
+function _rm(){
+    local url="$1"
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd$1"
+    fi
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "rm"
+        return
+    fi
+    debug "rm: url=$url"
+    _curl "$url" "" "DELETE"
+}
+
+# put function
+function _put(){
+    local url="$1"
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd$1"
+    fi
+    debug "put: url=$url"
+    local data=${2//\"/\\\"}
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "put"
+        return
+    fi
+    if [[ ! $data ]]; then
+        echo "Error! Missing secret data"
+        commands_help "put"
+        return
+    fi
+    url="${url/\/\//\/}"
+    debug "$data"
+    debug "uploading '$data' to '$url'"
+    _curl "$url" "$data" "POST"
 }
 
 # validate and show principals and keytab info
@@ -936,95 +1152,6 @@ function _getcert(){
     done
     IFS=$backIFS
     echo "done."
-}
-
-# cp function
-function _cp(){
-    local url="$1"
-    local dest="$2"
-    if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd$url"
-    fi
-    if [[ ! $dest =~ ^/ ]]; then
-        dest="$current_pwd$dest"
-    fi
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "cp"
-        return
-    fi
-    if [[ ! $dest ]]; then
-        echo "Error! Missing destination"
-        commands_help "cp"
-        return
-    fi
-    debug "cp: url=$url dest=$dest"
-    secret=$(_cat "$url" | jq ".data" )
-    debug "$secret"
-    _put "$dest" "$secret"
-}
-
-# mv function
-function _mv(){
-    local url="$1"
-    local dest="$2"
-    if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd$url"
-    fi
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "mv"
-        return
-    fi
-    if [[ ! $dest =~ ^/ ]]; then
-        dest="$current_pwd$dest"
-    fi
-    if [[ ! $dest ]]; then
-        echo "Error! Missing destination"
-        commands_help "mv"
-        return
-    fi
-    debug "mv: url=$url dest=$dest"
-    _cp "$url" "$dest" && _rm "$url"
-}
-
-# rm function
-function _rm(){
-    local url="$1"
-    if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd$1"
-    fi
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "rm"
-        return
-    fi
-    debug "rm: url=$url"
-    _curl "$url" "" "DELETE"
-}
-
-# put function
-function _put(){
-    local url="$1"
-    if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd$1"
-    fi
-    debug "put: url=$url"
-    local data=${2//\"/\\\"}
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "put"
-        return
-    fi
-    if [[ ! $data ]]; then
-        echo "Error! Missing secret data"
-        commands_help "put"
-        return
-    fi
-    url="${url/\/\//\/}"
-    debug "$data"
-    debug "uploading '$data' to '$url'"
-    _curl "$url" "$data" "POST"
 }
 
 # main function
