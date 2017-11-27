@@ -80,7 +80,7 @@ function debug(){
 function is_cmd(){
     local cmd="$1"
     case $cmd in
-        mount*|umount*|cd*|ls*|tree*|cptree*|rmtree*|backup|restore*|cat*|cp*|getcert*|certinfo*|getkrb*|krbinfo*|mv*|put*|rm*|exit*|help*|history|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
+        mount*|umount*|cd*|ls*|tree*|cptree*|rmtree*|backup*|restore*|cat*|cp*|getcert*|certinfo*|getkrb*|krbinfo*|mv*|put*|rm*|exit*|help*|history|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
         ""|*) return 1;;
     esac
 }
@@ -331,7 +331,7 @@ EOH
 function commands_help(){
     local arg="$1"
     if [[ ! $arg ]]; then
-        echo -e "available commands [mount|umount|cd|ls|tree|cptree|rmtree|backup|restore|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|rm|history|exit]"
+        echo -e "available commands [mount|umount|cd|ls|tree|cptree|rmtree|backup*|restore*|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|rm|history|exit]"
         return
     fi
     case $arg in
@@ -467,7 +467,7 @@ function run_cmd(){
             tree)                   backIFS=$IFS; IFS=$' ' ; _tree "$arg1" ; IFS=$backIFS;;
             cptree)                 backIFS=$IFS; IFS=$' ' ; _cptree "$arg1" "$arg2" ; IFS=$backIFS;;
             rmtree)                 backIFS=$IFS; IFS=$' ' ; _rmtree "$arg1" ; IFS=$backIFS;;
-            backup)                 backIFS=$IFS; IFS=$' ' ; _backup "/" ; IFS=$backIFS;;
+            backup)                 backIFS=$IFS; IFS=$' ' ; _backup "$arg1" ; IFS=$backIFS;;
             restore)                backIFS=$IFS; IFS=$' ' ; _restore "$arg1" ; IFS=$backIFS;;
             cat)                    _cat "$arg1" ;;
             put)                    _put "$arg1" "$arg2" ;;
@@ -663,8 +663,8 @@ function _tree(){
     done
 }
 
-# backup vault
-function _backup(){
+# copy secret tree to another location
+function _cptree(){
     local url
     if [[ ! $1 =~ ^/ ]]; then
         url="$current_pwd$1"
@@ -678,18 +678,152 @@ function _backup(){
     local echo_space="$5"
     if [[ ! $url ]]; then
         echo "Error! Missing secret path"
-        commands_help "backup"
+        commands_help "cptree"
         return
     fi
     if [[ ! $dest ]]; then
-        dest="$(mktemp -d -p /dev/shm -t backup_vault-"$(date +%d-%m-%Y@%H:%M:%S)".XXXX)"
-        destfile="$TMP/backup_vault.$(date +%d-%m-%Y@%H:%M:%S).tgz"
+        echo "Error! Missing destination"
+        commands_help "cptree"
+        return
+    fi
+    # If no "$2" was passed then this iteration is the very first one, so depth=0
+    if [[ ! $depth ]]; then
+        depth=0
+        first="yes"
+        echo -n "Copying tree from '$url' to '$dest'"
+    # other wise we increment a depth as we go deeper in the structure
+    else
+        unset first
+        let depth++
+    fi
+    debug "${echo_space}cptree: '$url', depth: $depth, space: \"$space\""
+    # if $url is /
+    #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
+    if [[ $url == "/" ]] || [[ ! $url ]]; then
+        paths=$(_ls "$url" | grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
+    # if $url is other than root
+    else
+        paths=$(_ls "$url" | jq '.data .keys' |grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
+    fi
+
+    for path in $paths; do
+        debug "${echo_space}   depth: $depth => found: $paths"
+        space=${space/+/ }
+        if [[ $path =~ /$ ]]; then
+            local _path="$url/$path"
+            _path=${_path//\/\//\/}
+            _cptree "$_path" "$dest" "$depth" "$space+ " "$echo_space   " &
+        else
+            _mount -i "$dest" > /dev/null 2>&1
+            local _dest=${url#*/}
+            _cp "/$url$path" "/$dest/$_dest$path"
+            echo -n "."
+        fi
+    done
+    wait
+    if [[ $first ]]; then
+        echo " done"
+    fi
+}
+
+# removes recursively a vault path
+function _rmtree(){
+    local url
+    if [[ ! $1 =~ ^/ ]]; then
+        url="$current_pwd$1"
+    else
+        url="$(echo "$1" | tr -s '/')"
+    fi
+    local first
+    local depth="$2"
+    local space="$3"
+    local echo_space="$4"
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "rmtree"
+        return
+    fi
+    # If no "$2" was passed then this iteration is the very first one, so depth=0
+    if [[ ! $depth ]]; then
+        depth=0
+        first="yes"
+        echo -n "Removing recursively '$url'"
+    # other wise we increment a depth as we go deeper in the structure
+    else
+        let depth++
+    fi
+    debug "${echo_space}rmtree: '$url', depth: $depth, space: \"$space\""
+    # if $url is /
+    #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
+    if [[ $url == "/" ]] || [[ ! $url ]]; then
+        paths=$(_ls "$url" | grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
+    # if $url is other than root
+    else
+        paths=$(_ls "$url" | jq '.data .keys' |grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
+    fi
+
+    for path in $paths; do
+        debug "${echo_space}   depth: $depth => found: $paths"
+        space=${space/+/ }
+        if [[ $path =~ /$ ]]; then
+            local _path="$url/$path"
+            _path=${_path//\/\//\/}
+            _rmtree "$_path" "$depth" "$space+ " "$echo_space   " &
+        else
+            _rm "/$url$path"
+            echo -n "."
+        fi
+    done
+    wait
+    if [[ $first ]]; then
+        _umount -i "$url" > /dev/null 2>&1
+        echo " done"
+    fi
+}
+
+# backup vault
+function _backup(){
+    local url
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd$1"
+    else
+        url="$(echo "$1" | tr -s '/')"
+    fi
+    if [[ $1 == "" ]]; then
+        url="/"
+    fi
+    local first
+    local dest="$2"
+    local depth="$3"
+    local space="$4"
+    local echo_space="$5"
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "backup"
+        return
+    fi
+    # Check for $url existence
+    if ( [[ $url != "/" ]] && ! _ls "$url" | grep -q "request_id" ) || [[ "$url" == ".." ]]; then
+        debug "${echo_space}Error! '$url' doesn't exist or contains no secrets. Relative references like '..' are not supported"
+        return
+    fi
+    if [[ ! $dest ]]; then
+        if [[ $url != "/" ]]; then
+            dest="$(mktemp -d -p /dev/shm -t backup_vault-${url/\/}."$(date +%d-%m-%Y@%H:%M:%S)".XXXX)"
+            destfile="$TMP/backup_vault-${url/\/}.$(date +%d-%m-%Y@%H:%M:%S).tgz"
+        else
+            dest="$(mktemp -d -p /dev/shm -t backup_vault."$(date +%d-%m-%Y@%H:%M:%S)".XXXX)"
+            destfile="$TMP/backup_vault.$(date +%d-%m-%Y@%H:%M:%S).tgz"
+        fi
     fi
     # If no depth was passed then this iteration is the very first one, so depth=0
     if [[ ! $depth ]]; then
         depth=0
         first="yes"
         echo -n "Backing up Vault to '$destfile'"
+        if [[ $url != "/" ]]; then
+            mkdir -p "$dest/$url"
+        fi
     # other wise we increment a depth as we go deeper in the structure
     else
         unset first
@@ -709,19 +843,19 @@ function _backup(){
     for path in $paths; do
         space=${space/+/ }
         if [[ $path =~ /$ ]]; then
-            local _path="$url/$path"
-            _path=${_path//\/\//\/}
-            _backup "$_path" "$dest" "$depth" "$space+ " "$echo_space   "
+            _backup "$url$path" "$dest" "$depth" "$space+ " "$echo_space   " &
         else
-            local _dest=${url#*/}
-            mkdir -p "$dest/$_dest"
-            _cat "$url$path" | jq '.data' > "$dest/$_dest$path"
+            mkdir -p "$dest/$url"
+            debug "${echo_space}   backup: $url$path => $dest/$url$path"
+            _cat "$url$path" | jq '.data' > "$dest/$url$path"
             echo -n "."
         fi
     done
+    wait
     if [[ $first ]]; then
         cd "$dest"
         tar cfz "$destfile" ./* > /dev/null
+        rm -fr "$dest"
         echo " done"
     fi
 }
@@ -772,133 +906,18 @@ function _restore(){
                 debug "${echo_space}   mount: $mount"
                 _mount -i "$mount" > /dev/null 2>&1
             fi
-            _restore "$backup" "$PWD/$path" "$_url/$path" "$depth" "$space+ " "$echo_space   "
+            _restore "$backup" "$PWD/$path" "$_url/$path" "$depth" "$space+ " "$echo_space   " &
         else
             debug "${echo_space}   put $_url/$path $(tr -d '\n' < "$PWD/$path" | tr -s ' ')"
             _put "$_url/$path" "$(tr -d '\n' < "$PWD/$path" | tr -s ' ')"
             echo -n "."
         fi
     done
+    wait
     if [[ $first ]]; then
         echo " done"
     else
         cd ..
-    fi
-}
-
-# copy secret tree to another location
-function _cptree(){
-    local url
-    if [[ ! $1 =~ ^/ ]]; then
-        url="$current_pwd$1"
-    else
-        url="$(echo "$1" | tr -s '/')"
-    fi
-    local first
-    local dest="$2"
-    local depth="$3"
-    local space="$4"
-    local echo_space="$5"
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "cptree"
-        return
-    fi
-    if [[ ! $dest ]]; then
-        echo "Error! Missing destination"
-        commands_help "cptree"
-        return
-    fi
-    # If no "$2" was passed then this iteration is the very first one, so depth=0
-    if [[ ! $depth ]]; then
-        depth=0
-        first="yes"
-        echo -n "Copying tree from '$url' to '$dest'"
-    # other wise we increment a depth as we go deeper in the structure
-    else
-        unset first
-        let depth++
-    fi
-    debug "${echo_space}cptree: '$url', depth: $depth, space: \"$space\""
-    # if $url is /
-    #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
-    if [[ $url == "/" ]] || [[ ! $url ]]; then
-        paths=$(_ls "$url" | grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-    # if $url is other than root
-    else
-        paths=$(_ls "$url" | jq '.data .keys' |grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-    fi
-
-    for path in $paths; do
-        debug "${echo_space}   depth: $depth => found: $paths"
-        space=${space/+/ }
-        if [[ $path =~ /$ ]]; then
-            local _path="$url/$path"
-            _path=${_path//\/\//\/}
-            _cptree "$_path" "$dest" "$depth" "$space+ " "$echo_space   "
-        else
-            _mount -i "$dest" > /dev/null 2>&1
-            local _dest=${url#*/}
-            _cp "/$url$path" "/$dest/$_dest$path"
-            echo -n "."
-        fi
-    done
-    if [[ $first ]]; then
-        echo " done"
-    fi
-}
-
-# removes recursively a vault path
-function _rmtree(){
-    local url
-    if [[ ! $1 =~ ^/ ]]; then
-        url="$current_pwd$1"
-    else
-        url="$(echo "$1" | tr -s '/')"
-    fi
-    local first
-    local depth="$2"
-    local space="$3"
-    local echo_space="$4"
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "rmtree"
-        return
-    fi
-    # If no "$2" was passed then this iteration is the very first one, so depth=0
-    if [[ ! $depth ]]; then
-        depth=0
-        first="yes"
-        echo -n "Removing recursively '$url'"
-    # other wise we increment a depth as we go deeper in the structure
-    else
-        let depth++
-    fi
-    debug "${echo_space}rmtree: '$url', depth: $depth, space: \"$space\""
-    # if $url is /
-    #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
-    if [[ $url == "/" ]] || [[ ! $url ]]; then
-        paths=$(_ls "$url" | grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-    # if $url is other than root
-    else
-        paths=$(_ls "$url" | jq '.data .keys' |grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-    fi
-
-    for path in $paths; do
-        debug "${echo_space}   depth: $depth => found: $paths"
-        space=${space/+/ }
-        if [[ $path =~ /$ ]]; then
-            local _path="$url/$path"
-            _path=${_path//\/\//\/}
-            _rmtree "$_path" "$depth" "$space+ " "$echo_space   "
-        else
-            _rm "/$url$path"
-            echo -n "."
-        fi
-    done
-    if [[ $first ]]; then
-        _umount -i "$url" > /dev/null 2>&1
-        echo " done"
     fi
 }
 
