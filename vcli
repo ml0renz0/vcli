@@ -343,7 +343,7 @@ function commands_help(){
         tree)      echo -e "tree path/to/secret \n  prints vault's secrets tree with $current_pwd/path/to/secret as its root" ;;
         cptree)    echo -e "cptree path/to/secret path/to/other_secret \n  copies tree to destination path $current_pwd/path/to/other_secret" ;;
         rmtree)    echo -e "rmtree path/to/secret \n  removes path $current_pwd/path/to/secret recursively" ;;
-        backup)    echo -e "backup \n  backs up Vault to $TMP folder" ;;
+        backup)    echo -e "backup path/ \n  backs up Vault /path to $TMP folder" ;;
         restore)   echo -e "restore \n  restores Vault backup" ;;
         cat)       echo -e "cat path/to/secret \n  shows contents of key $current_pwd/path/to/secret" ;;
         cp)        echo -e "cp path/to/secret path/to/other_secret \n  copies contents of path to path $current_pwd/path/to/other_secret" ;;
