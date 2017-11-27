@@ -267,8 +267,9 @@ function load_history(){
     [[ ! -e $VCLISTORY ]] && return
     echo -n "Loading history... "
     while read cmd; do
-        add_cmd "$cmd"
+        add_cmd "$cmd" &
     done < "$VCLISTORY"
+    wait
     echo "done"
 }
 
