@@ -8,7 +8,7 @@ declare DEBUG="no"
 declare DEBUG_HEXDUMP="no"
 declare DEBUGFILE="/tmp/vcli.debug"
 declare TMP="/tmp"
-declare is_command cmd cmd_history restcmd key len pos history_index
+declare is_command cmd cmd_history restcmd _key len pos history_index
 declare -a mounted_paths
 declare timeout="2" # timeout to verify connection to Vault
 declare http_code
@@ -80,7 +80,7 @@ function debug(){
 function is_cmd(){
     local cmd="$1"
     case $cmd in
-        mount*|umount*|cd*|ls*|tree*|cptree*|rmtree*|backup*|restore*|cat*|cp*|getcert*|certinfo*|getkrb*|krbinfo*|mv*|put*|rm*|exit*|help*|history|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
+        mount*|umount*|cd*|ls*|tree*|cptree*|rmtree*|backup*|restore*|cat*|cp*|getcert*|certinfo*|getkrb*|krbinfo*|mv*|put*|rm*|exit*|help*|history|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
         ""|*) return 1;;
     esac
 }
@@ -90,7 +90,7 @@ function completion(){
     debug "run completion"
     local -a tmparray
     local found _cmd _path _args _secret paths
-    local commands=( "mount" "umount" "cd" "ls" "tree" "cptree" "rmtree" "backup" "restore" "cat" "cp" "getcert" "certinfo" "getkrb" "krbinfo" "mv" "put" "rm" "exit" "help" "history" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
+    local commands=( "mount" "umount" "cd" "ls" "tree" "cptree" "rmtree" "backup" "restore" "cat" "cp" "getcert" "certinfo" "getkrb" "krbinfo" "mv" "put" "rm" "exit" "help" "history" "verbose" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
     IFS=' ' read _cmd _path _args< <(echo "$@")
     debug "cmd: $_cmd, path: $_path"
     # complete command
@@ -182,18 +182,25 @@ function completion(){
 
 # add $cmd to command history @cmd_history
 function add_cmd(){
-    local cmd
-    cmd="$(echo "$*" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')"
-    is_cmd "$cmd" || return 1
-    local -a new_history
-    new_history=( "$cmd" )
-    for old_cmd in "${cmd_history[@]}"; do
-        if [[ $old_cmd != $cmd ]]; then
-            new_history+=( "$old_cmd" )
-        fi
-    done
-    cmd_history=( "${new_history[@]}" )
-    debug "add_cmd cmd_history[0]: $cmd"
+    local vclistory
+    # If "$1" is a file then process it
+    if [[ -r "$1" ]]; then
+        mapfile -t vclistory < <(sed '1!G;h;$!d' "$1") # read history in reverse
+        cmd_history=( "${vclistory[@]}" )
+    else
+        local cmd
+        cmd="$(echo "$*" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')"
+        is_cmd "$cmd" || return 1
+        local -a new_history
+        new_history=( "$cmd" )
+        for old_cmd in "${cmd_history[@]}"; do
+            if [[ $old_cmd != $cmd ]]; then
+                new_history+=( "$old_cmd" )
+            fi
+        done
+        cmd_history=( "${new_history[@]}" )
+        debug "add_cmd cmd_history[0]: $cmd"
+    fi
 }
 
 # UP: returns previous cmd in history
@@ -266,10 +273,7 @@ function save_history(){
 function load_history(){
     [[ ! -e $VCLISTORY ]] && return
     echo -n "Loading history... "
-    while read cmd; do
-        add_cmd "$cmd" &
-    done < "$VCLISTORY"
-    wait
+    add_cmd "$VCLISTORY"
     echo "done"
 }
 
@@ -332,31 +336,36 @@ EOH
 function commands_help(){
     local arg="$1"
     if [[ ! $arg ]]; then
-        echo -e "available commands [mount|umount|cd|ls|tree|cptree|rmtree|backup*|restore*|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|rm|history|exit]"
+        echo -e "available commands [mount|umount|cd|ls|tree|cptree|rmtree|backup*|restore*|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|rm|history|exit|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug]"
         return
     fi
     case $arg in
-        mount)     echo -e "mount path/to/mount \n  creates mount $current_pwd/path/to/mount" ;;
-        umount)    echo -e "umount path/to/mount \n  destroys mount $current_pwd/path/to/mount" ;;
-        cd)        echo -e "cd path/to/secret \n  changes to directory $current_pwd/path/to/secret" ;;
-        ls)        echo -e "ls path/to/secret \n  lists paths and keys on $current_pwd/path/to/secret" ;;
-        tree)      echo -e "tree path/to/secret \n  prints vault's secrets tree with $current_pwd/path/to/secret as its root" ;;
-        cptree)    echo -e "cptree path/to/secret path/to/other_secret \n  copies tree to destination path $current_pwd/path/to/other_secret" ;;
-        rmtree)    echo -e "rmtree path/to/secret \n  removes path $current_pwd/path/to/secret recursively" ;;
-        backup)    echo -e "backup path/ \n  backs up Vault /path to $TMP folder" ;;
-        restore)   echo -e "restore \n  restores Vault backup" ;;
-        cat)       echo -e "cat path/to/secret \n  shows contents of key $current_pwd/path/to/secret" ;;
-        cp)        echo -e "cp path/to/secret path/to/other_secret \n  copies contents of path to path $current_pwd/path/to/other_secret" ;;
-        getcert)   echo -e "getcert path/to/secret \n  downloads certificate CRT and KEY stored in $current_pwd/path/to/secret" ;;
-        certinfo)  echo -e "certinfo path/to/secret \n  shows certificate info stored in $current_pwd/path/to/secret" ;;
-        getkrb)    echo -e "getkrb path/to/secret \n  exports keytab file to $TMP/principal.keytab" ;;
-        krbinfo)   echo -e "krbinfo path/to/secret \n  shows principal & keytab info stored in $current_pwd/path/to/secret" ;;
-        mv)        echo -e "mv path/to/secret path/to/other_secret \n  moves contents of path to path $current_pwd/path/to/other_secret" ;;
-        put)       echo -e "put path/to/secret { \"key\": \"value\" } \n  adds json={ \"key\": \"value\" } to $current_pwd/path/to/secret" ;;
-        rm)        echo -e "rm path/to/secret \n  removes key $current_pwd/path/to/secret" ;;
-        history)   echo -e "history \n  shows vcli history" ;;
-        exit)      echo -e "exit \n  exits vcli" ;;
-        *)         echo -e "unkown '$arg' vcli command\navailable commands [mount|umount|cd|ls|tree|cptree|rmtree|backup|restore|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|rm|history|exit]" ;;
+        mount)                 echo -e "mount path/to/mount \n  creates mount $current_pwd/path/to/mount" ;;
+        umount)                echo -e "umount path/to/mount \n  destroys mount $current_pwd/path/to/mount" ;;
+        cd)                    echo -e "cd path/to/secret \n  changes to directory $current_pwd/path/to/secret" ;;
+        ls)                    echo -e "ls path/to/secret \n  lists paths and keys on $current_pwd/path/to/secret" ;;
+        tree)                  echo -e "tree path/to/secret \n  prints vault's secrets tree with $current_pwd/path/to/secret as its root" ;;
+        cptree)                echo -e "cptree path/to/secret path/to/other_secret \n  copies tree to destination path $current_pwd/path/to/other_secret" ;;
+        rmtree)                echo -e "rmtree path/to/secret \n  removes path $current_pwd/path/to/secret recursively" ;;
+        backup)                echo -e "backup path/ \n  backs up Vault /path to $TMP folder" ;;
+        restore)               echo -e "restore \n  restores Vault backup" ;;
+        cat)                   echo -e "cat path/to/secret \n  shows contents of key $current_pwd/path/to/secret" ;;
+        cp)                    echo -e "cp path/to/secret path/to/other_secret \n  copies contents of path to path $current_pwd/path/to/other_secret" ;;
+        getcert)               echo -e "getcert path/to/secret \n  downloads certificate CRT and KEY stored in $current_pwd/path/to/secret" ;;
+        certinfo)              echo -e "certinfo path/to/secret \n  shows certificate info stored in $current_pwd/path/to/secret" ;;
+        getkrb)                echo -e "getkrb path/to/secret \n  exports keytab file to $TMP/principal.keytab" ;;
+        krbinfo)               echo -e "krbinfo path/to/secret \n  shows principal & keytab info stored in $current_pwd/path/to/secret" ;;
+        mv)                    echo -e "mv path/to/secret path/to/other_secret \n  moves contents of path to path $current_pwd/path/to/other_secret" ;;
+        put)                   echo -e "put path/to/secret { \"key\": \"value\" } \n  adds json={ \"key\": \"value\" } to $current_pwd/path/to/secret" ;;
+        rm)                    echo -e "rm path/to/secret \n  removes key $current_pwd/path/to/secret" ;;
+        history)               echo -e "history \n  shows vcli history" ;;
+        verbose)               echo -e "toggle verbosity" ;;
+        enable-debug)          echo -e "enable debugging" ;;
+        disable-debug)         echo -e "disable debugging" ;;
+        enable-hexdump-debug)  echo -e "enable input hexdump debugging";;
+        disable-hexdump-debug) echo -e "disable input hexdump debugging";;
+        exit)                  echo -e "exit \n  exits vcli" ;;
+        *)                     echo -e "unkown '$arg' vcli command\navailable commands [mount|umount|cd|ls|tree|cptree|rmtree|backup|restore|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|rm|history|exit|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug]" ;;
     esac
 }
 
@@ -486,6 +495,13 @@ function run_cmd(){
             help)                   commands_help "$arg1" ;;
             enable-debug)           echo "debug enabled" ; DEBUG="yes";;
             disable-debug)          echo "debug disabled" ; DEBUG="no";;
+            verbose)                if [[ $VERBOSE == "yes" ]]; then
+                                        echo "verbose mode OFF"
+                                        VERBOSE="no"
+                                    else
+                                        echo "verbose mode ON"
+                                        VERBOSE="yes"
+                                    fi ;;
             enable-hexdump-debug)   echo "hexdump debug enabled" ; DEBUG_HEXDUMP="yes";;
             disable-hexdump-debug)  echo "hexdump debug disabled" ; DEBUG_HEXDUMP="no";;
             \#*)                    return;; # ignore commented lines
@@ -1034,7 +1050,7 @@ function _put(){
 # validate and show principals and keytab info
 function _krbinfo(){
     local url="$1"
-    local certs tmp
+    local tmp _keys
     # Get principals and store them in ${princs[@]}
     declare -A princs
     if [[ ! $url ]]; then
@@ -1046,12 +1062,12 @@ function _krbinfo(){
     eval "$(_cat "$url" | jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" | sed -e "s/^\"//" -e "s/\"$//" -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
     backIFS=$IFS
     IFS=$' '
-    keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
-    for key in $keys ; do
-        value=${princs[$key]}
-        key="\"${key}_keytab\""
+    _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
+    for _key in $_keys ; do
+        value=${princs[$_key]}
+        _key="\"${_key}_keytab\""
         tmp=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
-        _cat "$url" | jq ".data .${key}" | tr -d '"' | base64 -d > "$tmp"
+        _cat "$url" | jq ".data .${_key}" | tr -d '"' | base64 -d > "$tmp"
         echo -en "\n${BOLD}principal$NONE: $CYAN${value//\"/}$NONE"
         if ! klist -kt "$tmp" | grep -v "Keytab name:" | grep -q "${value//\"/}"; then
             echo -e " ${RED}NOT FOUND${NONE} ${BOLD}in keytab!${NONE}"
@@ -1067,7 +1083,7 @@ function _krbinfo(){
 # download keytab to /tmp
 function _getkrb(){
     local url="$1"
-    local certs tmp
+    local tmp _keys
     # Get principals and store them in ${princs[@]}
     declare -A princs
     if [[ ! $url ]]; then
@@ -1079,14 +1095,14 @@ function _getkrb(){
     eval "$(_cat "$url" | jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" | sed -e "s/^\"//" -e "s/\"$//" -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
     backIFS=$IFS
     IFS=$' '
-    keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
+    _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
     echo "Exporting keytabs..."
-    for key in $keys ; do
-        value=${princs[$key]}
+    for _key in $_keys ; do
+        value=${princs[$_key]}
         value=${value//\"/}
-        key="\"${key}_keytab\""
+        _key="\"${_key}_keytab\""
         tmp=$(mktemp -p /dev/shm -t .getkrb.XXXX)
-        _cat "$url" | jq ".data .${key}" | tr -d '"' | base64 -d > "$tmp"
+        _cat "$url" | jq ".data .${_key}" | tr -d '"' | base64 -d > "$tmp"
         echo "  - ${value} exported to '$TMP/${value//\//_}.keytab'"
         cp "$tmp" "$TMP/${value//\//_}.keytab"
         rm -f "$tmp"
@@ -1098,39 +1114,39 @@ function _getkrb(){
 # validate that crt and key match and show certificate info
 function _certinfo(){
     local url="$1"
-    local CRT KEY secret
+    local _CRT _KEY secret
     if [[ ! $url ]]; then
         echo "Error! Missing cert path"
         commands_help "certinfo"
         return
     fi
-    local certs cert shacrt keys key shakey
+    local _certs _cert shacrt _keys _key shakey
     _cat "$url" > /dev/null 2>&1
     backIFS=$IFS
     IFS=$' '
-    certs=( $(_cat "$url" | jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" | tr -t '\n' ' ' | sort) )
-    keys=( $(_cat "$url" | jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" | tr -t '\n' ' ' | sort) )
-    for ((n=0;n<${#certs[@]};n++)); do
-        cert=${certs[$n]}
-        key=${keys[$n]}
-        debug "_cat $url | jq .data .$cert"
+    _certs=( $(_cat "$url" | jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" | tr -t '\n' ' ' | sort) )
+    _keys=( $(_cat "$url" | jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" | tr -t '\n' ' ' | sort) )
+    for ((n=0;n<${#_certs[@]};n++)); do
+        _cert=${_certs[$n]}
+        _key=${_keys[$n]}
+        debug "_cat $url | jq .data .$_cert"
         secret=$(_cat "$url")
-        CRT=$(echo -e "$secret" | jq ".data .$cert" | \
+        _CRT=$(echo -e "$secret" | jq ".data .$_cert" | \
                       sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
                           -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
                           -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64 | tr -d '"')
-        KEY=$(echo -e "$secret" | jq ".data .$key" | \
+        _KEY=$(echo -e "$secret" | jq ".data .$key" | \
                       sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
                           -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64 | tr -d '"')
-        shacrt=$(echo -e "$CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
-        shakey=$(echo -e "$KEY" | openssl pkey -pubout -outform pem | sha256sum)
+        shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
+        shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
         echo -en "\n${BOLD}certificate${NONE}: $CYAN${cert//\"/}${NONE}"
         if [[ "$shacrt" != "$shakey" ]]; then
-            echo -e " ${RED}DOESN'T MATCH${NONE} ${BOLD}${key//\"/}${NONE}"
+            echo -e " ${RED}DOESN'T MATCH${NONE} ${BOLD}${_key//\"/}${NONE}"
         else
             echo
         fi
-        echo -e "$CRT" | openssl x509 -text -noout
+        echo -e "$_CRT" | openssl x509 -text -noout
     done
     IFS=$backIFS
 }
@@ -1138,37 +1154,37 @@ function _certinfo(){
 # download certificates crt and key
 function _getcert(){
     local url="$1"
-    local CRT KEY secret
+    local _CRT _KEY secret
     if [[ ! $url ]]; then
         echo "Error! Missing cert path"
         commands_help "getcert"
         return
     fi
-    local certs cert keys key
+    local _certs _cert _keys _key
     _cat "$url" > /dev/null 2>&1
     backIFS=$IFS
     IFS=$' '
-    certs=( $(_cat "$url" | jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" | tr -t '\n' ' ' | sort) )
-    keys=( $(_cat "$url" | jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" | tr -t '\n' ' ' | sort) )
+    _certs=( $(_cat "$url" | jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" | tr -t '\n' ' ' | sort) )
+    _keys=( $(_cat "$url" | jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" | tr -t '\n' ' ' | sort) )
     echo "Exporting certificates..."
-    for ((n=0;n<${#certs[@]};n++)); do
-        cert=${certs[$n]}
-        key=${keys[$n]}
-        debug "_cat $url | jq .data .$cert"
+    for ((n=0;n<${#_certs[@]};n++)); do
+        _cert=${_certs[$n]}
+        _key=${_keys[$n]}
+        debug "_cat $url | jq .data .$_cert"
         secret=$(_cat "$url")
-        CRT=$(echo -e "$secret" | jq ".data .$cert" | \
+        _CRT=$(echo -e "$secret" | jq ".data .$_cert" | \
                       sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
                           -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
                           -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64 | tr -d '"')
-        KEY=$(echo -e "$secret" | jq ".data .$key" | \
+        _KEY=$(echo -e "$secret" | jq ".data .$_key" | \
                       sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
                           -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64 | tr -d '"')
-        cert=${cert//\"/}
-        key=${key//\"/}
-        echo -e "  - ${cert} exported to '$TMP/${cert//_crt/}.crt'"
-        echo -e "$CRT" > "$TMP/${cert//_crt/}.crt"
-        echo -e "  - ${key} exported to '$TMP/${key//_key/}.key'"
-        echo -e "$KEY" > "$TMP/${key//_key/}.key"
+        _cert=${_cert//\"/}
+        _key=${_key//\"/}
+        echo -e "  - ${_cert} exported to '$TMP/${_cert//_crt/}.crt'"
+        echo -e "$_CRT" > "$TMP/${_cert//_crt/}.crt"
+        echo -e "  - ${_key} exported to '$TMP/${_key//_key/}.key'"
+        echo -e "$_KEY" > "$TMP/${_key//_key/}.key"
     done
     IFS=$backIFS
     echo "done."
@@ -1243,15 +1259,15 @@ function main(){
     # Begin iteration
     IFS=
     while true; do
-        lastkey=$key
+        lastkey=$_key
         # read key and process
-        read -sN1 key
-        case $key in
+        read -sN1 _key
+        case $_key in
             $'\x1b')
-                read -rsn1 -t 0.001 key # flush read
-                if [[ $key == "[" ]]; then # CURSORS & SPECIAL CHARS
-                    read -rsn1 -t 0.001 key # flush read again
-                    case $key in
+                read -rsn1 -t 0.001 _key # flush read
+                if [[ $_key == "[" ]]; then # CURSORS & SPECIAL CHARS
+                    read -rsn1 -t 0.001 _key # flush read again
+                    case $_key in
                         $'\x41') # up cursor: older history
                             get_prev_cmd
                         ;;
@@ -1273,9 +1289,9 @@ function main(){
                             fi
                         ;;
                     esac
-                elif [[ $key == "O" ]]; then # HOME & END KEYS
-                    read -rsn1 -t 0.001 key # flush read again
-                    case $key in
+                elif [[ $_key == "O" ]]; then # HOME & END KEYS
+                    read -rsn1 -t 0.001 _key # flush read again
+                    case $_key in
                         $'\x46') # END
                                 [[ $len != 0 ]] && tput cuf $((len-pos+1)) # move cursor right to the end
                                 let pos=len+1
@@ -1305,7 +1321,7 @@ function main(){
                     let len-=1
                     let pos-=1
                     tmpmsg="${#cmd}: \"$cmd\""
-                    # remove $key in $((pos-1))
+                    # remove $_key in $((pos-1))
                     cmd="${cmd:0:$((pos-1))}${cmd:$((pos)):${#cmd}}"
                     tput el # clean to the end of the line
                     restcmd="${cmd:$((pos-1)):${#cmd}}"
@@ -1387,22 +1403,22 @@ function main(){
             ;;
             $'\x20'|*) # NORMAL CHARS
                 tput ich 1 # insert chars rather than overwriting them
-                echo -n "$key" #| hexdump -C
+                echo -n "$_key" #| hexdump -C
                 let len+=1
                 let pos+=1
                 tmpmsg="${#cmd}: \"$cmd\""
-                # insert $key in $pos within $cmd string
-                cmd="${cmd:0:$((pos-2))}$key${cmd:$((pos-2)):${#cmd}}"
+                # insert $_key in $pos within $cmd string
+                cmd="${cmd:0:$((pos-2))}$_key${cmd:$((pos-2)):${#cmd}}"
                 debug " => ${#cmd}: \"$cmd\""
                 debug "pos: $pos, len: $len"
             ;;
         esac
         # Exit history search mode
-        if [[ "$key" != $lastkey ]] && [[ "$key" != $'\x12' ]]; then
+        if [[ "$_key" != $lastkey ]] && [[ "$_key" != $'\x12' ]]; then
             debug "exiting history search mode"
             unset SEARCHIST search_cmd tmp_history
         fi
-        [[ $DEBUG_HEXDUMP == "yes" ]] && debug "\nhexdump: \n $(echo -n "$key" | hexdump -C)"
+        [[ $DEBUG_HEXDUMP == "yes" ]] && debug "\nhexdump: \n $(echo -n "$_key" | hexdump -C)"
         # print prompt if commadn was run
         if [[ $is_command ]]; then prompt ; unset is_command cmd pos len ; history_index=-1 ; pos=1; fi
     done
