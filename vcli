@@ -80,7 +80,7 @@ function debug(){
 function is_cmd(){
     local cmd="$1"
     case $cmd in
-        mount*|umount*|cd*|ls*|tree*|cptree*|rmtree*|backup*|restore*|cat*|cp*|getcert*|certinfo*|getkrb*|krbinfo*|mv*|put*|rm*|exit*|help*|history|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
+        mount*|umount*|cd*|ls*|tree*|cptree*|rmtree*|backup*|restore*|cat*|cp*|getcert*|certinfo*|getkrb*|krbinfo*|mv*|put*|addsecret*|rm*|exit*|help*|history|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
         ""|*) return 1;;
     esac
 }
@@ -90,7 +90,7 @@ function completion(){
     debug "run completion"
     local -a tmparray
     local found _cmd _path _args _secret paths
-    local commands=( "mount" "umount" "cd" "ls" "tree" "cptree" "rmtree" "backup" "restore" "cat" "cp" "getcert" "certinfo" "getkrb" "krbinfo" "mv" "put" "rm" "exit" "help" "history" "verbose" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
+    local commands=( "mount" "umount" "cd" "ls" "tree" "cptree" "rmtree" "backup" "restore" "cat" "cp" "getcert" "certinfo" "getkrb" "krbinfo" "mv" "put" "addsecret" "rm" "exit" "help" "history" "verbose" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
     IFS=' ' read _cmd _path _args< <(echo "$@")
     debug "cmd: $_cmd, path: $_path"
     # complete command
@@ -336,7 +336,7 @@ EOH
 function commands_help(){
     local arg="$1"
     if [[ ! $arg ]]; then
-        echo -e "available commands [mount|umount|cd|ls|tree|cptree|rmtree|backup*|restore*|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|rm|history|exit|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug]"
+        echo -e "available commands [mount|umount|cd|ls|tree|cptree|rmtree|backup*|restore*|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|addsecret|rm|history|exit|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug]"
         return
     fi
     case $arg in
@@ -357,6 +357,7 @@ function commands_help(){
         krbinfo)               echo -e "krbinfo path/to/secret \n  shows principal & keytab info stored in $current_pwd/path/to/secret" ;;
         mv)                    echo -e "mv path/to/secret path/to/other_secret \n  moves contents of path to path $current_pwd/path/to/other_secret" ;;
         put)                   echo -e "put path/to/secret { \"key\": \"value\" } \n  adds json={ \"key\": \"value\" } to $current_pwd/path/to/secret" ;;
+        addsecret)             echo -e "addsecret path/to/secret { \"key2\": \"value2\" } \n  adds secret { \"key2\": \"value2\" } to existing data on $current_pwd/path/to/secret" ;;
         rm)                    echo -e "rm path/to/secret \n  removes key $current_pwd/path/to/secret" ;;
         history)               echo -e "history \n  shows vcli history" ;;
         verbose)               echo -e "toggle verbosity" ;;
@@ -365,7 +366,7 @@ function commands_help(){
         enable-hexdump-debug)  echo -e "enable input hexdump debugging";;
         disable-hexdump-debug) echo -e "disable input hexdump debugging";;
         exit)                  echo -e "exit \n  exits vcli" ;;
-        *)                     echo -e "unkown '$arg' vcli command\navailable commands [mount|umount|cd|ls|tree|cptree|rmtree|backup|restore|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|rm|history|exit|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug]" ;;
+        *)                     echo -e "unkown '$arg' vcli command\navailable commands [mount|umount|cd|ls|tree|cptree|rmtree|backup|restore|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|addsecret|rm|history|exit|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug]" ;;
     esac
 }
 
@@ -481,6 +482,7 @@ function run_cmd(){
             restore)                backIFS=$IFS; IFS=$' ' ; _restore "$arg1" ; IFS=$backIFS;;
             cat)                    _cat "$arg1" ;;
             put)                    _put "$arg1" "$arg2" ;;
+            addsecret)              _addsecret "$arg1" "$arg2" ;;
             rm)                     _rm "$arg1" ;;
             cp)                     _cp "$arg1" "$arg2" ;;
             getcert)                _getcert "$arg1" ;;
@@ -956,6 +958,30 @@ function _cat(){
     debug "cat: url=$url"
     local arg="$2"
     _curl $disable_f "$url" "$arg"
+}
+
+
+# addsecret function
+function _addsecret(){
+    local url="$1"
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd$url"
+    fi
+    local data="$2"
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "addsecret"
+        return
+    fi
+    if [[ ! $data ]]; then
+        echo "Error! Missing secret data"
+        commands_help "addsecret"
+        return
+    fi
+    secret=$(_cat "$url" | jq ".data" | tr -d '\n')
+    data="${secret/\}},${data/\{}"
+    debug "addsecret: url=$url $secret => $data"
+    _put "$url" "$data"
 }
 
 # cp function
