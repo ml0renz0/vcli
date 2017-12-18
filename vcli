@@ -1119,7 +1119,7 @@ function _krbinfo(){
     IFS=$' '
     _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
     for _key in $_keys ; do
-        value=${princs[$_key]}
+        local value=${princs[$_key]}
         _key="\"${_key}_keytab\""
         tmp=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
         _cat "$url" | jq ".data .${_key}" | tr -d '"' | base64 -d > "$tmp"
@@ -1190,12 +1190,13 @@ function _certinfo(){
                       sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
                           -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
                           -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64 | tr -d '"')
-        _KEY=$(echo -e "$secret" | jq ".data .$key" | \
+        debug "_cat $url | jq .data .$_key"
+        _KEY=$(echo -e "$secret" | jq ".data .$_key" | \
                       sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
                           -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64 | tr -d '"')
         shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
         shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
-        echo -en "\n${BOLD}certificate${NONE}: $CYAN${cert//\"/}${NONE}"
+        echo -en "\n${BOLD}certificate${NONE}: $CYAN${_cert//\"/}${NONE}"
         if [[ "$shacrt" != "$shakey" ]]; then
             echo -e " ${RED}DOESN'T MATCH${NONE} ${BOLD}${_key//\"/}${NONE}"
         else
