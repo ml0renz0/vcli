@@ -461,6 +461,7 @@ function _curl(){
             fi
             http_code="${response[1]}"
         fi
+        debug "curl: http_code=$http_code"
         if [[ ! "$http_code" =~ ^2 ]]; then
             return 1
         fi
@@ -515,7 +516,7 @@ function run_cmd(){
             *)                      commands_help "$cmd" ; return 1 ;;
         esac
         debug "run_cmd: $cmd $arg1 $arg2"
-        debug "http_code=$http_code"
+        debug "run_cmd: http_code=$http_code"
         add_cmd "$cmd $arg1 $arg2"
     done< <(echo "$cmd")
 }
@@ -632,18 +633,25 @@ function _ls(){
 
 # lspol list policies
 function _lspol(){
-    _cat /sys/policy | jq '.data .policies'
+    local tmp
+    tmp=$(mktemp -p /dev/shm -t lspol.XXXX)
+    _cat /sys/policy > "$tmp"
+    jq '.data .policies' < "$tmp"
+    rm "$tmp"
 }
 
 # showpol list policy rules
 function _showpol(){
     local policy="$1"
+    local tmp
+    tmp=$(mktemp -p /dev/shm -t lspol.XXXX)
     if [[ ! $policy ]]; then
         echo "Error! Missing policy"
         commands_help "showpol"
         return
     fi
-    _cat /sys/policy/"$policy" | jq ".data .rules" | tr -d '\\' | tr -s ' ' | sed -e "s/^\"//g" -e "s/\"$//g" -e "s/}/ }\n/g" -e "s/^[[:space:]]\+//"
+    _cat /sys/policy/"$policy" > "$tmp"
+     jq ".data .rules" < "$tmp" | tr -d '\\' | tr -s ' ' | sed -e "s/^\"//g" -e "s/\"$//g" -e "s/}/ }\n/g" -e "s/^[[:space:]]\+//"
 }
 
 function padecho(){
