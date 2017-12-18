@@ -80,7 +80,7 @@ function debug(){
 function is_cmd(){
     local cmd="$1"
     case $cmd in
-        mount*|umount*|cd*|ls*|lspol|showpol*|tree*|cptree*|rmtree*|backup*|restore*|cat*|cp*|getcert*|certinfo*|getkrb*|krbinfo*|mv*|put*|addsecret*|rm*|exit*|help*|history|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
+        mount*|umount*|cd*|ls*|lsrole|showrole*|lspol|showpol*|tree*|cptree*|rmtree*|backup*|restore*|cat*|cp*|getcert*|certinfo*|getkrb*|krbinfo*|mv*|put*|addsecret*|rm*|exit*|help*|history|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
         ""|*) return 1;;
     esac
 }
@@ -90,7 +90,7 @@ function completion(){
     debug "run completion"
     local -a tmparray
     local found _cmd _path _args _secret paths
-    local commands=( "mount" "umount" "cd" "ls" "lspol" "showpol" "tree" "cptree" "rmtree" "backup" "restore" "cat" "cp" "getcert" "certinfo" "getkrb" "krbinfo" "mv" "put" "addsecret" "rm" "exit" "help" "history" "verbose" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
+    local commands=( "mount" "umount" "cd" "ls" "lsrole" "showrole" "lspol" "showpol" "tree" "cptree" "rmtree" "backup" "restore" "cat" "cp" "getcert" "certinfo" "getkrb" "krbinfo" "mv" "put" "addsecret" "rm" "exit" "help" "history" "verbose" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
     IFS=' ' read _cmd _path _args< <(echo "$@")
     debug "cmd: $_cmd, path: $_path"
     # complete command
@@ -335,7 +335,7 @@ EOH
 # Print commands help
 function commands_help(){
     local arg="$1"
-      local commands="mount|umount|cd|ls|lspol|showpol|tree|cptree|rmtree|backup|restore|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|addsecret|rm|history|exit|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug"
+      local commands="mount|umount|cd|ls|lsrole|showrole|lspol|showpol|tree|cptree|rmtree|backup|restore|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|addsecret|rm|history|exit|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug"
     if [[ ! $arg ]]; then
         echo -e "available commands [$commands]"
         return
@@ -345,6 +345,8 @@ function commands_help(){
         umount)                echo -e "umount path/to/mount \n  destroys mount $current_pwd/path/to/mount" ;;
         cd)                    echo -e "cd path/to/secret \n  changes to directory $current_pwd/path/to/secret" ;;
         ls)                    echo -e "ls path/to/secret \n  lists paths and keys on $current_pwd/path/to/secret" ;;
+        lsrole)                echo -e "lspol \n  lists Vault roles" ;;
+        showrole)              echo -e "showrole myrole \n  shows Vault role named myrole" ;;
         lspol)                 echo -e "lspol \n  lists Vault policies" ;;
         showpol)               echo -e "showpol mypolicy \n  shows Vault policy named mypolicy" ;;
         tree)                  echo -e "tree path/to/secret \n  prints vault's secrets tree with $current_pwd/path/to/secret as its root" ;;
@@ -479,6 +481,8 @@ function run_cmd(){
         case $cmd in
             cd)                     _cd "$arg1" ;;
             ls)                     _ls "$arg1" ;;
+            lsrole)                 _lsrole ;;
+            showrole)               _showrole "$arg1" ;;
             lspol)                  _lspol ;;
             showpol)                _showpol "$arg1" ;;
             tree)                   backIFS=$IFS; IFS=$' ' ; _tree "$arg1" ; IFS=$backIFS;;
@@ -631,6 +635,30 @@ function _ls(){
     _curl "$url"
 }
 
+# lsrole list roles
+function _lsrole(){
+    local tmp
+    tmp=$(mktemp -p /dev/shm -t lsrole.XXXX)
+    _cat /auth/approle/role?list=true > "$tmp"
+    jq '.data .keys' < "$tmp"
+    rm "$tmp"
+}
+
+# showpol list role policies
+function _showrole(){
+    local role="$1"
+    local tmp
+    if [[ ! $role ]]; then
+        echo "Error! Missing role"
+        commands_help "showrole"
+        return
+    fi
+    tmp=$(mktemp -p /dev/shm -t lspol.XXXX)
+    _cat /auth/approle/role/"$role" > "$tmp"
+    jq ".data .policies" < "$tmp"
+    rm "$tmp"
+}
+
 # lspol list policies
 function _lspol(){
     local tmp
@@ -644,14 +672,15 @@ function _lspol(){
 function _showpol(){
     local policy="$1"
     local tmp
-    tmp=$(mktemp -p /dev/shm -t lspol.XXXX)
     if [[ ! $policy ]]; then
         echo "Error! Missing policy"
         commands_help "showpol"
         return
     fi
+    tmp=$(mktemp -p /dev/shm -t lspol.XXXX)
     _cat /sys/policy/"$policy" > "$tmp"
-     jq ".data .rules" < "$tmp" | tr -d '\\' | tr -s ' ' | sed -e "s/^\"//g" -e "s/\"$//g" -e "s/}/ }\n/g" -e "s/^[[:space:]]\+//"
+    jq ".data .rules" < "$tmp" | tr -d '\\' | tr -s ' ' | sed -e "s/^\"//g" -e "s/\"$//g" -e "s/}/ }\n/g" -e "s/^[[:space:]]\+//"
+    rm "$tmp"
 }
 
 function padecho(){
