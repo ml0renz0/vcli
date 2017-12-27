@@ -121,12 +121,9 @@ function completion(){
             unset _path
         fi
         debug "2 path: $_path, secret: $_secret"
-        if [[ ! $_path ]] || [[ $_path == "/" ]]; then
-            paths=$(_ls "$_path" | grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-        # if $url is other than root
-        else
-            paths=$(_ls "$_path" | jq '.data .keys' |grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-        fi
+        paths=$(_ls "-_disable_colors_-" "$_path" | tr -t '\n' ' ' | tr -s ' ')
+        debug "DEBUG: $(_ls "-_disable_colors_-" "$_path" | tr -t '\n' ' ' | tr -s ' ')"
+
         backIFS=$IFS
         IFS=$' '
         for p in $paths; do
@@ -457,7 +454,7 @@ function _curl(){
             http_code="${response[0]}"
         else
             if [[ $ROOT_QUERY ]]; then
-                echo "${response[0]}" | jq '.data | keys'
+                echo "${response[0]}" | jq '.data | keys[]'
             else
                 echo "${response[0]}" | jq ''
             fi
@@ -606,7 +603,7 @@ function _cd(){
     else
         current_pwd="/"
     fi
-    if [[ $url != "/" ]] && [[ "$1" != ".." ]] && ! _ls "$url" | grep -q "request_id"; then
+    if [[ $url != "/" ]] && [[ "$1" != ".." ]] && ! _ls "$url" | grep -q "."; then
         echo "Error! '$url' not found"
     elif [[ $url != "/" ]]; then
         current_pwd="$url"
@@ -618,21 +615,38 @@ function _cd(){
 
 # ls function
 function _ls(){
-    local url
+    local url tmp
+    if [[ $1 == "-_disable_colors_-" ]]; then
+        local disable_colors="yes"
+        shift
+    fi
     if [[ ! $1 =~ ^/ ]]; then
         url="$current_pwd/$1"
     else
         url="$1"
     fi
     if [[ $url == '/' ]]; then
-        _cat /sys/mounts "-_list_root_-"
+        if [[ $disable_colors ]]; then
+            _cat /sys/mounts "-_list_root_-" | tr -d '"'
+        else
+            _cat /sys/mounts "-_list_root_-" | tr -d '"' | sed -e "s/\//$CYAN\/$NONE/"
+        fi
         return
     elif [[ $url ]]; then
         url="$url?list=true"
     else
         url="$current_pwd?list=true"
     fi
-    _curl "$url"
+    if [[ $disable_colors ]]; then
+        tmp=$(mktemp -p /dev/shm -t ls.XXXX)
+        _curl "$url" > "$tmp"
+        jq '.data .keys[]' < "$tmp" | tr -d '"'
+    else
+        tmp=$(mktemp -p /dev/shm -t ls.XXXX)
+        _curl "$url" > "$tmp"
+        jq '.data .keys[]' < "$tmp" | tr -d '"' | sed -e "s/\//$CYAN\/$NONE/"
+    fi
+    rm -f "$tmp"
 }
 
 # lsrole list roles
@@ -707,7 +721,7 @@ function _tree(){
     if [[ ! $1 =~ ^/ ]]; then
         url="$current_pwd$1"
     else
-        url="$(echo "$1" | tr -s '/')"
+        url=${url//\/\//\/}
     fi
     local depth="$2"
     local space="$3"
@@ -722,12 +736,7 @@ function _tree(){
     debug "${echo_space}tree: '$url', depth: $depth, space: \"$space\""
     # if $url is /
     padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
-    if [[ $url == "/" ]] || [[ ! $url ]]; then
-        paths=$(_ls "$url" | grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-    # if $url is other than root
-    else
-        paths=$(_ls "$url" | jq '.data .keys' |grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-    fi
+    paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
 
     for path in $paths; do
         debug "${echo_space}   depth: $depth => found: $paths"
@@ -746,7 +755,7 @@ function _cptree(){
     if [[ ! $1 =~ ^/ ]]; then
         url="$current_pwd$1"
     else
-        url="$(echo "$1" | tr -s '/')"
+        url=${url//\/\//\/}
     fi
     local first
     local dest="$2"
@@ -776,12 +785,7 @@ function _cptree(){
     debug "${echo_space}cptree: '$url', depth: $depth, space: \"$space\""
     # if $url is /
     #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
-    if [[ $url == "/" ]] || [[ ! $url ]]; then
-        paths=$(_ls "$url" | grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-    # if $url is other than root
-    else
-        paths=$(_ls "$url" | jq '.data .keys' |grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-    fi
+    paths=$(_ls "-_disable_colors_-" "$url" | sed -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
 
     for path in $paths; do
         debug "${echo_space}   depth: $depth => found: $paths"
@@ -792,8 +796,13 @@ function _cptree(){
             _cptree "$_path" "$dest" "$depth" "$space+ " "$echo_space   " &
         else
             _mount -i "$dest" > /dev/null 2>&1
-            local _dest=${url#*/}
-            _cp "/$url$path" "/$dest/$_dest$path"
+            if [[ ! $url =~ /$ ]]; then
+                url+="/"
+            fi
+            if [[ ! $dest =~ /$ ]]; then
+                dest+="/"
+            fi
+            _cp "$url$path" "$dest$path"
             echo -n "."
         fi
     done
@@ -807,9 +816,9 @@ function _cptree(){
 function _rmtree(){
     local url
     if [[ ! $1 =~ ^/ ]]; then
-        url="$current_pwd$1"
+        url="$current_pwd$1/"
     else
-        url="$(echo "$1" | tr -s '/')"
+        url=${url//\/\//\/}
     fi
     local first
     local depth="$2"
@@ -832,12 +841,7 @@ function _rmtree(){
     debug "${echo_space}rmtree: '$url', depth: $depth, space: \"$space\""
     # if $url is /
     #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
-    if [[ $url == "/" ]] || [[ ! $url ]]; then
-        paths=$(_ls "$url" | grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-    # if $url is other than root
-    else
-        paths=$(_ls "$url" | jq '.data .keys' |grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-    fi
+    paths=$(_ls "-_disable_colors_-" "$url" | sed -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
 
     for path in $paths; do
         debug "${echo_space}   depth: $depth => found: $paths"
@@ -860,12 +864,16 @@ function _rmtree(){
 
 # backup vault
 function _backup(){
-    local url
+    local url backupath
     if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd$1"
+        url="$current_pwd/$1/"
     else
-        url="$(echo "$1" | tr -s '/')"
+        url="$1/"
     fi
+    url=${url//\/\//\/}
+    backupath=${url//\//-}
+    backupath=${backupath#-}
+    backupath=${backupath%-}
     if [[ $1 == "" ]]; then
         url="/"
     fi
@@ -880,14 +888,14 @@ function _backup(){
         return
     fi
     # Check for $url existence
-    if ( [[ $url != "/" ]] && ! _ls "$url" | grep -q "request_id" ) || [[ "$url" == ".." ]]; then
+    if ( [[ $url != "/" ]] && ! _ls  "-_disable_colors_-" "$url" | grep -q "." ) || [[ "$url" == ".." ]]; then
         debug "${echo_space}Error! '$url' doesn't exist or contains no secrets. Relative references like '..' are not supported"
         return
     fi
     if [[ ! $dest ]]; then
         if [[ $url != "/" ]]; then
-            dest="$(mktemp -d -p /dev/shm -t backup_vault-${url/\/}."$(date +%d-%m-%Y@%H:%M:%S)".XXXX)"
-            destfile="$TMP/backup_vault-${url/\/}.$(date +%d-%m-%Y@%H:%M:%S).tgz"
+            dest="$(mktemp -d -p /dev/shm -t backup_vault_"$backupath"."$(date +%d-%m-%Y@%H:%M:%S)".XXXX)"
+            destfile="$TMP/backup_vault_$backupath.$(date +%d-%m-%Y@%H:%M:%S).tgz"
         else
             dest="$(mktemp -d -p /dev/shm -t backup_vault."$(date +%d-%m-%Y@%H:%M:%S)".XXXX)"
             destfile="$TMP/backup_vault.$(date +%d-%m-%Y@%H:%M:%S).tgz"
@@ -906,15 +914,10 @@ function _backup(){
         unset first
         let depth++
     fi
-    debug "${echo_space}backup: '$url', depth: $depth, space: \"$space\""
+    debug "${echo_space}backup: '$url', depth: $depth, dest: $dest, space: \"$space\""
     # if $url is /
     #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
-    if [[ $url == "/" ]] || [[ ! $url ]]; then
-        paths=$(_ls "$url" | grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-    # if $url is other than root
-    else
-        paths=$(_ls "$url" | jq '.data .keys' |grep "\"" | sed -e "s/\"//g" -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-    fi
+    paths=$(_ls "-_disable_colors_-" "$url" | sed -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
 
     debug "${echo_space}   depth: $depth => found: $paths"
     for path in $paths; do
@@ -1134,7 +1137,7 @@ function _put(){
 # validate and show principals and keytab info
 function _krbinfo(){
     local url="$1"
-    local tmp _keys
+    local tmp tmp2 _keys
     # Get principals and store them in ${princs[@]}
     declare -A princs
     if [[ ! $url ]]; then
@@ -1142,32 +1145,34 @@ function _krbinfo(){
         commands_help "krbinfo"
         return
     fi
-    _cat "$url" > /dev/null 2>&1
-    eval "$(_cat "$url" | jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" | sed -e "s/^\"//" -e "s/\"$//" -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
+    tmp=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
+    _cat "$url" > "$tmp"
+    eval "$(jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" < "$tmp" | sed -e "s/^\"//" -e "s/\"$//" -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
     backIFS=$IFS
     IFS=$' '
     _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
     for _key in $_keys ; do
         local value=${princs[$_key]}
         _key="\"${_key}_keytab\""
-        tmp=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
-        _cat "$url" | jq ".data .${_key}" | tr -d '"' | base64 -d > "$tmp"
+        tmp2=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
+        jq ".data .${_key}" < "$tmp" | tr -d '"' | base64 -d > "$tmp2"
         echo -en "\n${BOLD}principal$NONE: $CYAN${value//\"/}$NONE"
-        if ! klist -kt "$tmp" | grep -v "Keytab name:" | grep -q "${value//\"/}"; then
+        if ! klist -kt "$tmp2" | grep -v "Keytab name:" | grep -q "${value//\"/}"; then
             echo -e " ${RED}NOT FOUND${NONE} ${BOLD}in keytab!${NONE}"
         else
             echo
         fi
-        klist -kte "$tmp" | grep -v "Keytab name:"
-        rm -f "$tmp"
+        klist -kte "$tmp2" | grep -v "Keytab name:"
+        rm -f "$tmp2"
     done
+    rm -f "$tmp"
     IFS=$backIFS
 }
 
 # download keytab to /tmp
 function _getkrb(){
     local url="$1"
-    local tmp _keys
+    local tmp tmp2 _keys
     # Get principals and store them in ${princs[@]}
     declare -A princs
     if [[ ! $url ]]; then
@@ -1175,8 +1180,9 @@ function _getkrb(){
         commands_help "getkrb"
         return
     fi
-    _cat "$url" > /dev/null 2>&1
-    eval "$(_cat "$url" | jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" | sed -e "s/^\"//" -e "s/\"$//" -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
+    tmp=$(mktemp -p /dev/shm -t .getkrb.XXXX)
+    _cat "$url" > "$tmp"
+    eval "$(jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" < "$tmp" | sed -e "s/^\"//" -e "s/\"$//" -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
     backIFS=$IFS
     IFS=$' '
     _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
@@ -1185,42 +1191,43 @@ function _getkrb(){
         value=${princs[$_key]}
         value=${value//\"/}
         _key="\"${_key}_keytab\""
-        tmp=$(mktemp -p /dev/shm -t .getkrb.XXXX)
-        _cat "$url" | jq ".data .${_key}" | tr -d '"' | base64 -d > "$tmp"
+        tmp2=$(mktemp -p /dev/shm -t .getkrb.XXXX)
+        jq ".data .${_key}" < "$tmp" | tr -d '"' | base64 -d > "$tmp2"
         echo "  - ${value} exported to '$TMP/${value//\//_}.keytab'"
-        cp "$tmp" "$TMP/${value//\//_}.keytab"
-        rm -f "$tmp"
+        cp "$tmp2" "$TMP/${value//\//_}.keytab"
+        rm -f "$tmp2"
     done
     echo "done."
+    rm -f "$tmp"
     IFS=$backIFS
 }
 
 # validate that crt and key match and show certificate info
 function _certinfo(){
     local url="$1"
-    local _CRT _KEY secret
+    local _CRT _KEY
     if [[ ! $url ]]; then
         echo "Error! Missing cert path"
         commands_help "certinfo"
         return
     fi
     local _certs _cert shacrt _keys _key shakey
-    _cat "$url" > /dev/null 2>&1
+    tmp=$(mktemp -p /dev/shm -t .certinfo.XXXX)
+    _cat "$url" > "$tmp"
     backIFS=$IFS
     IFS=$' '
-    _certs=( $(_cat "$url" | jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" | tr -t '\n' ' ' | sort) )
-    _keys=( $(_cat "$url" | jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" | tr -t '\n' ' ' | sort) )
+    _certs=( $(jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
+    _keys=( $(jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
     for ((n=0;n<${#_certs[@]};n++)); do
         _cert=${_certs[$n]}
         _key=${_keys[$n]}
-        debug "_cat $url | jq .data .$_cert"
-        secret=$(_cat "$url")
-        _CRT=$(echo -e "$secret" | jq ".data .$_cert" | \
+        debug "jq .data .$_cert < $tmp"
+        _CRT=$(jq ".data .$_cert" < "$tmp" | \
                       sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
                           -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
                           -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64 | tr -d '"')
-        debug "_cat $url | jq .data .$_key"
-        _KEY=$(echo -e "$secret" | jq ".data .$_key" | \
+        debug "jq .data .$_key < $tmp"
+        _KEY=$(jq ".data .$_key" < "$tmp"  | \
                       sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
                           -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64 | tr -d '"')
         shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
@@ -1233,35 +1240,36 @@ function _certinfo(){
         fi
         echo -e "$_CRT" | openssl x509 -text -noout
     done
+    rm -f "$tmp"
     IFS=$backIFS
 }
 
 # download certificates crt and key
 function _getcert(){
     local url="$1"
-    local _CRT _KEY secret
+    local _CRT _KEY
     if [[ ! $url ]]; then
         echo "Error! Missing cert path"
         commands_help "getcert"
         return
     fi
     local _certs _cert _keys _key
-    _cat "$url" > /dev/null 2>&1
+    tmp=$(mktemp -p /dev/shm -t .getcert.XXXX)
+    _cat "$url" > "$tmp"
     backIFS=$IFS
     IFS=$' '
-    _certs=( $(_cat "$url" | jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" | tr -t '\n' ' ' | sort) )
-    _keys=( $(_cat "$url" | jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" | tr -t '\n' ' ' | sort) )
+    _certs=( $(jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
+    _keys=( $(jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
     echo "Exporting certificates..."
     for ((n=0;n<${#_certs[@]};n++)); do
         _cert=${_certs[$n]}
         _key=${_keys[$n]}
-        debug "_cat $url | jq .data .$_cert"
-        secret=$(_cat "$url")
-        _CRT=$(echo -e "$secret" | jq ".data .$_cert" | \
+        debug "jq .data .$_cert < $tmp"
+        _CRT=$(jq ".data .$_cert" < "$tmp" | \
                       sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
                           -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
                           -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64 | tr -d '"')
-        _KEY=$(echo -e "$secret" | jq ".data .$_key" | \
+        _KEY=$(jq ".data .$_key" < "$tmp" | \
                       sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
                           -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64 | tr -d '"')
         _cert=${_cert//\"/}
@@ -1272,6 +1280,7 @@ function _getcert(){
         echo -e "$_KEY" > "$TMP/${_key//_key/}.key"
     done
     IFS=$backIFS
+    rm -f "$tmp"
     echo "done."
 }
 
