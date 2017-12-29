@@ -454,9 +454,9 @@ function _curl(){
             http_code="${response[0]}"
         else
             if [[ $ROOT_QUERY ]]; then
-                echo "${response[0]}" | jq '.data | keys[]'
+                echo "${response[0]}" | jq '.data | keys[]' -r
             else
-                echo "${response[0]}" | jq ''
+                echo "${response[0]}" | jq '' -r
             fi
             http_code="${response[1]}"
         fi
@@ -640,11 +640,11 @@ function _ls(){
     if [[ $disable_colors ]]; then
         tmp=$(mktemp -p /dev/shm -t ls.XXXX)
         _curl "$url" > "$tmp"
-        jq '.data .keys[]' < "$tmp" | tr -d '"'
+        jq '.data .keys[]' -r < "$tmp"
     else
         tmp=$(mktemp -p /dev/shm -t ls.XXXX)
         _curl "$url" > "$tmp"
-        jq '.data .keys[]' < "$tmp" | tr -d '"' | sed -e "s/\//$CYAN\/$NONE/"
+        jq '.data .keys[]' -r < "$tmp" | sed -e "s/\//$CYAN\/$NONE/"
     fi
     rm -f "$tmp"
 }
@@ -654,7 +654,7 @@ function _lsrole(){
     local tmp
     tmp=$(mktemp -p /dev/shm -t lsrole.XXXX)
     _cat /auth/approle/role?list=true > "$tmp"
-    jq '.data .keys' < "$tmp"
+    jq '.data .keys[]' -r < "$tmp"
     rm "$tmp"
 }
 
@@ -667,9 +667,9 @@ function _showrole(){
         commands_help "showrole"
         return
     fi
-    tmp=$(mktemp -p /dev/shm -t lspol.XXXX)
+    tmp=$(mktemp -p /dev/shm -t showrole.XXXX)
     _cat /auth/approle/role/"$role" > "$tmp"
-    jq ".data .policies" < "$tmp"
+    jq ".data .policies[]" -r < "$tmp"
     rm "$tmp"
 }
 
@@ -678,7 +678,7 @@ function _lspol(){
     local tmp
     tmp=$(mktemp -p /dev/shm -t lspol.XXXX)
     _cat /sys/policy > "$tmp"
-    jq '.data .policies' < "$tmp"
+    jq '.data .policies[]' -r < "$tmp"
     rm "$tmp"
 }
 
@@ -691,9 +691,9 @@ function _showpol(){
         commands_help "showpol"
         return
     fi
-    tmp=$(mktemp -p /dev/shm -t lspol.XXXX)
+    tmp=$(mktemp -p /dev/shm -t showpol.XXXX)
     _cat /sys/policy/"$policy" > "$tmp"
-    jq ".data .rules" < "$tmp" | tr -d '\\' | tr -s ' ' | sed -e "s/^\"//g" -e "s/\"$//g" -e "s/}/ }\n/g" -e "s/^[[:space:]]\+//"
+    jq ".data .rules" -r < "$tmp" | tr -d '\\' | tr -s ' ' | sed -e "s/}/ }\n/g" -e "s/^[[:space:]]\+//"
     rm "$tmp"
 }
 
@@ -1147,7 +1147,7 @@ function _krbinfo(){
     fi
     tmp=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
     _cat "$url" > "$tmp"
-    eval "$(jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" < "$tmp" | sed -e "s/^\"//" -e "s/\"$//" -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
+    eval "$(jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" -r < "$tmp" | sed -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
     backIFS=$IFS
     IFS=$' '
     _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
@@ -1155,9 +1155,9 @@ function _krbinfo(){
         local value=${princs[$_key]}
         _key="\"${_key}_keytab\""
         tmp2=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
-        jq ".data .${_key}" < "$tmp" | tr -d '"' | base64 -d > "$tmp2"
+        jq ".data .${_key}" -r < "$tmp" | base64 -d > "$tmp2"
         echo -en "\n${BOLD}principal$NONE: $CYAN${value//\"/}$NONE"
-        if ! klist -kt "$tmp2" | grep -v "Keytab name:" | grep -q "${value//\"/}"; then
+        if ! klist -kt "$tmp2" | grep -v "Keytab name:" | grep -q "$value"; then
             echo -e " ${RED}NOT FOUND${NONE} ${BOLD}in keytab!${NONE}"
         else
             echo
@@ -1182,7 +1182,7 @@ function _getkrb(){
     fi
     tmp=$(mktemp -p /dev/shm -t .getkrb.XXXX)
     _cat "$url" > "$tmp"
-    eval "$(jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" < "$tmp" | sed -e "s/^\"//" -e "s/\"$//" -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
+    eval "$(jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" -r < "$tmp" | sed -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
     backIFS=$IFS
     IFS=$' '
     _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
@@ -1192,7 +1192,7 @@ function _getkrb(){
         value=${value//\"/}
         _key="\"${_key}_keytab\""
         tmp2=$(mktemp -p /dev/shm -t .getkrb.XXXX)
-        jq ".data .${_key}" < "$tmp" | tr -d '"' | base64 -d > "$tmp2"
+        jq ".data .${_key}" -r < "$tmp" | base64 -d > "$tmp2"
         echo "  - ${value} exported to '$TMP/${value//\//_}.keytab'"
         cp "$tmp2" "$TMP/${value//\//_}.keytab"
         rm -f "$tmp2"
@@ -1221,15 +1221,15 @@ function _certinfo(){
     for ((n=0;n<${#_certs[@]};n++)); do
         _cert=${_certs[$n]}
         _key=${_keys[$n]}
-        debug "jq .data .$_cert < $tmp"
-        _CRT=$(jq ".data .$_cert" < "$tmp" | \
+        debug "jq .data .$_cert -r < $tmp"
+        _CRT=$(jq ".data .$_cert" -r < "$tmp" | \
                       sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
                           -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
-                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64 | tr -d '"')
-        debug "jq .data .$_key < $tmp"
-        _KEY=$(jq ".data .$_key" < "$tmp"  | \
+                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
+        debug "jq .data .$_key -r < $tmp"
+        _KEY=$(jq ".data .$_key" -r < "$tmp"  | \
                       sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
-                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64 | tr -d '"')
+                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
         shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
         shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
         echo -en "\n${BOLD}certificate${NONE}: $CYAN${_cert//\"/}${NONE}"
@@ -1264,14 +1264,15 @@ function _getcert(){
     for ((n=0;n<${#_certs[@]};n++)); do
         _cert=${_certs[$n]}
         _key=${_keys[$n]}
-        debug "jq .data .$_cert < $tmp"
-        _CRT=$(jq ".data .$_cert" < "$tmp" | \
+        debug "jq .data .$_cert -r < $tmp"
+        _CRT=$(jq ".data .$_cert" -r < "$tmp" | \
                       sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
                           -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
-                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64 | tr -d '"')
-        _KEY=$(jq ".data .$_key" < "$tmp" | \
+                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
+        debug "jq .data .$_key -r < $tmp"
+        _KEY=$(jq ".data .$_key" -r < "$tmp" | \
                       sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
-                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64 | tr -d '"')
+                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
         _cert=${_cert//\"/}
         _key=${_key//\"/}
         echo -e "  - ${_cert} exported to '$TMP/${_cert//_crt/}.crt'"
