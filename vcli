@@ -3,6 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
+declare VERSION="0.2.7"
 declare VERBOSE="no"
 declare DEBUG="no"
 declare DEBUG_HEXDUMP="no"
@@ -326,6 +327,7 @@ function rotate_found_cmds(){
 function help(){
     cat <<EOH
 Usage: $0 -v <vault_host> -p <vault_port> -t <vault_token> [-i]
+       $0 --version
 EOH
 }
 
@@ -1289,6 +1291,12 @@ function _getcert(){
 function main(){
     # First of all: check command dependencies
     check_dependency "$DEPENDENCIES"
+
+    # Return vcli version and quit
+    if [[ $* == "--version" ]]; then
+        echo "vcli v$VERSION"
+        exit
+    fi
 
     local tmpmsg
     protocol="https"
