@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.2.7"
+declare VERSION="0.2.8"
 declare VERBOSE="no"
 declare DEBUG="no"
 declare DEBUG_HEXDUMP="no"
@@ -723,7 +723,7 @@ function _tree(){
     if [[ ! $1 =~ ^/ ]]; then
         url="$current_pwd$1"
     else
-        url=${url//\/\//\/}
+        url=${1//\/\//\/}
     fi
     local depth="$2"
     local space="$3"
@@ -757,7 +757,7 @@ function _cptree(){
     if [[ ! $1 =~ ^/ ]]; then
         url="$current_pwd$1"
     else
-        url=${url//\/\//\/}
+        url=${1//\/\//\/}
     fi
     local first
     local dest="$2"
@@ -820,7 +820,7 @@ function _rmtree(){
     if [[ ! $1 =~ ^/ ]]; then
         url="$current_pwd$1/"
     else
-        url=${url//\/\//\/}
+        url=${1//\/\//\/}
     fi
     local first
     local depth="$2"
