@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.2.8"
+declare VERSION="0.2.9"
 declare VERBOSE="no"
 declare DEBUG="no"
 declare DEBUG_HEXDUMP="no"
@@ -52,6 +52,17 @@ function check_connectivity(){
         echo "Cannot establish connection to $protocol://$vault_host:$vault_port"
         exit 1
     fi
+}
+
+# check vcli latest version
+function new_version(){
+    local latest_release
+    latest_release="$(timeout 2 curl -s https://api.github.com/repos/mlorenzo-stratio/vcli/releases/latest | jq -r '.tag_name')"
+    if [[ $latest_release != "" && $VERSION != $latest_release ]]; then
+        echo -e "New version available: $latest_release\nDownload it at: https://github.com/mlorenzo-stratio/vcli/releases/latest"
+        return 0
+    fi
+    return 1
 }
 
 # Print prompt
@@ -1291,12 +1302,20 @@ function _getcert(){
 function main(){
     # First of all: check command dependencies
     check_dependency "$DEPENDENCIES"
+    local msg info
 
     # Return vcli version and quit
-    if [[ $* == "--version" ]]; then
-        echo "vcli v$VERSION"
+    if [[ $@ == "--version" ]]; then
+        msg="vcli v$VERSION"
+        if info=$(new_version 2>&1); then
+            msg+=" (update available)\n$info"
+        fi
+        echo -e "$msg"
         exit
     fi
+
+    # check for new versions
+    if new_version; then sleep 2 ; echo; fi
 
     local tmpmsg
     protocol="https"
