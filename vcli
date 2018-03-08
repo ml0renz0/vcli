@@ -58,7 +58,7 @@ function check_connectivity(){
 function new_version(){
     local latest_release
     latest_release="$(timeout 2 curl -s https://api.github.com/repos/mlorenzo-stratio/vcli/releases/latest | jq -r '.tag_name')"
-    if [[ $latest_release != "" && $VERSION != $latest_release ]]; then
+    if [[ $latest_release != "null" && $VERSION != $latest_release ]]; then
         echo -e "New version available: $latest_release\nDownload it at: https://github.com/mlorenzo-stratio/vcli/releases/latest"
         return 0
     fi
@@ -92,7 +92,7 @@ function debug(){
 function is_cmd(){
     local cmd="$1"
     case $cmd in
-        mount*|umount*|cd*|ls*|lsrole|showrole*|lspol|showpol*|tree*|cptree*|rmtree*|backup*|restore*|cat*|cp*|getcert*|certinfo*|getkrb*|krbinfo*|mv*|put*|addsecret*|rm*|exit*|help*|history|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
+        mount*|umount*|cd*|ls*|lsrole|showrole*|lspol|showpol*|tree*|find*|replace*|cptree*|rmtree*|backup*|restore*|cat*|cp*|getcert*|certinfo*|getkrb*|krbinfo*|mv*|put*|addsecret*|rm*|exit*|help*|history|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
         ""|*) return 1;;
     esac
 }
@@ -102,7 +102,7 @@ function completion(){
     debug "run completion"
     local -a tmparray
     local found _cmd _path _args _secret paths
-    local commands=( "mount" "umount" "cd" "ls" "lsrole" "showrole" "lspol" "showpol" "tree" "cptree" "rmtree" "backup" "restore" "cat" "cp" "getcert" "certinfo" "getkrb" "krbinfo" "mv" "put" "addsecret" "rm" "exit" "help" "history" "verbose" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
+    local commands=( "mount" "umount" "cd" "ls" "lsrole" "showrole" "lspol" "showpol" "tree" "find" "replace" "cptree" "rmtree" "backup" "restore" "cat" "cp" "getcert" "certinfo" "getkrb" "krbinfo" "mv" "put" "addsecret" "rm" "exit" "help" "history" "verbose" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
     IFS=' ' read _cmd _path _args< <(echo "$@")
     debug "cmd: $_cmd, path: $_path"
     # complete command
@@ -345,7 +345,7 @@ EOH
 # Print commands help
 function commands_help(){
     local arg="$1"
-      local commands="mount|umount|cd|ls|lsrole|showrole|lspol|showpol|tree|cptree|rmtree|backup|restore|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|addsecret|rm|history|exit|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug"
+      local commands="mount|umount|cd|ls|lsrole|showrole|lspol|showpol|tree|find|replace|cptree|rmtree|backup|restore|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|addsecret|rm|history|exit|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug"
     if [[ ! $arg ]]; then
         echo -e "available commands [$commands]"
         return
@@ -360,6 +360,8 @@ function commands_help(){
         lspol)                 echo -e "lspol \n  lists Vault policies" ;;
         showpol)               echo -e "showpol mypolicy \n  shows Vault policy named mypolicy" ;;
         tree)                  echo -e "tree path/to/secret \n  prints vault's secrets tree with $current_pwd/path/to/secret as its root" ;;
+        find)                  echo -e "find path/to/search { \"key\": \"value\" } \n  finds vault's secrets that match the JSON data provided on path $current_pwd/path/to/search" ;;
+        replace)               echo -e "replace path/to/replace { \"key\": \"value\" } { \"newkey\": \"newvalue\" } \n  replaces vault's secrets under $current_pwd/path/to/replace that match the JSON data with the new JSON data provided" ;;
         cptree)                echo -e "cptree path/to/secret path/to/other_secret \n  copies tree to destination path $current_pwd/path/to/other_secret" ;;
         rmtree)                echo -e "rmtree path/to/secret \n  removes path $current_pwd/path/to/secret recursively" ;;
         backup)                echo -e "backup path/ \n  backs up Vault /path to $TMP folder" ;;
@@ -496,6 +498,8 @@ function run_cmd(){
             lspol)                  _lspol ;;
             showpol)                _showpol "$arg1" ;;
             tree)                   backIFS=$IFS; IFS=$' ' ; _tree "$arg1" ; IFS=$backIFS;;
+            find)                   backIFS=$IFS; IFS=$' ' ; _find "$arg1" "$arg2" ; IFS=$backIFS;;
+            replace)                backIFS=$IFS; IFS=$' ' ; _replace "$arg1" "$arg2" "$arg3" ; IFS=$backIFS;;
             cptree)                 backIFS=$IFS; IFS=$' ' ; _cptree "$arg1" "$arg2" ; IFS=$backIFS;;
             rmtree)                 backIFS=$IFS; IFS=$' ' ; _rmtree "$arg1" ; IFS=$backIFS;;
             backup)                 backIFS=$IFS; IFS=$' ' ; _backup "$arg1" ; IFS=$backIFS;;
@@ -758,6 +762,71 @@ function _tree(){
             _tree "$url/$path" "$depth" "$space+ " "$echo_space   "
         else
             padecho "$path" "$((depth+1))" "$space\` " "$echo_space   "
+        fi
+    done
+}
+
+# display the vault's secret tree
+function _find(){
+    local url
+    if [[ ! $1 =~ ^/ ]]; then
+        url="$current_pwd$1"
+    else
+        url=${1//\/\//\/}
+    fi
+    shift
+    local data="$(echo $@ | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
+    # if $url is /
+    paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
+
+    for path in $paths; do
+        if [[ $path =~ /$ ]]; then
+            _find "$url/$path" "$data"
+        else
+            secret=$(_cat "$url$path" | jq -M -S ".data" | tr -t '\n' ' ' | tr -s ' ')
+            debug "find: '$data' '$url'"
+            if [[ $secret == $data ]]; then
+                debug "find: $secret = $data!"
+                padecho "$url$path" "0" "" ""
+            else
+                debug "find: $secret == $data"
+            fi
+        fi
+    done
+}
+
+# display the vault's secret tree
+function _replace(){
+    local url
+    if [[ ! $1 =~ ^/ ]]; then
+        url="$current_pwd$1"
+    else
+        url=${1//\/\//\/}
+    fi
+    shift
+    debug "replace2: url=$url"
+    debug "replace3: rest=\"$@\""
+    local data="$(echo ${@%\{*} | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
+    local newdata="$(echo ${@#*\}} | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
+    debug "replaceX: data=$(echo ${@%\{*})"
+    debug "replaceX: newdata=$(echo ${@#*\}})"
+    # if $url is /
+    paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
+
+    debug "replace1: url=$url, data=\"$data\", newdata=\"$newdata\""
+    for path in $paths; do
+        if [[ $path =~ /$ ]]; then
+            _replace "$url/$path" "$data$newdata"
+        else
+            secret=$(_cat "$url$path" | jq -M -S ".data" | tr -t '\n' ' ' | tr -s ' ')
+            debug "replace: '$data' => '$newdata' on '$url'"
+            if [[ $secret == $data ]]; then
+                debug "replace: $secret = $data!"
+                _put "$url$path" "$newdata"
+                padecho "$url$path" "0" "" ""
+            else
+                debug "replace: $secret == $data"
+            fi
         fi
     done
 }
