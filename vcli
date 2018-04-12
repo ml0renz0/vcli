@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.3.0"
+declare VERSION="0.3.1"
 declare VERBOSE="no"
 declare DEBUG="no"
 declare DEBUG_HEXDUMP="no"
@@ -59,7 +59,7 @@ function new_version(){
     local latest_release
     latest_release="$(timeout 2 curl -s https://api.github.com/repos/mlorenzo-stratio/vcli/releases/latest | jq -r '.tag_name')"
     if [[ $latest_release != "null" && $VERSION != $latest_release ]]; then
-        echo -e "New version available: $latest_release\nDownload it at: https://github.com/mlorenzo-stratio/vcli/releases/latest"
+        echo -e "New version available: $latest_release\nYou can download it by running:\n   curl -L https://github.com/mlorenzo-stratio/vcli/raw/$latest_release/vcli > $0"
         return 0
     fi
     return 1
