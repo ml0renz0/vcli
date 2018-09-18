@@ -345,9 +345,15 @@ EOH
 # Print commands help
 function commands_help(){
     local arg="$1"
-      local commands="mount|umount|cd|ls|lsrole|showrole|lspol|showpol|tree|find|replace|cptree|rmtree|backup|restore|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|addsecret|rm|history|exit|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug"
+    local commands="mount|umount|cd|ls|lsrole|showrole|lspol|showpol|tree|find|replace|cptree|rmtree|backup|restore|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|addsecret|rm|history|exit|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug"
     if [[ ! $arg ]]; then
-        echo -e "available commands [$commands]"
+        echo -e "Available commands:\n"
+        backIFS=$IFS
+        IFS=$'|'
+        for command in $commands; do
+            echo -e "$command: $(commands_help $command)\n"
+        done
+        IFS=$backIFS
         return
     fi
     case $arg in
@@ -355,9 +361,9 @@ function commands_help(){
         umount)                echo -e "umount path/to/mount \n  destroys mount $current_pwd/path/to/mount" ;;
         cd)                    echo -e "cd path/to/secret \n  changes to directory $current_pwd/path/to/secret" ;;
         ls)                    echo -e "ls path/to/secret \n  lists paths and keys on $current_pwd/path/to/secret" ;;
-        lsrole)                echo -e "lspol \n  lists Vault roles" ;;
+        lsrole)                echo -e "lists Vault roles" ;;
         showrole)              echo -e "showrole myrole \n  shows Vault role named myrole" ;;
-        lspol)                 echo -e "lspol \n  lists Vault policies" ;;
+        lspol)                 echo -e "lists Vault policies" ;;
         showpol)               echo -e "showpol mypolicy \n  shows Vault policy named mypolicy" ;;
         tree)                  echo -e "tree path/to/secret \n  prints vault's secrets tree with $current_pwd/path/to/secret as its root" ;;
         find)                  echo -e "find path/to/search { \"key\": \"value\" } \n  finds vault's secrets that match the JSON data provided on path $current_pwd/path/to/search" ;;
@@ -365,7 +371,7 @@ function commands_help(){
         cptree)                echo -e "cptree path/to/secret path/to/other_secret \n  copies tree to destination path $current_pwd/path/to/other_secret" ;;
         rmtree)                echo -e "rmtree path/to/secret \n  removes path $current_pwd/path/to/secret recursively" ;;
         backup)                echo -e "backup path/ \n  backs up Vault /path to $TMP folder" ;;
-        restore)               echo -e "restore \n  restores Vault backup" ;;
+        restore)               echo -e "restores Vault backup" ;;
         cat)                   echo -e "cat path/to/secret \n  shows contents of key $current_pwd/path/to/secret" ;;
         cp)                    echo -e "cp path/to/secret path/to/other_secret \n  copies contents of path to path $current_pwd/path/to/other_secret" ;;
         getcert)               echo -e "getcert path/to/secret \n  downloads certificate CRT and KEY stored in $current_pwd/path/to/secret" ;;
@@ -376,13 +382,13 @@ function commands_help(){
         put)                   echo -e "put path/to/secret { \"key\": \"value\" } \n  adds json={ \"key\": \"value\" } to $current_pwd/path/to/secret" ;;
         addsecret)             echo -e "addsecret path/to/secret { \"key2\": \"value2\" } \n  adds secret { \"key2\": \"value2\" } to existing data on $current_pwd/path/to/secret" ;;
         rm)                    echo -e "rm path/to/secret \n  removes key $current_pwd/path/to/secret" ;;
-        history)               echo -e "history \n  shows vcli history" ;;
+        history)               echo -e "shows vcli history" ;;
         verbose)               echo -e "toggle verbosity" ;;
         enable-debug)          echo -e "enable debugging" ;;
         disable-debug)         echo -e "disable debugging" ;;
         enable-hexdump-debug)  echo -e "enable input hexdump debugging";;
         disable-hexdump-debug) echo -e "disable input hexdump debugging";;
-        exit)                  echo -e "exit \n  exits vcli" ;;
+        exit)                  echo -e "exits vcli" ;;
         *)                     echo -e "unkown '$arg' vcli command\navailable commands [$commands]" ;;
     esac
 }
