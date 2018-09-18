@@ -1,5 +1,6 @@
 # vcli
-A remote command line interface for [HashiCorp's Vault](https://www.vaultproject.io/) written in bash using as many builtin commands as possible
+A remote command line interface for [HashiCorp's Vault](https://www.vaultproject.io/) written in bash using as many builtin commands as possible.
+Currently only supporting api version v1
 
 # Why vcli
 **vcli**'s purpose is to ease the management of secrets when developing applications that make use of Vault.
