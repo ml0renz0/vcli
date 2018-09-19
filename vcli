@@ -3,9 +3,9 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.3.1"
-declare VERBOSE="no"
-declare DEBUG="no"
+declare VERSION="0.4.0"
+declare VERBOSE=${VERBOSE:-"no"}
+declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
 declare DEBUGFILE="/tmp/vcli.debug"
 declare TMP="/tmp"
@@ -92,7 +92,7 @@ function debug(){
 function is_cmd(){
     local cmd="$1"
     case $cmd in
-        mount*|umount*|cd*|ls*|lsrole|showrole*|lspol|showpol*|tree*|find*|replace*|cptree*|rmtree*|backup*|restore*|cat*|cp*|getcert*|certinfo*|getkrb*|krbinfo*|mv*|put*|addsecret*|rm*|exit*|help*|history|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
+        mount*|umount*|cd*|ls*|lsrole|showrole*|lspol|showpol*|tree*|find*|replace*|cptree*|rmtree*|backup*|restore*|cat*|cp*|getcert*|certinfo*|getkrb*|krbinfo*|mv*|put*|addsecret*|delsecret*|rm*|exit*|help*|history|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
         ""|*) return 1;;
     esac
 }
@@ -102,7 +102,7 @@ function completion(){
     debug "run completion"
     local -a tmparray
     local found _cmd _path _args _secret paths
-    local commands=( "mount" "umount" "cd" "ls" "lsrole" "showrole" "lspol" "showpol" "tree" "find" "replace" "cptree" "rmtree" "backup" "restore" "cat" "cp" "getcert" "certinfo" "getkrb" "krbinfo" "mv" "put" "addsecret" "rm" "exit" "help" "history" "verbose" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
+    local commands=( "mount" "umount" "cd" "ls" "lsrole" "showrole" "lspol" "showpol" "tree" "find" "replace" "cptree" "rmtree" "backup" "restore" "cat" "cp" "getcert" "certinfo" "getkrb" "krbinfo" "mv" "put" "addsecret" "delsecret" "rm" "exit" "help" "history" "verbose" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
     IFS=' ' read _cmd _path _args< <(echo "$@")
     debug "cmd: $_cmd, path: $_path"
     # complete command
@@ -345,9 +345,16 @@ EOH
 # Print commands help
 function commands_help(){
     local arg="$1"
-      local commands="mount|umount|cd|ls|lsrole|showrole|lspol|showpol|tree|find|replace|cptree|rmtree|backup|restore|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|addsecret|rm|history|exit|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug"
+    local commands="mount|umount|cd|ls|lsrole|showrole|lspol|showpol|tree|find|replace|cptree|rmtree|backup|restore|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|addsecret|delsecret|rm|history|exit|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug"
     if [[ ! $arg ]]; then
-        echo -e "available commands [$commands]"
+        echo -e "Available commands:\n"
+        backIFS=$IFS
+        IFS=$'|'
+        local _commands=$(echo "$commands" | tr -t '|' '\n' | sort | tr -t '\n' '|')
+        for command in $_commands; do
+            echo -e "$command: $(commands_help $command)\n"
+        done
+        IFS=$backIFS
         return
     fi
     case $arg in
@@ -355,9 +362,9 @@ function commands_help(){
         umount)                echo -e "umount path/to/mount \n  destroys mount $current_pwd/path/to/mount" ;;
         cd)                    echo -e "cd path/to/secret \n  changes to directory $current_pwd/path/to/secret" ;;
         ls)                    echo -e "ls path/to/secret \n  lists paths and keys on $current_pwd/path/to/secret" ;;
-        lsrole)                echo -e "lspol \n  lists Vault roles" ;;
+        lsrole)                echo -e "lists Vault roles" ;;
         showrole)              echo -e "showrole myrole \n  shows Vault role named myrole" ;;
-        lspol)                 echo -e "lspol \n  lists Vault policies" ;;
+        lspol)                 echo -e "lists Vault policies" ;;
         showpol)               echo -e "showpol mypolicy \n  shows Vault policy named mypolicy" ;;
         tree)                  echo -e "tree path/to/secret \n  prints vault's secrets tree with $current_pwd/path/to/secret as its root" ;;
         find)                  echo -e "find path/to/search { \"key\": \"value\" } \n  finds vault's secrets that match the JSON data provided on path $current_pwd/path/to/search" ;;
@@ -365,7 +372,7 @@ function commands_help(){
         cptree)                echo -e "cptree path/to/secret path/to/other_secret \n  copies tree to destination path $current_pwd/path/to/other_secret" ;;
         rmtree)                echo -e "rmtree path/to/secret \n  removes path $current_pwd/path/to/secret recursively" ;;
         backup)                echo -e "backup path/ \n  backs up Vault /path to $TMP folder" ;;
-        restore)               echo -e "restore \n  restores Vault backup" ;;
+        restore)               echo -e "restores Vault backup" ;;
         cat)                   echo -e "cat path/to/secret \n  shows contents of key $current_pwd/path/to/secret" ;;
         cp)                    echo -e "cp path/to/secret path/to/other_secret \n  copies contents of path to path $current_pwd/path/to/other_secret" ;;
         getcert)               echo -e "getcert path/to/secret \n  downloads certificate CRT and KEY stored in $current_pwd/path/to/secret" ;;
@@ -375,14 +382,15 @@ function commands_help(){
         mv)                    echo -e "mv path/to/secret path/to/other_secret \n  moves contents of path to path $current_pwd/path/to/other_secret" ;;
         put)                   echo -e "put path/to/secret { \"key\": \"value\" } \n  adds json={ \"key\": \"value\" } to $current_pwd/path/to/secret" ;;
         addsecret)             echo -e "addsecret path/to/secret { \"key2\": \"value2\" } \n  adds secret { \"key2\": \"value2\" } to existing data on $current_pwd/path/to/secret" ;;
+        delsecret)             echo -e "delsecret path/to/secret key \n  deletes key from secret" ;;
         rm)                    echo -e "rm path/to/secret \n  removes key $current_pwd/path/to/secret" ;;
-        history)               echo -e "history \n  shows vcli history" ;;
+        history)               echo -e "shows vcli history" ;;
         verbose)               echo -e "toggle verbosity" ;;
         enable-debug)          echo -e "enable debugging" ;;
         disable-debug)         echo -e "disable debugging" ;;
         enable-hexdump-debug)  echo -e "enable input hexdump debugging";;
         disable-hexdump-debug) echo -e "disable input hexdump debugging";;
-        exit)                  echo -e "exit \n  exits vcli" ;;
+        exit)                  echo -e "exits vcli" ;;
         *)                     echo -e "unkown '$arg' vcli command\navailable commands [$commands]" ;;
     esac
 }
@@ -417,7 +425,7 @@ function _run(){
         eval "$*" 2> "$tmp" # store stderr in $tmp
         exit_status=$?
         while IFS=$'\n' read line; do
-            echo "      > $line"
+            debug "     $line"
         done < "$tmp"
         rm -f "$tmp"
     else
@@ -449,7 +457,7 @@ function _curl(){
     debug "curl: _curl '$1' '$2' '$3'"
     if [[ $data ]]; then
         if [[ "$VERBOSE" = "yes" ]]; then
-            echo -e "url: $protocol://$vault_host:$vault_port/v1/$endpoint\nmethod: $method\ndata:$data"
+            debug "url: $protocol://$vault_host:$vault_port/v1/$endpoint\nmethod: $method\ndata:$data"
         fi
         mapfile -t response < <(_run "/usr/bin/curl -w \"%{http_code}\n\" -s $enable_f -k -L -X$method -H \"X-Vault-Token:$vault_token\" \
                       -H 'Content-type: application/json' \
@@ -457,7 +465,7 @@ function _curl(){
                       \"$protocol://$vault_host:$vault_port/v1/$endpoint\"")
     else
         if [[ "$VERBOSE" = "yes" ]]; then
-            echo -e "url: $protocol://$vault_host:$vault_port/v1/$endpoint\nmethod: $method"
+            debug "url: $protocol://$vault_host:$vault_port/v1/$endpoint\nmethod: $method"
         fi
         mapfile -t response < <(_run "/usr/bin/curl -w \"%{http_code}\n\" -s $enable_f -k -L -X$method -H \"X-Vault-Token:$vault_token\" \
                       -H 'Content-type: application/json' \
@@ -507,6 +515,7 @@ function run_cmd(){
             cat)                    _cat "$arg1" ;;
             put)                    _put "$arg1" "$arg2" ;;
             addsecret)              _addsecret "$arg1" "$arg2" ;;
+            delsecret)              _delsecret "$arg1" "$arg2" ;;
             rm)                     _rm "$arg1" ;;
             cp)                     _cp "$arg1" "$arg2" ;;
             getcert)                _getcert "$arg1" ;;
@@ -795,7 +804,7 @@ function _find(){
     done
 }
 
-# display the vault's secret tree
+# find in $1 and replace secret $2 with new secret $3
 function _replace(){
     local url
     if [[ ! $1 =~ ^/ ]]; then
@@ -805,11 +814,11 @@ function _replace(){
     fi
     shift
     debug "replace2: url=$url"
-    debug "replace3: rest=\"$@\""
-    local data="$(echo ${@%\{*} | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
-    local newdata="$(echo ${@#*\}} | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
-    debug "replaceX: data=$(echo ${@%\{*})"
-    debug "replaceX: newdata=$(echo ${@#*\}})"
+    debug "replace3: rest=\"$*\""
+    local data="$(echo "${@%\{*}" | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
+    local newdata="$(echo "${@#*\}}" | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
+    debug "replaceX: data=$(echo "${@%\{*}")"
+    debug "replaceX: newdata=$(echo "${@#*\}}")"
     # if $url is /
     paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
 
@@ -1125,6 +1134,28 @@ function _addsecret(){
     data="${secret/\}},${data/\{}"
     debug "addsecret: url=$url $secret => $data"
     _put "$url" "$data"
+}
+
+# delsecret function
+function _delsecret(){
+    local url="$1"
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd$url"
+    fi
+    local key="$2"
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "addsecret"
+        return
+    fi
+    if [[ ! $key ]]; then
+        echo "Error! Missing key"
+        commands_help "delsecret"
+        return
+    fi
+    secret=$(_cat "$url" | jq ".data|del(.$key)" | tr -d '\n')
+    debug "delsecret: url=$url $key"
+    _put "$url" "$secret"
 }
 
 # cp function
@@ -1592,6 +1623,9 @@ function main(){
             $'\x04') # Ctrl+d behaviour is the same as Ctrl+c
                 clean_n_exit
             ;;
+            $'')
+                clean_n_exit
+            ;;
             $'\x20'|*) # NORMAL CHARS
                 tput ich 1 # insert chars rather than overwriting them
                 echo -n "$_key" #| hexdump -C
@@ -1612,7 +1646,7 @@ function main(){
         [[ $DEBUG_HEXDUMP == "yes" ]] && debug "\nhexdump: \n $(echo -n "$_key" | hexdump -C)"
         # print prompt if commadn was run
         if [[ $is_command ]]; then prompt ; unset is_command cmd pos len ; history_index=-1 ; pos=1; fi
-    done
+    done < /dev/stdin
 }
 
 main "$@"
