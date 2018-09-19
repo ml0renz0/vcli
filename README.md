@@ -1,5 +1,6 @@
 # vcli
-A remote command line interface for [HashiCorp's Vault](https://www.vaultproject.io/) written in bash using as many builtin commands as possible
+A remote command line interface for [HashiCorp's Vault](https://www.vaultproject.io/) written in bash using as many builtin commands as possible.
+Currently only supporting api version v1 and tested on vault 0.6.x
 
 # Why vcli
 **vcli**'s purpose is to ease the management of secrets when developing applications that make use of Vault.
@@ -16,7 +17,7 @@ Now it has become a useful tool here at [Stratio](http://www.stratio.com)
 * commands & paths completion using 'tab' key
 * autoexpands shell variables in the JSON to upload when using put command
 * enable-debug/disable-debug: commands to enable/disable debug output to /tmp/debug
-* if exported, vcli will use $VAULT_HOST, $VAULT_TOKEN and $VAULT_PORT to connect to Vault
+* if exported, vcli will use $VAULT_HOST, $VAULT_TOKEN and $VAULT_PORT or [$VAULT_ADDR](https://github.com/mlorenzo-stratio/vcli/issues/3) to connect to Vault
 * Can be exited with Ctrl+c, Ctrl+d or with exit command
 
 # Demo
