@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.4.0"
+declare VERSION="0.4.1"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -67,6 +67,9 @@ function new_version(){
 
 # Print prompt
 function prompt(){
+    if [[ $disable_prompt ]]; then
+        return
+    fi
     local COLOUR=$CYAN
     debug "prompt: http_code=$http_code"
     if [[ $http_code =~ ^2 ]]; then
@@ -281,9 +284,9 @@ function save_history(){
 # loads history from $HOME/.vclistory
 function load_history(){
     [[ ! -e $VCLISTORY ]] && return
-    echo -n "Loading history... "
+    [[ ! $disable_prompt ]] && echo -n "Loading history... "
     add_cmd "$VCLISTORY"
-    echo "done"
+    [[ ! $disable_prompt ]] && echo "done"
 }
 
 # loads history from $HOME/.vclistory
@@ -337,8 +340,10 @@ function rotate_found_cmds(){
 # Usage
 function help(){
     cat <<EOH
-Usage: $0 -v <vault_host> -p <vault_port> -t <vault_token> [-i]
-       $0 --version
+Usage: $SCRIPTNAME -v <vault_host> -p <vault_port> -t <vault_token> [-i] [-n]
+            -i: use insecure http
+            -n: do not print prompt or commands. Useful when input is piped from stdin
+       $SCRIPTNAME --version
 EOH
 }
 
@@ -408,12 +413,13 @@ function check_arg(){
 # save & clean & exit
 function clean_n_exit(){
     save_history
-    echo
+    [[ ! $disable_prompt ]] && echo
     # reset terminal when running inside a container as local echo gets disabled (??)
     if ! head -n 1 /proc/1/sched | grep -qE "(systemd|init)"; then
         reset
     fi
-    exit
+    if [[ $http_code != 200 ]]; then exit_status=1 ; fi
+    exit $exit_status
 }
 
 # Run command and prettyfy stdout
@@ -1419,11 +1425,12 @@ function main(){
 
     local tmpmsg
     protocol="https"
-    while getopts "v:p:t:hi" opt; do
+    while getopts "v:p:t:hin" opt; do
         case $opt in
             v) vault_host=$OPTARG ;;       ### GLOBAL VARIABLES ###
             p) vault_port=$OPTARG ;;       ### GLOBAL VARIABLES ###
             t) vault_token=$OPTARG ;;      ### GLOBAL VARIABLES ###
+            n) disable_prompt=yes ;;
             i) protocol="http";;
             h|*) help ; exit 1; ;;
         esac
@@ -1470,7 +1477,7 @@ function main(){
     load_history
 
     # Show vault's health
-    _cat "-_disable_-f_-" sys/health
+    [[ ! $disable_prompt ]] && _cat "-_disable_-f_-" sys/health
 
     # print prompt
     prompt
@@ -1530,7 +1537,7 @@ function main(){
                 unset ENDHIST
                 is_command="true"
                 debug "current_pwd=$current_pwd"
-                echo
+                [[ ! $disable_prompt ]] && echo
                 if [[ $cmd ]] && [[ ! "$cmd" =~ ^[[:space:]]+$ ]]; then
                     cmd=$(echo "$cmd" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')
                     run_cmd "$cmd"
@@ -1628,7 +1635,7 @@ function main(){
             ;;
             $'\x20'|*) # NORMAL CHARS
                 tput ich 1 # insert chars rather than overwriting them
-                echo -n "$_key" #| hexdump -C
+                [[ ! $disable_prompt ]] && echo -n "$_key" #| hexdump -C
                 let len+=1
                 let pos+=1
                 tmpmsg="${#cmd}: \"$cmd\""
