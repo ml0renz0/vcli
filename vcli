@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.4.1"
+declare VERSION="0.4.2"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -57,6 +57,7 @@ function check_connectivity(){
 # check vcli latest version
 function new_version(){
     local latest_release
+    [[ $disable_prompt ]] && return
     latest_release="$(timeout 2 curl -s https://api.github.com/repos/mlorenzo-stratio/vcli/releases/latest | jq -r '.tag_name')"
     if [[ $latest_release != "null" && $VERSION != $latest_release ]]; then
         echo -e "New version available: $latest_release\nYou can download it by running:\n   curl -L https://github.com/mlorenzo-stratio/vcli/raw/$latest_release/vcli > $0"
@@ -284,9 +285,10 @@ function save_history(){
 # loads history from $HOME/.vclistory
 function load_history(){
     [[ ! -e $VCLISTORY ]] && return
-    [[ ! $disable_prompt ]] && echo -n "Loading history... "
+    [[ $disable_prompt ]] && return
+    #echo -n "Loading history... "
     add_cmd "$VCLISTORY"
-    [[ ! $disable_prompt ]] && echo "done"
+    #echo "done"
 }
 
 # loads history from $HOME/.vclistory
@@ -418,7 +420,7 @@ function clean_n_exit(){
     if ! head -n 1 /proc/1/sched | grep -qE "(systemd|init)"; then
         reset
     fi
-    if [[ $http_code != 200 ]]; then exit_status=1 ; fi
+    if [[ ! $http_code =~ ^2 ]]; then exit_status=1 ; fi
     exit $exit_status
 }
 
@@ -1420,9 +1422,6 @@ function main(){
         exit
     fi
 
-    # check for new versions
-    if new_version; then sleep 2 ; echo; fi
-
     local tmpmsg
     protocol="https"
     while getopts "v:p:t:hin" opt; do
@@ -1435,6 +1434,9 @@ function main(){
             h|*) help ; exit 1; ;;
         esac
     done
+
+    # check for new versions
+    if new_version && [[ ! $disable_prompt ]]; then sleep 2 ; echo; fi
 
     # Use VAULT_ADDR as the primary default as it is the most common setting.
     # If VAULT_ADDR is set it will overwrite VAULT_HOST and VAULT_PORT
