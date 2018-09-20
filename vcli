@@ -105,9 +105,9 @@ function is_cmd(){
 function completion(){
     debug "run completion"
     local -a tmparray
-    local found _cmd _path _args _secret paths
+    local found _cmd _path _secret paths
     local commands=( "mount" "umount" "cd" "ls" "lsrole" "showrole" "lspol" "showpol" "tree" "find" "replace" "cptree" "rmtree" "backup" "restore" "cat" "cp" "getcert" "certinfo" "getkrb" "krbinfo" "mv" "put" "addsecret" "delsecret" "rm" "exit" "help" "history" "verbose" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
-    IFS=' ' read _cmd _path _args< <(echo "$@")
+    IFS=' ' read _cmd _path < <(echo "$@")
     debug "cmd: $_cmd, path: $_path"
     # complete command
     if [[ ! $_path ]]; then
@@ -357,9 +357,10 @@ function commands_help(){
         echo -e "Available commands:\n"
         backIFS=$IFS
         IFS=$'|'
-        local _commands=$(echo "$commands" | tr -t '|' '\n' | sort | tr -t '\n' '|')
+        local _commands
+        _commands=$(echo "$commands" | tr -t '|' '\n' | sort | tr -t '\n' '|')
         for command in $_commands; do
-            echo -e "$command: $(commands_help $command)\n"
+            echo -e "$command: $(commands_help "$command")\n"
         done
         IFS=$backIFS
         return
@@ -452,6 +453,8 @@ function _curl(){
     elif [[ "$1" == "-i" ]]; then
         local ignore_http_code="true"
         shift
+    elif [[ "$1" == "" ]]; then
+        shift
     fi
     local endpoint="${1#/}" # remove initial '/' if exists
     local data="$2"
@@ -515,7 +518,7 @@ function run_cmd(){
             showpol)                _showpol "$arg1" ;;
             tree)                   backIFS=$IFS; IFS=$' ' ; _tree "$arg1" ; IFS=$backIFS;;
             find)                   backIFS=$IFS; IFS=$' ' ; _find "$arg1" "$arg2" ; IFS=$backIFS;;
-            replace)                backIFS=$IFS; IFS=$' ' ; _replace "$arg1" "$arg2" "$arg3" ; IFS=$backIFS;;
+            replace)                backIFS=$IFS; IFS=$' ' ; _replace "$arg1" "$arg2" ; IFS=$backIFS;;
             cptree)                 backIFS=$IFS; IFS=$' ' ; _cptree "$arg1" "$arg2" ; IFS=$backIFS;;
             rmtree)                 backIFS=$IFS; IFS=$' ' ; _rmtree "$arg1" ; IFS=$backIFS;;
             backup)                 backIFS=$IFS; IFS=$' ' ; _backup "$arg1" ; IFS=$backIFS;;
@@ -771,7 +774,6 @@ function _tree(){
     # if $url is /
     padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
     paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
-
     for path in $paths; do
         debug "${echo_space}   depth: $depth => found: $paths"
         space=${space/+/ }
@@ -787,24 +789,25 @@ function _tree(){
 function _find(){
     local url
     if [[ ! $1 =~ ^/ ]]; then
-        url="$current_pwd$1"
+        url="$current_pwd/$1"
     else
         url=${1//\/\//\/}
     fi
     shift
-    local data="$(echo $@ | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
+    local data
+    data="$(echo "$@" | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
     # if $url is /
-    paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
-
+    paths=$(_ls "-_disable_colors_-" "$url" | sed -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
     for path in $paths; do
+        debug "${echo_space}find: '$url' => found: $paths"
         if [[ $path =~ /$ ]]; then
             _find "$url/$path" "$data"
         else
-            secret=$(_cat "$url$path" | jq -M -S ".data" | tr -t '\n' ' ' | tr -s ' ')
+            secret=$(_cat "$url/$path" | jq -M -S ".data" | tr -t '\n' ' ' | tr -s ' ')
             debug "find: '$data' '$url'"
-            if [[ $secret == $data ]]; then
+            if [[ $secret == "$data" ]]; then
                 debug "find: $secret = $data!"
-                padecho "$url$path" "0" "" ""
+                padecho "$url/$path" "0" "" ""
             else
                 debug "find: $secret == $data"
             fi
@@ -823,10 +826,12 @@ function _replace(){
     shift
     debug "replace2: url=$url"
     debug "replace3: rest=\"$*\""
-    local data="$(echo "${@%\{*}" | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
-    local newdata="$(echo "${@#*\}}" | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
-    debug "replaceX: data=$(echo "${@%\{*}")"
-    debug "replaceX: newdata=$(echo "${@#*\}}")"
+    local data
+    data="$(echo "${@%\{*}" | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
+    local newdata
+    newdata="$(echo "${@#*\}}" | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
+    debug "replaceX: data=${*%\{*}"
+    debug "replaceX: newdata=${*#*\}}"
     # if $url is /
     paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
 
@@ -837,7 +842,7 @@ function _replace(){
         else
             secret=$(_cat "$url$path" | jq -M -S ".data" | tr -t '\n' ' ' | tr -s ' ')
             debug "replace: '$data' => '$newdata' on '$url'"
-            if [[ $secret == $data ]]; then
+            if [[ $secret == "$data" ]]; then
                 debug "replace: $secret = $data!"
                 _put "$url$path" "$newdata"
                 padecho "$url$path" "0" "" ""
@@ -1117,7 +1122,7 @@ function _cat(){
     fi
     debug "cat: url=$url"
     local arg="$2"
-    _curl $disable_f "$url" "$arg"
+    _curl "$disable_f" "$url" "$arg"
 }
 
 
@@ -1535,7 +1540,7 @@ function main(){
                 fi
                 unset ENDHIST
             ;;
-            $'\x0a') # ENTER
+            $'\x0a'|';') # ENTER
                 unset ENDHIST
                 is_command="true"
                 debug "current_pwd=$current_pwd"
