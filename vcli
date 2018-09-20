@@ -1153,7 +1153,7 @@ function _delsecret(){
         commands_help "delsecret"
         return
     fi
-    secret=$(_cat "$url" | jq ".data|del(.$key)" | tr -d '\n')
+    secret=$(_cat "$url" | jq ".data|del(.\"$key\")" | tr -d '\n')
     debug "delsecret: url=$url $key"
     _put "$url" "$secret"
 }
