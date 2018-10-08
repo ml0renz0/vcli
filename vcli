@@ -96,7 +96,7 @@ function debug(){
 function is_cmd(){
     local cmd="$1"
     case $cmd in
-        mount*|umount*|cd*|ls*|lsrole|showrole*|lspol|showpol*|tree*|find*|replace*|cptree*|rmtree*|backup*|restore*|cat*|cp*|getcert*|certinfo*|getkrb*|krbinfo*|mv*|put*|addsecret*|delsecret*|rm*|exit*|help*|history|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
+        mount*|umount*|cd*|ls*|lsrole|showrole*|lspol|showpol*|tree*|find*|replace*|cptree*|rmtree*|backup*|restore*|cat*|cp*|getcert*|getcertlist*|getkrblist*|getallcertlist*|getallkrblist*|getsan*|getprinc*|certinfo*|getkrb*|krbinfo*|mv*|put*|addsecret*|delsecret*|rm*|exit*|help*|history|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
         ""|*) return 1;;
     esac
 }
@@ -106,7 +106,7 @@ function completion(){
     debug "run completion"
     local -a tmparray
     local found _cmd _path _secret paths
-    local commands=( "mount" "umount" "cd" "ls" "lsrole" "showrole" "lspol" "showpol" "tree" "find" "replace" "cptree" "rmtree" "backup" "restore" "cat" "cp" "getcert" "certinfo" "getkrb" "krbinfo" "mv" "put" "addsecret" "delsecret" "rm" "exit" "help" "history" "verbose" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
+    local commands=( "mount" "umount" "cd" "ls" "lsrole" "showrole" "lspol" "showpol" "tree" "find" "replace" "cptree" "rmtree" "backup" "restore" "cat" "cp" "getcert" "getcertlist" "getkrblist" "getallcertlist" "getallkrblist" "getsan" "getprinc" "certinfo" "getkrb" "krbinfo" "mv" "put" "addsecret" "delsecret" "rm" "exit" "help" "history" "verbose" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
     IFS=' ' read _cmd _path < <(echo "$@")
     debug "cmd: $_cmd, path: $_path"
     # complete command
@@ -352,7 +352,7 @@ EOH
 # Print commands help
 function commands_help(){
     local arg="$1"
-    local commands="mount|umount|cd|ls|lsrole|showrole|lspol|showpol|tree|find|replace|cptree|rmtree|backup|restore|cat|cp|getcert|certinfo|getkrb|krbinfo|mv|put|addsecret|delsecret|rm|history|exit|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug"
+    local commands="mount|umount|cd|ls|lsrole|showrole|lspol|showpol|tree|find|replace|cptree|rmtree|backup|restore|cat|cp|getcert|getcertlist|getkrblist|getallcertlist|getallkrblist|getsan|getprinc|certinfo|getkrb|krbinfo|mv|put|addsecret|delsecret|rm|history|exit|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug"
     if [[ ! $arg ]]; then
         echo -e "Available commands:\n"
         backIFS=$IFS
@@ -384,6 +384,12 @@ function commands_help(){
         cat)                   echo -e "cat path/to/secret \n  shows contents of key $current_pwd/path/to/secret" ;;
         cp)                    echo -e "cp path/to/secret path/to/other_secret \n  copies contents of path to path $current_pwd/path/to/other_secret" ;;
         getcert)               echo -e "getcert path/to/secret \n  downloads certificate CRT and KEY stored in $current_pwd/path/to/secret" ;;
+        getcertlist)           echo -e "getcertlist path/to/certificates \n  recovers certs.list with certificates found in $current_pwd/path/to/certificates" ;;
+        getkrblist)            echo -e "getkrblist path/to/kerberos \n  recovers krb.list with principals found in $current_pwd/path/to/kerberos" ;;
+        getallcertlist)        echo -e "getallcertlist path/to/certificates \n  recovers certs.list with all certificates found under tree $current_pwd/path/to/certificates" ;;
+        getallkrblist)         echo -e "getallkrblist path/to/kerberos \n  recovers krb.list with all principals found under tree $current_pwd/path/to/kerberos" ;;
+        getsan)                echo -e "getsan path/to/secret \n  shows certificate's SAN stored in $current_pwd/path/to/secret" ;;
+        getprinc)              echo -e "getprinc path/to/secret \n  shows pincipal stored in keytab $current_pwd/path/to/secret" ;;
         certinfo)              echo -e "certinfo path/to/secret \n  shows certificate info stored in $current_pwd/path/to/secret" ;;
         getkrb)                echo -e "getkrb path/to/secret \n  exports keytab file to $TMP/principal.keytab" ;;
         krbinfo)               echo -e "krbinfo path/to/secret \n  shows principal & keytab info stored in $current_pwd/path/to/secret" ;;
@@ -530,6 +536,12 @@ function run_cmd(){
             rm)                     _rm "$arg1" ;;
             cp)                     _cp "$arg1" "$arg2" ;;
             getcert)                _getcert "$arg1" ;;
+            getsan)                 _getsan "$arg1" ;;
+            getprinc)               _getprinc "$arg1" ;;
+            getcertlist)            _getcertlist "$arg1" ;;
+            getkrblist)             _getkrblist "$arg1" ;;
+            getallcertlist)         _getallcertlist "$arg1" ;;
+            getallkrblist)          _getallkrblist "$arg1" ;;
             certinfo)               _certinfo "$arg1" ;;
             getkrb)                 _getkrb "$arg1" ;;
             krbinfo)                _krbinfo "$arg1" ;;
@@ -785,7 +797,7 @@ function _tree(){
     done
 }
 
-# display the vault's secret tree
+# find secret in the vault's tree
 function _find(){
     local url
     if [[ ! $1 =~ ^/ ]]; then
@@ -1370,6 +1382,242 @@ function _certinfo(){
     IFS=$backIFS
 }
 
+# print principal of kerberos secret
+function _getprinc(){
+    local url="$1"
+    local tmp tmp2 _keys
+    # Get principals and store them in ${princs[@]}
+    declare -A princs
+    if [[ ! $url ]]; then
+        echo "Error! Missing keytab path"
+        commands_help "krbinfo"
+        return
+    fi
+    tmp=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
+    _cat "$url" > "$tmp"
+    eval "$(jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" -r < "$tmp" | sed -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
+    backIFS=$IFS
+    IFS=$' '
+    _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
+    for _key in $_keys ; do
+        local value=${princs[$_key]}
+        _key="\"${_key}_keytab\""
+        tmp2=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
+        jq ".data .${_key}" -r < "$tmp" | base64 -d > "$tmp2"
+        echo -en "${value}"
+        if ! klist -kt "$tmp2" | grep -v "Keytab name:" | grep -q "$value"; then
+            echo -e " ${RED}NOT FOUND${NONE} ${BOLD}in keytab!${NONE}"
+        else
+            echo
+        fi
+        rm -f "$tmp2"
+    done | sort -u
+    rm -f "$tmp"
+    IFS=$backIFS
+}
+
+# print CN and SAN of certificate secret
+function _getsan(){
+    local url="$1"
+    local _CRT _KEY
+    if [[ ! $url ]]; then
+        echo "Error! Missing cert path"
+        commands_help "getsan"
+        return
+    fi
+    local _certs _cert shacrt _keys _key shakey
+    tmp=$(mktemp -p /dev/shm -t .certinfo.XXXX)
+    _cat "$url" > "$tmp"
+    backIFS=$IFS
+    IFS=$' '
+    _certs=( $(jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
+    _keys=( $(jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
+    for ((n=0;n<${#_certs[@]};n++)); do
+        _cert=${_certs[$n]}
+        _key=${_keys[$n]}
+        debug "jq .data .$_cert -r < $tmp"
+        _CRT=$(jq ".data .$_cert" -r < "$tmp" | \
+                      sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
+                          -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
+                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
+        debug "jq .data .$_key -r < $tmp"
+        _KEY=$(jq ".data .$_key" -r < "$tmp"  | \
+                      sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
+                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
+        shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
+        shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
+        echo -en "CN: "
+        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject:.*CN = " | sed -e "s/^.*CN = //" | tr -d '\n'
+        echo -en ", "
+        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject Alternative Name" -A1 | tail -1 | sed -e "s/^\s*//"
+    done
+    rm -f "$tmp"
+    IFS=$backIFS
+}
+
+# recover krb.list from certificates path
+ function _getkrblist(){
+    local url="$1"
+    local tmp tmp2 _keys _princ
+    # Get principals and store them in ${princs[@]}
+    declare -A princs
+    if [[ ! $url ]]; then
+        echo "Error! Missing keytab path"
+        commands_help "krbinfo"
+        return
+    fi
+    tmp=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
+    _cat "$url" > "$tmp"
+    eval "$(jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" -r < "$tmp" | sed -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
+    backIFS=$IFS
+    IFS=$' '
+    _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
+    for _key in $_keys ; do
+        local value=${princs[$_key]}
+        _key="\"${_key}_keytab\""
+        tmp2=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
+        jq ".data .${_key}" -r < "$tmp" | base64 -d > "$tmp2"
+        value="${value//@*/}"
+        if [[ $value =~ / ]]; then
+            _princ="${value//\/*/}"
+            _domain="${value//*\//}"
+        else
+            _princ="${value//\/*/}"
+            _domain=""
+        fi
+        echo "$_princ | $_domain | $url"
+        rm -f "$tmp2"
+    done | sort -u
+    rm -f "$tmp"
+    IFS=$backIFS
+ }
+
+# recover certs.list from certificates path
+function _getcertlist(){
+    local url="$1"
+    local _CRT _KEY _client _server
+    if [[ ! $url ]]; then
+        echo "Error! Missing cert path"
+        commands_help "getsan"
+        return
+    fi
+    local _certs _cert shacrt _keys _key shakey
+    tmp=$(mktemp -p /dev/shm -t .certinfo.XXXX)
+    _cat "$url" > "$tmp"
+    backIFS=$IFS
+    IFS=$' '
+    _certs=( $(jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
+    _keys=( $(jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
+    for ((n=0;n<${#_certs[@]};n++)); do
+        _cert=${_certs[$n]}
+        _key=${_keys[$n]}
+        debug "jq .data .$_cert -r < $tmp"
+        _CRT=$(jq ".data .$_cert" -r < "$tmp" | \
+                      sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
+                          -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
+                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
+        debug "jq .data .$_key -r < $tmp"
+        _KEY=$(jq ".data .$_key" -r < "$tmp"  | \
+                      sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
+                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
+        shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
+        shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
+        if echo -e "$_CRT" | openssl x509 -text -noout | grep -q "TLS Web Client Authentication"; then
+            _client=yes
+        fi
+        if echo -e "$_CRT" | openssl x509 -text -noout | grep -q "TLS Web Server Authentication"; then
+            _server=yes
+        fi
+        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject:.*CN = " | sed -e "s/^.*CN = //" | tr -d '\n'
+        echo -en " | \""
+        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject Alternative Name" -A1 | tail -1 | sed -e "s/^\s*//" | tr -d '\n'
+        echo -en "\" | "
+        if [[ $_client ]] && [[ $_server ]]; then
+            echo -en "client-server"
+        elif [[ $_server ]]; then
+            echo -en "server"
+        elif [[ $_client ]]; then
+            echo -en "client"
+        fi
+        echo -e " | $url"
+        unset $_client $_server
+    done
+    rm -f "$tmp"
+    IFS=$backIFS
+}
+
+# recovers krb.list with all keytabs found under the specified folder
+function _getallkrblist(){
+    local url
+    if [[ ! $1 =~ ^/ ]]; then
+        url="$current_pwd$1"
+    else
+        url=${1//\/\//\/}
+    fi
+    local depth="$2"
+    local space="$3"
+    local echo_space="$4"
+    # If no "$2" was passed then this iteration is the very first one, so depth=0
+    if [[ ! $depth ]]; then
+        depth=0
+    # other wise we increment a depth as we go deeper in the structure
+    else
+        let depth++
+    fi
+    backIFS=$IFS
+    IFS=$' '
+    debug "${echo_space}_getallkrblist: '$url', depth: $depth, space: \"$space\""
+    # if $url is /
+    paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
+    debug "${echo_space}_getallkrblist: $paths"
+    for path in $paths; do
+        debug "${echo_space}   depth: $depth => found: $paths"
+        space=${space/+/ }
+        if [[ $path =~ /$ ]]; then
+            _getallkrblist "$url/$path" "$depth" "$space+ " "$echo_space   "
+        else
+            _getkrblist "$url/$path"
+        fi
+    done
+    IFS=$backIFS
+}
+
+# recovers cert.list with all certificates found under the specified folder
+function _getallcertlist(){
+    local url
+    if [[ ! $1 =~ ^/ ]]; then
+        url="$current_pwd$1"
+    else
+        url=${1//\/\//\/}
+    fi
+    local depth="$2"
+    local space="$3"
+    local echo_space="$4"
+    # If no "$2" was passed then this iteration is the very first one, so depth=0
+    if [[ ! $depth ]]; then
+        depth=0
+    # other wise we increment a depth as we go deeper in the structure
+    else
+        let depth++
+    fi
+    backIFS=$IFS
+    IFS=$' '
+    debug "${echo_space}_getallcertlist: '$url', depth: $depth, space: \"$space\""
+    # if $url is /
+    paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
+    debug "${echo_space}_getallcertlist: $paths"
+    for path in $paths; do
+        debug "${echo_space}   depth: $depth => found: $paths"
+        space=${space/+/ }
+        if [[ $path =~ /$ ]]; then
+            _getallcertlist "$url/$path" "$depth" "$space+ " "$echo_space   "
+        else
+            _getcertlist "$url/$path"
+        fi
+    done
+    IFS=$backIFS
+}
+
 # download certificates crt and key
 function _getcert(){
     local url="$1"
@@ -1524,15 +1772,13 @@ function main(){
                                 debug "pos: $pos left"
                             fi
                         ;;
-                    esac
-                elif [[ $_key == "O" ]]; then # HOME & END KEYS
-                    read -rsn1 -t 0.001 _key # flush read again
-                    case $_key in
                         $'\x46') # END
+                                debug "END pressed"
                                 [[ $len != 0 ]] && tput cuf $((len-pos+1)) # move cursor right to the end
                                 let pos=len+1
                         ;;
                         $'\x48') # HOME
+                                debug "HOME pressed"
                                 [[ $len != 0 ]] && tput cub $((pos-1)) # move cursor left to the beginning
                                 let pos=1
                         ;;
