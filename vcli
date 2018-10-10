@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.4.3"
+declare VERSION="0.4.4"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -59,7 +59,7 @@ function new_version(){
     local latest_release
     [[ $disable_prompt ]] && return
     latest_release="$(timeout 2 curl -s https://api.github.com/repos/mlorenzo-stratio/vcli/releases/latest | jq -r '.tag_name')"
-    if [[ $latest_release != "null" && $VERSION != $latest_release ]]; then
+    if [[ $latest_release && $latest_release != "null" && $VERSION != $latest_release ]]; then
         echo -e "New version available: $latest_release\nYou can download it by running:\n   curl -L https://github.com/mlorenzo-stratio/vcli/raw/$latest_release/vcli > $0"
         return 0
     fi
@@ -1446,8 +1446,8 @@ function _getsan(){
                           -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
         shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
         shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
-        echo -en "CN: "
-        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject:.*CN = " | sed -e "s/^.*CN = //" | tr -d '\n'
+        echo -en "CN:"
+        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject:.*CN.*=[[:space:]]*" | sed -e "s/^.*CN.*=[[:space:]]*//" | tr -d '\n'
         echo -en ", "
         echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject Alternative Name" -A1 | tail -1 | sed -e "s/^\s*//"
     done
@@ -1528,7 +1528,7 @@ function _getcertlist(){
         if echo -e "$_CRT" | openssl x509 -text -noout | grep -q "TLS Web Server Authentication"; then
             _server=yes
         fi
-        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject:.*CN = " | sed -e "s/^.*CN = //" | tr -d '\n'
+        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject:.*CN.*=[[:space:]]*" | sed -e "s/^.*CN.*=[[:space:]]*//" | tr -d '\n'
         echo -en " | \""
         echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject Alternative Name" -A1 | tail -1 | sed -e "s/^\s*//" | tr -d '\n'
         echo -en "\" | "
