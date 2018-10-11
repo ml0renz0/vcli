@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.4.4"
+declare VERSION="0.4.5"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -423,10 +423,12 @@ function check_arg(){
 function clean_n_exit(){
     save_history
     [[ ! $disable_prompt ]] && echo
+    ## REMOVED: it seems this bug doesn't reproduce anymore ##
+    #
     # reset terminal when running inside a container as local echo gets disabled (??)
-    if ! head -n 1 /proc/1/sched | grep -qE "(systemd|init)"; then
-        reset
-    fi
+    # if ! head -n 1 /proc/1/sched | grep -qE "(systemd|init)"; then
+    #   reset
+    # fi
     if [[ ! $http_code =~ ^2 ]]; then exit_status=1 ; fi
     exit $exit_status
 }
