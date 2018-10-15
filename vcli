@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.4.5"
+declare VERSION="0.4.6"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -24,7 +24,7 @@ declare SEARCHIST ENDHIST ADDTMPCMD search_cmd
 declare -a cmd_history tmp_history
 
 # vcli dependencies
-declare DEPENDENCIES="curl jq"
+declare DEPENDENCIES="curl jq openssl klist"
 
 # COLOURS
 TAB=$(tput setaf 4; tput bold)
@@ -1739,8 +1739,8 @@ function main(){
     # print prompt
     prompt
 
-    # trap for Ctrl+c
-    trap clean_n_exit INT
+    # Disable Ctrl+c
+    trap : INT
 
     # Begin iteration
     IFS=
