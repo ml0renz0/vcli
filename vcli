@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.4.6"
+declare VERSION="0.5.0"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -24,7 +24,7 @@ declare SEARCHIST ENDHIST ADDTMPCMD search_cmd
 declare -a cmd_history tmp_history
 
 # vcli dependencies
-declare DEPENDENCIES="curl jq openssl klist"
+declare DEPENDENCIES="curl jq openssl klist bc"
 
 # COLOURS
 TAB=$(tput setaf 4; tput bold)
@@ -59,7 +59,7 @@ function new_version(){
     local latest_release
     [[ $disable_prompt ]] && return
     latest_release="$(timeout 2 curl -s https://api.github.com/repos/mlorenzo-stratio/vcli/releases/latest | jq -r '.tag_name')"
-    if [[ $latest_release && $latest_release != "null" && $VERSION != $latest_release ]]; then
+    if [[ $latest_release && $latest_release != "null" && $VERSION != "$latest_release" ]]; then
         echo -e "New version available: $latest_release\nYou can download it by running:\n   curl -L https://github.com/mlorenzo-stratio/vcli/raw/$latest_release/vcli > $0"
         return 0
     fi
@@ -92,13 +92,113 @@ function debug(){
 
 ################################################# CLI FUNCTIONS #################################################
 
+declare -A vcli_commands=(
+                      [mount]=has_arg
+                      [umount]=""
+                      [cd]=has_arg
+                      [ls]=has_arg
+                      [lsrole]=""
+                      [showrole]=has_arg
+                      [lspol]=""
+                      [showpol]=has_arg
+                      [tree]=has_arg
+                      [find]=has_arg
+                      [replace]=has_arg
+                      [cptree]=has_arg
+                      [rmtree]=has_arg
+                      [backup]=has_arg
+                      [restore]=has_arg
+                      [cat]=has_arg
+                      [cp]=has_arg
+                      [getcert]=has_arg
+                      [getcertlist]=has_arg
+                      [getkrblist]=has_arg
+                      [getcertexpiration]=has_arg
+                      [getallcertlist]=has_arg
+                      [getallkrblist]=has_arg
+                      [getallcertexpiration]=has_arg
+                      [getsan]=has_arg
+                      [getprinc]=has_arg
+                      [certinfo]=has_arg
+                      [getkrb]=has_arg
+                      [krbinfo]=has_arg
+                      [mv]=has_arg
+                      [put]=has_arg
+                      [addsecret]=has_arg
+                      [delsecret]=has_arg
+                      [rm]=has_arg
+                      [help]=has_arg
+                      [history]=""
+                      [exit]=""
+                      [verbose]=""
+                      [enable-debug]=""
+                      [disable-debug]=""
+                      [enable-hexdump-debug]=""
+                      [disable-hexdump-debug]=""
+                    )
+
+declare -A vcli_commands_help=(
+        [mount]="mount path/to/mount \n  creates mount $current_pwd/path/to/mount"
+        [umount]="umount path/to/mount \n  destroys mount $current_pwd/path/to/mount"
+        [cd]="cd path/to/secret \n  changes to directory $current_pwd/path/to/secret"
+        [ls]="ls path/to/secret \n  lists paths and keys on $current_pwd/path/to/secret"
+        [lsrole]="lsrole \n  lists Vault roles"
+        [showrole]="showrole myrole \n  shows Vault role named myrole"
+        [lspol]="lspol \n  lists Vault policies"
+        [showpol]="showpol mypolicy \n  shows Vault policy named mypolicy"
+        [tree]="tree path/to/secret \n  prints vault's secrets tree with $current_pwd/path/to/secret as its root"
+        [find]="find path/to/search { \"key\": \"value\" } \n  finds vault's secrets that match the JSON data provided on path $current_pwd/path/to/search"
+        [replace]="replace path/to/replace { \"key\": \"value\" } { \"newkey\": \"newvalue\" } \n  replaces vault's secrets under $current_pwd/path/to/replace that match the JSON data with the new JSON data provided"
+        [cptree]="cptree path/to/secret path/to/other_secret \n  copies tree to destination path $current_pwd/path/to/other_secret"
+        [rmtree]="rmtree path/to/secret \n  removes path $current_pwd/path/to/secret recursively"
+        [backup]="backup path/to/secrets \n  backs up Vault /path to $TMP folder"
+        [restore]="restore /local/dir/file \n  restores Vault backup"
+        [cat]="cat path/to/secret \n  shows contents of key $current_pwd/path/to/secret"
+        [cp]="cp path/to/secret path/to/other_secret \n  copies contents of path to path $current_pwd/path/to/other_secret"
+        [getcert]="getcert path/to/secret \n  downloads certificate CRT and KEY stored in $current_pwd/path/to/secret"
+        [getcertlist]="getcertlist path/to/certificates \n  recovers certs.list with certificates found in $current_pwd/path/to/certificates"
+        [getkrblist]="getkrblist path/to/kerberos \n  recovers krb.list with principals found in $current_pwd/path/to/kerberos"
+        [getcertexpiration]="getcertexpiration path/to/certificate \n  shows expiration date for specified certificate $current_pwd/path/to/certificates"
+        [getallcertlist]="getallcertlist path/to/certificates \n  recovers certs.list with all certificates found under tree $current_pwd/path/to/certificates"
+        [getallkrblist]="getallkrblist path/to/kerberos \n  recovers krb.list with all principals found under tree $current_pwd/path/to/kerberos"
+        [getallcertexpiration]="getallcertexpiration path/to/certificate \n  shows expiration date for all certificates found under tree $current_pwd/path/to/certificates"
+        [getsan]="getsan path/to/secret \n  shows certificate's SAN stored in $current_pwd/path/to/secret"
+        [getprinc]="getprinc path/to/secret \n  shows pincipal stored in keytab $current_pwd/path/to/secret"
+        [certinfo]="certinfo path/to/secret \n  shows certificate info stored in $current_pwd/path/to/secret"
+        [getkrb]="getkrb path/to/secret \n  exports keytab file to $TMP/principal.keytab"
+        [krbinfo]="krbinfo path/to/secret \n  shows principal & keytab info stored in $current_pwd/path/to/secret"
+        [mv]="mv path/to/secret path/to/other_secret \n  moves contents of path to path $current_pwd/path/to/other_secret"
+        [put]="put path/to/secret { \"key\": \"value\" } \n  adds json={ \"key\": \"value\" } to $current_pwd/path/to/secret"
+        [addsecret]="addsecret path/to/secret { \"key2\": \"value2\" } \n  adds secret { \"key2\": \"value2\" } to existing data on $current_pwd/path/to/secret"
+        [delsecret]="delsecret path/to/secret key \n  deletes key from secret"
+        [rm]="rm path/to/secret \n  removes key $current_pwd/path/to/secret"
+        [help]="help [vcli_command] \n  shows this help or the specified's command"
+        [history]="history \n  shows vcli history"
+        [verbose]="verbose \n  toggle verbosity"
+        [enable-debug]="enable-debug \n  enable debugging"
+        [disable-debug]="disable-debug \n  disable debugging"
+        [enable-hexdump-debug]="enable-hexdump-debug \n  enable input hexdump debugging"
+        [disable-hexdump-debug]="disable-hexdump-debug \n  disable input hexdump debugging"
+        [exit]="exit \n  exits vcli" 
+                              )
+
 # return whether is a command or not
 function is_cmd(){
-    local cmd="$1"
-    case $cmd in
-        mount*|umount*|cd*|ls*|lsrole|showrole*|lspol|showpol*|tree*|find*|replace*|cptree*|rmtree*|backup*|restore*|cat*|cp*|getcert*|getcertlist*|getkrblist*|getallcertlist*|getallkrblist*|getsan*|getprinc*|certinfo*|getkrb*|krbinfo*|mv*|put*|addsecret*|delsecret*|rm*|exit*|help*|history|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug) : ;;
-        ""|*) return 1;;
-    esac
+    local cmd="$*"
+    local args
+    debug "is_cmd: $cmd"
+    for command in "${!vcli_commands[@]}"; do
+        if [[ ${vcli_commands[$command]} = "has_arg" ]]; then
+            args=".*"
+        else unset args
+        fi
+        if [[ $cmd =~ ^$command$args ]]; then
+            debug "$cmd = $command$args"
+            return 0
+        fi
+    done
+    debug "exiting is_cmd"
+    return 1
 }
 
 # complete command
@@ -106,8 +206,8 @@ function completion(){
     debug "run completion"
     local -a tmparray
     local found _cmd _path _secret paths
-    local commands=( "mount" "umount" "cd" "ls" "lsrole" "showrole" "lspol" "showpol" "tree" "find" "replace" "cptree" "rmtree" "backup" "restore" "cat" "cp" "getcert" "getcertlist" "getkrblist" "getallcertlist" "getallkrblist" "getsan" "getprinc" "certinfo" "getkrb" "krbinfo" "mv" "put" "addsecret" "delsecret" "rm" "exit" "help" "history" "verbose" "enable-debug" "disable-debug" "enable-hexdump-debug" "disable-hexdump-debug" )
-    IFS=' ' read _cmd _path < <(echo "$@")
+    local -a commands=( ${!vcli_commands[@]} )
+    IFS=' ' read -r _cmd _path < <(echo "$@")
     debug "cmd: $_cmd, path: $_path"
     # complete command
     if [[ ! $_path ]]; then
@@ -120,10 +220,42 @@ function completion(){
             done
             found=${#tmparray[@]}
             debug "commands_found $found: " "${tmparray[@]}"
-            if [[ $found == 2 ]]; then
-                cmd="$(printf "%s\n%s\n" "${tmparray[0]}" "${tmparray[1]}" | sed -e 'N;s/^\(.*\).*\n\1.*$/\1/')"
-            elif [[ $found == 1 ]]; then
+            local tmpcmd_so_far cmd_so_far
+            if [[ $found == 1 ]]; then
                 cmd="${tmparray[0]} "
+                debug "new_cmd cmd1: $cmd"
+            elif [[ $found -gt 1 ]]; then
+                echo
+                for p in "${tmparray[@]}"; do
+                    echo "$p"
+                done
+                local n=1
+                local i=0
+                # compare all found occurrences and build the common substring
+                while true ; do
+                    tmpcmd_so_far=${tmparray[$i]::$n}
+                    debug "tmpcmd_so_far: $tmpcmd_so_far"
+                    while [[ $i -lt ${#tmparray[@]} ]]; do
+                        debug "cmdmatch: i=$i n=$n ${tmparray[$i]::$n} == $tmpcmd_so_far"
+                        if [[ ${tmparray[$i]::$n} != "$tmpcmd_so_far" ]]; then
+                            end="true"
+                            break 2
+                        fi
+                        tmpcmd_so_far=${tmparray[$i]::$n}
+                        let i++
+                    done
+                    if [[ ! $end ]]; then
+                        cmd_so_far=$tmpcmd_so_far
+                        debug "cmdsofar: $cmd_so_far"
+                    fi
+                    let n++
+                    let i=0
+                done
+                cmd="$cmd_so_far"
+                debug "new_cmd cmd+1: $cmd"
+                unset tmparray tmpcmd_so_far cmd_so_far end
+                prompt
+                return 1
             fi
         fi
     # complete path
@@ -131,7 +263,7 @@ function completion(){
         debug "searching path $_path"
         _secret=${_path##*/}
         debug "1 path: $_path, secret: $_secret"
-        if [[ $_path != $_secret ]]; then
+        if [[ $_path != "$_secret" ]]; then
             _path=${_path%$_secret*}
         else
             unset _path
@@ -155,7 +287,7 @@ function completion(){
         local tmpath_so_far path_so_far
         if [[ $found == 1 ]]; then
             cmd="$_cmd $_path${tmparray[0]}"
-            debug "new_cmd2: $cmd"
+            debug "new_cmd path1: $cmd"
         elif [[ $found -gt 1 ]]; then
             echo
             for p in "${tmparray[@]}"; do
@@ -169,7 +301,7 @@ function completion(){
                 debug "tmpath_so_far: $tmpath_so_far"
                 while [[ $i -lt ${#tmparray[@]} ]]; do
                     debug "pathmatch: i=$i n=$n ${tmparray[$i]::$n} == $tmpath_so_far"
-                    if [[ ${tmparray[$i]::$n} != $tmpath_so_far ]]; then
+                    if [[ ${tmparray[$i]::$n} != "$tmpath_so_far" ]]; then
                         end="true"
                         break 2
                     fi
@@ -184,7 +316,7 @@ function completion(){
                 let i=0
             done
             cmd="$_cmd $_path$path_so_far"
-            debug "new_cmd1: $cmd"
+            debug "new_cmd path+1: $cmd"
             unset tmparray tmpath_so_far path_so_far end
             prompt
             return 1
@@ -207,7 +339,7 @@ function add_cmd(){
         local -a new_history
         new_history=( "$cmd" )
         for old_cmd in "${cmd_history[@]}"; do
-            if [[ $old_cmd != $cmd ]]; then
+            if [[ $old_cmd != $"cmd" ]]; then
                 new_history+=( "$old_cmd" )
             fi
         done
@@ -276,7 +408,7 @@ function get_lastcmd_arg(){
 
 # saves history to $HOME/.vclistory
 function save_history(){
-    > "$VCLISTORY"
+    : > "$VCLISTORY"
     for (( idx=${#cmd_history[@]}-1 ; idx>=0 ; idx-- )) ; do
         echo "${cmd_history[$idx]}" >> "$VCLISTORY"
     done
@@ -352,7 +484,10 @@ EOH
 # Print commands help
 function commands_help(){
     local arg="$1"
-    local commands="mount|umount|cd|ls|lsrole|showrole|lspol|showpol|tree|find|replace|cptree|rmtree|backup|restore|cat|cp|getcert|getcertlist|getkrblist|getallcertlist|getallkrblist|getsan|getprinc|certinfo|getkrb|krbinfo|mv|put|addsecret|delsecret|rm|history|exit|verbose|enable-debug|disable-debug|enable-hexdump-debug|disable-hexdump-debug"
+    local _cmd
+    local commands
+    commands="${!vcli_commands[*]}"
+    commands=${commands// /|}
     if [[ ! $arg ]]; then
         echo -e "Available commands:\n"
         backIFS=$IFS
@@ -365,48 +500,16 @@ function commands_help(){
         IFS=$backIFS
         return
     fi
-    case $arg in
-        mount)                 echo -e "mount path/to/mount \n  creates mount $current_pwd/path/to/mount" ;;
-        umount)                echo -e "umount path/to/mount \n  destroys mount $current_pwd/path/to/mount" ;;
-        cd)                    echo -e "cd path/to/secret \n  changes to directory $current_pwd/path/to/secret" ;;
-        ls)                    echo -e "ls path/to/secret \n  lists paths and keys on $current_pwd/path/to/secret" ;;
-        lsrole)                echo -e "lists Vault roles" ;;
-        showrole)              echo -e "showrole myrole \n  shows Vault role named myrole" ;;
-        lspol)                 echo -e "lists Vault policies" ;;
-        showpol)               echo -e "showpol mypolicy \n  shows Vault policy named mypolicy" ;;
-        tree)                  echo -e "tree path/to/secret \n  prints vault's secrets tree with $current_pwd/path/to/secret as its root" ;;
-        find)                  echo -e "find path/to/search { \"key\": \"value\" } \n  finds vault's secrets that match the JSON data provided on path $current_pwd/path/to/search" ;;
-        replace)               echo -e "replace path/to/replace { \"key\": \"value\" } { \"newkey\": \"newvalue\" } \n  replaces vault's secrets under $current_pwd/path/to/replace that match the JSON data with the new JSON data provided" ;;
-        cptree)                echo -e "cptree path/to/secret path/to/other_secret \n  copies tree to destination path $current_pwd/path/to/other_secret" ;;
-        rmtree)                echo -e "rmtree path/to/secret \n  removes path $current_pwd/path/to/secret recursively" ;;
-        backup)                echo -e "backup path/ \n  backs up Vault /path to $TMP folder" ;;
-        restore)               echo -e "restores Vault backup" ;;
-        cat)                   echo -e "cat path/to/secret \n  shows contents of key $current_pwd/path/to/secret" ;;
-        cp)                    echo -e "cp path/to/secret path/to/other_secret \n  copies contents of path to path $current_pwd/path/to/other_secret" ;;
-        getcert)               echo -e "getcert path/to/secret \n  downloads certificate CRT and KEY stored in $current_pwd/path/to/secret" ;;
-        getcertlist)           echo -e "getcertlist path/to/certificates \n  recovers certs.list with certificates found in $current_pwd/path/to/certificates" ;;
-        getkrblist)            echo -e "getkrblist path/to/kerberos \n  recovers krb.list with principals found in $current_pwd/path/to/kerberos" ;;
-        getallcertlist)        echo -e "getallcertlist path/to/certificates \n  recovers certs.list with all certificates found under tree $current_pwd/path/to/certificates" ;;
-        getallkrblist)         echo -e "getallkrblist path/to/kerberos \n  recovers krb.list with all principals found under tree $current_pwd/path/to/kerberos" ;;
-        getsan)                echo -e "getsan path/to/secret \n  shows certificate's SAN stored in $current_pwd/path/to/secret" ;;
-        getprinc)              echo -e "getprinc path/to/secret \n  shows pincipal stored in keytab $current_pwd/path/to/secret" ;;
-        certinfo)              echo -e "certinfo path/to/secret \n  shows certificate info stored in $current_pwd/path/to/secret" ;;
-        getkrb)                echo -e "getkrb path/to/secret \n  exports keytab file to $TMP/principal.keytab" ;;
-        krbinfo)               echo -e "krbinfo path/to/secret \n  shows principal & keytab info stored in $current_pwd/path/to/secret" ;;
-        mv)                    echo -e "mv path/to/secret path/to/other_secret \n  moves contents of path to path $current_pwd/path/to/other_secret" ;;
-        put)                   echo -e "put path/to/secret { \"key\": \"value\" } \n  adds json={ \"key\": \"value\" } to $current_pwd/path/to/secret" ;;
-        addsecret)             echo -e "addsecret path/to/secret { \"key2\": \"value2\" } \n  adds secret { \"key2\": \"value2\" } to existing data on $current_pwd/path/to/secret" ;;
-        delsecret)             echo -e "delsecret path/to/secret key \n  deletes key from secret" ;;
-        rm)                    echo -e "rm path/to/secret \n  removes key $current_pwd/path/to/secret" ;;
-        history)               echo -e "shows vcli history" ;;
-        verbose)               echo -e "toggle verbosity" ;;
-        enable-debug)          echo -e "enable debugging" ;;
-        disable-debug)         echo -e "disable debugging" ;;
-        enable-hexdump-debug)  echo -e "enable input hexdump debugging";;
-        disable-hexdump-debug) echo -e "disable input hexdump debugging";;
-        exit)                  echo -e "exits vcli" ;;
-        *)                     echo -e "unkown '$arg' vcli command\navailable commands [$commands]" ;;
-    esac
+    for _cmd in "${!vcli_commands[@]}"; do
+        if [[ "$_cmd" = "$arg" ]]; then
+            echo -e "${vcli_commands_help[$cmd]}"
+            return 0
+        fi
+    done
+    echo -e "unkown '$arg' vcli command. Available commands:"
+    while read line ; do        echo "   $line"
+    done< <(echo -e ${commands//|/\\n}) | sort
+    return 1
 }
 
 # Check for given arguments
@@ -441,7 +544,7 @@ function _run(){
         tmp=$(mktemp -p /dev/shm -t .run.XXXX)
         eval "$*" 2> "$tmp" # store stderr in $tmp
         exit_status=$?
-        while IFS=$'\n' read line; do
+        while IFS=$'\n' read -r line; do
             debug "     $line"
         done < "$tmp"
         rm -f "$tmp"
@@ -513,9 +616,14 @@ function _curl(){
 # run command entered in CLI
 function run_cmd(){
     local cmd="$*"
-    while IFS=$' ' read cmd arg1 arg2; do
+    backIFS=$IFS
+    while IFS=$' ' read -r cmd arg1 arg2; do
         if [[ $arg1 == "!$" ]]; then
             arg1=$(get_lastcmd_arg)
+        fi
+        if ! is_cmd "$*"; then
+            commands_help "$cmd"
+            return 1
         fi
         case $cmd in
             cd)                     _cd "$arg1" ;;
@@ -542,8 +650,10 @@ function run_cmd(){
             getprinc)               _getprinc "$arg1" ;;
             getcertlist)            _getcertlist "$arg1" ;;
             getkrblist)             _getkrblist "$arg1" ;;
+            getcertexpiration)      _getcertexpiration "$arg1" ;;
             getallcertlist)         _getallcertlist "$arg1" ;;
             getallkrblist)          _getallkrblist "$arg1" ;;
+            getallcertexpiration)   _getallcertexpiration "$arg1" ;;
             certinfo)               _certinfo "$arg1" ;;
             getkrb)                 _getkrb "$arg1" ;;
             krbinfo)                _krbinfo "$arg1" ;;
@@ -597,7 +707,7 @@ function _mount(){
             url="/sys/mounts$url"
         fi
         # check if already mounted in this session
-        if [[ ! "${mounted_paths[@]}" =~ $url ]]; then
+        if [[ ! "${mounted_paths[*]}" =~ $url ]]; then
             data="{ \\\"type\\\": \\\"generic\\\", \\\"description\\\": \\\"$url secret backend\\\" }"
             if [[ $ignore_http_code ]]; then
                 _curl -i "$url" "$data" "POST"
@@ -711,11 +821,13 @@ function _lsrole(){
 
 # showpol list role policies
 function _showrole(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local role="$1"
     local tmp
     if [[ ! $role ]]; then
         echo "Error! Missing role"
-        commands_help "showrole"
+        commands_help "${funcname//_/}"
         return
     fi
     tmp=$(mktemp -p /dev/shm -t showrole.XXXX)
@@ -735,11 +847,13 @@ function _lspol(){
 
 # showpol list policy rules
 function _showpol(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local policy="$1"
     local tmp
     if [[ ! $policy ]]; then
         echo "Error! Missing policy"
-        commands_help "showpol"
+        commands_help "${funcname//_/}"
         return
     fi
     tmp=$(mktemp -p /dev/shm -t showpol.XXXX)
@@ -869,6 +983,8 @@ function _replace(){
 
 # copy secret tree to another location
 function _cptree(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local url
     if [[ ! $1 =~ ^/ ]]; then
         url="$current_pwd$1"
@@ -882,12 +998,12 @@ function _cptree(){
     local echo_space="$5"
     if [[ ! $url ]]; then
         echo "Error! Missing secret path"
-        commands_help "cptree"
+        commands_help "${funcname//_/}"
         return
     fi
     if [[ ! $dest ]]; then
         echo "Error! Missing destination"
-        commands_help "cptree"
+        commands_help "${funcname//_/}"
         return
     fi
     # If no "$2" was passed then this iteration is the very first one, so depth=0
@@ -932,6 +1048,8 @@ function _cptree(){
 
 # removes recursively a vault path
 function _rmtree(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local url
     if [[ ! $1 =~ ^/ ]]; then
         url="$current_pwd$1/"
@@ -944,7 +1062,7 @@ function _rmtree(){
     local echo_space="$4"
     if [[ ! $url ]]; then
         echo "Error! Missing secret path"
-        commands_help "rmtree"
+        commands_help "${funcname//_/}"
         return
     fi
     # If no "$2" was passed then this iteration is the very first one, so depth=0
@@ -982,6 +1100,8 @@ function _rmtree(){
 
 # backup vault
 function _backup(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local url backupath
     if [[ ! $url =~ ^/ ]]; then
         url="$current_pwd/$1/"
@@ -1002,7 +1122,7 @@ function _backup(){
     local echo_space="$5"
     if [[ ! $url ]]; then
         echo "Error! Missing secret path"
-        commands_help "backup"
+        commands_help "${funcname//_/}"
         return
     fi
     # Check for $url existence
@@ -1060,11 +1180,13 @@ function _backup(){
 
 # restore vault backup
 function _restore(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local backup folder mount _url
     backup="$1"
     if [[ ! -r $backup ]]; then
         echo "Error! Missing backup file"
-        commands_help "restore"
+        commands_help "${funcname//_/}"
         return
     fi
     local first
@@ -1121,6 +1243,8 @@ function _restore(){
 
 # cat function
 function _cat(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     if [[ "$1" == "-_disable_-f_-" ]]; then
         disable_f="$1"
         shift
@@ -1131,7 +1255,7 @@ function _cat(){
     fi
     if [[ ! $url ]]; then
         echo "Error! Missing secret path"
-        commands_help "cat"
+        commands_help "${funcname//_/}"
         return
     fi
     debug "cat: url=$url"
@@ -1142,6 +1266,8 @@ function _cat(){
 
 # addsecret function
 function _addsecret(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local url="$1"
     if [[ ! $url =~ ^/ ]]; then
         url="$current_pwd$url"
@@ -1149,12 +1275,12 @@ function _addsecret(){
     local data="$2"
     if [[ ! $url ]]; then
         echo "Error! Missing secret path"
-        commands_help "addsecret"
+        commands_help "${funcname//_/}"
         return
     fi
     if [[ ! $data ]]; then
         echo "Error! Missing secret data"
-        commands_help "addsecret"
+        commands_help "${funcname//_/}"
         return
     fi
     secret=$(_cat "$url" | jq ".data" | tr -d '\n')
@@ -1165,6 +1291,7 @@ function _addsecret(){
 
 # delsecret function
 function _delsecret(){
+    funcname="${FUNCNAME[0]}"
     local url="$1"
     if [[ ! $url =~ ^/ ]]; then
         url="$current_pwd$url"
@@ -1172,12 +1299,12 @@ function _delsecret(){
     local key="$2"
     if [[ ! $url ]]; then
         echo "Error! Missing secret path"
-        commands_help "addsecret"
+        commands_help "${funcname//_/}"
         return
     fi
     if [[ ! $key ]]; then
         echo "Error! Missing key"
-        commands_help "delsecret"
+        commands_help "${funcname//_/}"
         return
     fi
     secret=$(_cat "$url" | jq ".data|del(.\"$key\")" | tr -d '\n')
@@ -1187,6 +1314,8 @@ function _delsecret(){
 
 # cp function
 function _cp(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local url="$1"
     local dest="$2"
     if [[ ! $url =~ ^/ ]]; then
@@ -1197,12 +1326,12 @@ function _cp(){
     fi
     if [[ ! $url ]]; then
         echo "Error! Missing secret path"
-        commands_help "cp"
+        commands_help "${funcname//_/}"
         return
     fi
     if [[ ! $dest ]]; then
         echo "Error! Missing destination"
-        commands_help "cp"
+        commands_help "${funcname//_/}"
         return
     fi
     debug "cp: url=$url dest=$dest"
@@ -1213,6 +1342,8 @@ function _cp(){
 
 # mv function
 function _mv(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local url="$1"
     local dest="$2"
     if [[ ! $url =~ ^/ ]]; then
@@ -1220,7 +1351,7 @@ function _mv(){
     fi
     if [[ ! $url ]]; then
         echo "Error! Missing secret path"
-        commands_help "mv"
+        commands_help "${funcname//_/}"
         return
     fi
     if [[ ! $dest =~ ^/ ]]; then
@@ -1228,7 +1359,7 @@ function _mv(){
     fi
     if [[ ! $dest ]]; then
         echo "Error! Missing destination"
-        commands_help "mv"
+        commands_help "${funcname//_/}"
         return
     fi
     debug "mv: url=$url dest=$dest"
@@ -1237,13 +1368,15 @@ function _mv(){
 
 # rm function
 function _rm(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local url="$1"
     if [[ ! $url =~ ^/ ]]; then
         url="$current_pwd$1"
     fi
     if [[ ! $url ]]; then
         echo "Error! Missing secret path"
-        commands_help "rm"
+        commands_help "${funcname//_/}"
         return
     fi
     debug "rm: url=$url"
@@ -1252,6 +1385,8 @@ function _rm(){
 
 # put function
 function _put(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local url="$1"
     if [[ ! $url =~ ^/ ]]; then
         url="$current_pwd$1"
@@ -1260,12 +1395,12 @@ function _put(){
     local data=${2//\"/\\\"}
     if [[ ! $url ]]; then
         echo "Error! Missing secret path"
-        commands_help "put"
+        commands_help "${funcname//_/}"
         return
     fi
     if [[ ! $data ]]; then
         echo "Error! Missing secret data"
-        commands_help "put"
+        commands_help "${funcname//_/}"
         return
     fi
     url="${url/\/\//\/}"
@@ -1276,13 +1411,15 @@ function _put(){
 
 # validate and show principals and keytab info
 function _krbinfo(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local url="$1"
     local tmp tmp2 _keys
     # Get principals and store them in ${princs[@]}
     declare -A princs
     if [[ ! $url ]]; then
         echo "Error! Missing keytab path"
-        commands_help "krbinfo"
+        commands_help "${funcname//_/}"
         return
     fi
     tmp=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
@@ -1311,13 +1448,15 @@ function _krbinfo(){
 
 # download keytab to /tmp
 function _getkrb(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local url="$1"
     local tmp tmp2 _keys
     # Get principals and store them in ${princs[@]}
     declare -A princs
     if [[ ! $url ]]; then
         echo "Error! Missing keytab path"
-        commands_help "getkrb"
+        commands_help "${funcname//_/}"
         return
     fi
     tmp=$(mktemp -p /dev/shm -t .getkrb.XXXX)
@@ -1344,11 +1483,13 @@ function _getkrb(){
 
 # validate that crt and key match and show certificate info
 function _certinfo(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local url="$1"
     local _CRT _KEY
     if [[ ! $url ]]; then
         echo "Error! Missing cert path"
-        commands_help "certinfo"
+        commands_help "${funcname//_/}"
         return
     fi
     local _certs _cert shacrt _keys _key shakey
@@ -1386,13 +1527,15 @@ function _certinfo(){
 
 # print principal of kerberos secret
 function _getprinc(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local url="$1"
     local tmp tmp2 _keys
     # Get principals and store them in ${princs[@]}
     declare -A princs
     if [[ ! $url ]]; then
         echo "Error! Missing keytab path"
-        commands_help "krbinfo"
+        commands_help "${funcname//_/}"
         return
     fi
     tmp=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
@@ -1420,11 +1563,13 @@ function _getprinc(){
 
 # print CN and SAN of certificate secret
 function _getsan(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local url="$1"
     local _CRT _KEY
     if [[ ! $url ]]; then
         echo "Error! Missing cert path"
-        commands_help "getsan"
+        commands_help "${funcname//_/}"
         return
     fi
     local _certs _cert shacrt _keys _key shakey
@@ -1459,13 +1604,15 @@ function _getsan(){
 
 # recover krb.list from certificates path
  function _getkrblist(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local url="$1"
     local tmp tmp2 _keys _princ
     # Get principals and store them in ${princs[@]}
     declare -A princs
     if [[ ! $url ]]; then
         echo "Error! Missing keytab path"
-        commands_help "krbinfo"
+        commands_help "${funcname//_/}"
         return
     fi
     tmp=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
@@ -1496,11 +1643,13 @@ function _getsan(){
 
 # recover certs.list from certificates path
 function _getcertlist(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local url="$1"
     local _CRT _KEY _client _server
     if [[ ! $url ]]; then
         echo "Error! Missing cert path"
-        commands_help "getsan"
+        commands_help "${funcname//_/}"
         return
     fi
     local _certs _cert shacrt _keys _key shakey
@@ -1532,7 +1681,7 @@ function _getcertlist(){
         fi
         echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject:.*CN.*=[[:space:]]*" | sed -e "s/^.*CN.*=[[:space:]]*//" | tr -d '\n'
         echo -en " | \""
-        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject Alternative Name" -A1 | tail -1 | sed -e "s/^\s*//" | tr -d '\n'
+        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject Alternative Name" -A1 | tail -1 | sed -e "s/^\s*//" | tr -d ' ' | tr -d '\n'
         echo -en "\" | "
         if [[ $_client ]] && [[ $_server ]]; then
             echo -en "client-server"
@@ -1542,19 +1691,83 @@ function _getcertlist(){
             echo -en "client"
         fi
         echo -e " | $url"
-        unset $_client $_server
+        unset _client _server
     done
     rm -f "$tmp"
     IFS=$backIFS
 }
 
+# returns expiration date for specified certificates secret
+function _getcertexpiration(){
+    local funcname date expiration_date expiration_date_human warning_date critical_date warning_threshold critical_threshold diff colour
+    funcname="${FUNCNAME[0]}"
+    warning_threshold="30"
+    critical_threshold="15"
+    local url="$1"
+    local _CRT _KEY _client _server
+    if [[ ! $url ]]; then
+        echo "Error! Missing cert path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    local _certs _cert shacrt _keys _key shakey
+    tmp=$(mktemp -p /dev/shm -t .certinfo.XXXX)
+    _cat "$url" > "$tmp"
+    backIFS=$IFS
+    IFS=$' '
+    _certs=( $(jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
+    _keys=( $(jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
+    for ((n=0;n<${#_certs[@]};n++)); do
+        _cert=${_certs[$n]}
+        _key=${_keys[$n]}
+        debug "jq .data .$_cert -r < $tmp"
+        _CRT=$(jq ".data .$_cert" -r < "$tmp" | \
+                      sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
+                          -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
+                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
+        debug "jq .data .$_key -r < $tmp"
+        _KEY=$(jq ".data .$_key" -r < "$tmp"  | \
+                      sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
+                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
+        shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
+        shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
+
+        expiration_date_human=$(date -R -d "$(echo -e "$_CRT" | openssl x509 -noout -enddate | cut -d '=' -f2)")
+        echo "${_cert//\"/}:" | sed -e "s/_crt//"
+        warning_date=$(date -d "$expiration_date_human -$warning_threshold days" +%s)
+        critical_date=$(date -d "$expiration_date_human -$critical_threshold days" +%s)
+        expiration_date=$(date -d"$expiration_date_human" +%s)
+        date=$(date +%s)
+        diff=$(echo "($expiration_date-$date)/(60*60*24)" | bc)
+        if [[ "$date" -ge "$warning_date" ]]; then
+            diff="$YELLOW$diff$NONE"
+        elif [[ "$date" -ge "$critical_date" ]]; then
+            diff="$RED$diff$NONE"
+        else
+            diff="$GREEN$diff$NONE"
+        fi
+        echo "   $diff days to renew certificate ($expiration_date_human)"
+        unset _client _server
+    done
+    rm -f "$tmp"
+    IFS=$backIFS
+
+}
+
 # recovers krb.list with all keytabs found under the specified folder
 function _getallkrblist(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local url
     if [[ ! $1 =~ ^/ ]]; then
         url="$current_pwd$1"
     else
         url=${1//\/\//\/}
+    fi
+    if [[ ! $url ]]; then
+        echo "Error! Missing keytabs path"
+        commands_help "${funcname//_/}"
+        return
     fi
     local depth="$2"
     local space="$3"
@@ -1586,11 +1799,18 @@ function _getallkrblist(){
 
 # recovers cert.list with all certificates found under the specified folder
 function _getallcertlist(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local url
     if [[ ! $1 =~ ^/ ]]; then
         url="$current_pwd$1"
     else
         url=${1//\/\//\/}
+    fi
+    if [[ ! $url ]]; then
+        echo "Error! Missing certs path"
+        commands_help "${funcname//_/}"
+        return
     fi
     local depth="$2"
     local space="$3"
@@ -1620,13 +1840,59 @@ function _getallcertlist(){
     IFS=$backIFS
 }
 
+
+# shows all certificate's expiration dates
+function _getallcertexpiration(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    local url
+    if [[ ! $1 =~ ^/ ]]; then
+        url="$current_pwd$1"
+    else
+        url=${1//\/\//\/}
+    fi
+    if [[ ! $url ]]; then
+        echo "Error! Missing certs path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    local depth="$2"
+    local space="$3"
+    local echo_space="$4"
+    # If no "$2" was passed then this iteration is the very first one, so depth=0
+    if [[ ! $depth ]]; then
+        depth=0
+    # other wise we increment a depth as we go deeper in the structure
+    else
+        let depth++
+    fi
+    backIFS=$IFS
+    IFS=$' '
+    debug "${echo_space}_$: '$url', depth: $depth, space: \"$space\""
+    # if $url is /
+    paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
+    debug "${echo_space}_getallcertlist: $paths"
+    for path in $paths; do
+        debug "${echo_space}   depth: $depth => found: $paths"
+        space=${space/+/ }
+        if [[ $path =~ /$ ]]; then
+            _getallcertexpiration "$url/$path" "$depth" "$space+ " "$echo_space   "
+        else
+            _getcertexpiration "$url/$path"
+        fi
+    done
+    IFS=$backIFS
+}
+
 # download certificates crt and key
 function _getcert(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
     local url="$1"
     local _CRT _KEY
     if [[ ! $url ]]; then
         echo "Error! Missing cert path"
-        commands_help "getcert"
+        commands_help "${funcname//_/}"
         return
     fi
     local _certs _cert _keys _key
@@ -1668,7 +1934,7 @@ function main(){
     local msg info
 
     # Return vcli version and quit
-    if [[ $@ == "--version" ]]; then
+    if [[ "$*" == "--version" ]]; then
         msg="vcli v$VERSION"
         if info=$(new_version 2>&1); then
             msg+=" (update available)\n$info"
@@ -1747,7 +2013,7 @@ function main(){
     while true; do
         lastkey=$_key
         # read key and process
-        read -sN1 _key
+        read -r -sN1 _key
         case $_key in
             $'\x1b')
                 read -rsn1 -t 0.001 _key # flush read
@@ -1850,7 +2116,7 @@ function main(){
                     let len=${#cmd}
                     let pos=len+1
                 else
-                                        # print the command found in history
+                    # print the command found in history
                     len=0
                     pos=1
                     tput el # clean to the end of the line
@@ -1882,7 +2148,7 @@ function main(){
                     let len=${#cmd}
                 fi
             ;;
-            $'\x04') # Ctrl+d behaviour is the same as Ctrl+c
+            $'\x04') # Ctrl+d behaviour is exit
                 clean_n_exit
             ;;
             $'')
@@ -1901,7 +2167,7 @@ function main(){
             ;;
         esac
         # Exit history search mode
-        if [[ "$_key" != $lastkey ]] && [[ "$_key" != $'\x12' ]]; then
+        if [[ "$_key" != "$lastkey" ]] && [[ "$_key" != $'\x12' ]]; then
             debug "exiting history search mode"
             unset SEARCHIST search_cmd tmp_history
         fi
