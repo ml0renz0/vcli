@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.5.0"
+declare VERSION="0.5.1"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -22,7 +22,8 @@ declare crt_suffix="_crt"
 declare key_suffix="_key"
 declare SEARCHIST ENDHIST ADDTMPCMD search_cmd
 declare -a cmd_history tmp_history
-
+declare cert_warning_threshold="30"
+declare cert_critical_threshold="15"
 # vcli dependencies
 declare DEPENDENCIES="curl jq openssl klist bc"
 
@@ -93,48 +94,48 @@ function debug(){
 ################################################# CLI FUNCTIONS #################################################
 
 declare -A vcli_commands=(
-                      [mount]=has_arg
-                      [umount]=""
-                      [cd]=has_arg
-                      [ls]=has_arg
-                      [lsrole]=""
-                      [showrole]=has_arg
-                      [lspol]=""
-                      [showpol]=has_arg
-                      [tree]=has_arg
-                      [find]=has_arg
-                      [replace]=has_arg
-                      [cptree]=has_arg
-                      [rmtree]=has_arg
-                      [backup]=has_arg
-                      [restore]=has_arg
-                      [cat]=has_arg
-                      [cp]=has_arg
-                      [getcert]=has_arg
-                      [getcertlist]=has_arg
-                      [getkrblist]=has_arg
-                      [getcertexpiration]=has_arg
-                      [getallcertlist]=has_arg
-                      [getallkrblist]=has_arg
-                      [getallcertexpiration]=has_arg
-                      [getsan]=has_arg
-                      [getprinc]=has_arg
-                      [certinfo]=has_arg
-                      [getkrb]=has_arg
-                      [krbinfo]=has_arg
-                      [mv]=has_arg
-                      [put]=has_arg
-                      [addsecret]=has_arg
-                      [delsecret]=has_arg
-                      [rm]=has_arg
-                      [help]=has_arg
-                      [history]=""
-                      [exit]=""
-                      [verbose]=""
-                      [enable-debug]=""
-                      [disable-debug]=""
-                      [enable-hexdump-debug]=""
-                      [disable-hexdump-debug]=""
+                      [mount]=arg
+                      [umount]=noarg
+                      [cd]=arg
+                      [ls]=arg
+                      [lsrole]=noarg
+                      [showrole]=arg
+                      [lspol]=noarg
+                      [showpol]=arg
+                      [tree]=arg
+                      [find]=arg
+                      [replace]=arg
+                      [cptree]=arg
+                      [rmtree]=arg
+                      [backup]=arg
+                      [restore]=arg
+                      [cat]=arg
+                      [cp]=arg
+                      [getcert]=arg
+                      [getcertlist]=arg
+                      [getkrblist]=arg
+                      [getcertexpiration]=arg
+                      [getallcertlist]=arg
+                      [getallkrblist]=arg
+                      [getallcertexpiration]=arg
+                      [getsan]=arg
+                      [getprinc]=arg
+                      [certinfo]=arg
+                      [getkrb]=arg
+                      [krbinfo]=arg
+                      [mv]=arg
+                      [put]=arg
+                      [addsecret]=arg
+                      [delsecret]=arg
+                      [rm]=arg
+                      [help]=arg
+                      [history]=noarg
+                      [exit]=noarg
+                      [verbose]=noarg
+                      [enable-debug]=noarg
+                      [disable-debug]=noarg
+                      [enable-hexdump-debug]=noarg
+                      [disable-hexdump-debug]=noarg
                     )
 
 declare -A vcli_commands_help=(
@@ -158,10 +159,10 @@ declare -A vcli_commands_help=(
         [getcert]="getcert path/to/secret \n  downloads certificate CRT and KEY stored in $current_pwd/path/to/secret"
         [getcertlist]="getcertlist path/to/certificates \n  recovers certs.list with certificates found in $current_pwd/path/to/certificates"
         [getkrblist]="getkrblist path/to/kerberos \n  recovers krb.list with principals found in $current_pwd/path/to/kerberos"
-        [getcertexpiration]="getcertexpiration path/to/certificate \n  shows expiration date for specified certificate $current_pwd/path/to/certificates"
+        [getcertexpiration]="getcertexpiration [-oo|-ow|-oc] path/to/certificate \n  shows expiration date for specified certificate $current_pwd/path/to/certificates\n  -oo: omit ok certs\n  -ow: omit certs in warning threshold ($cert_warning_threshold days)\n  -oc: omit certs in critical threshold ($cert_critical_threshold days)"
         [getallcertlist]="getallcertlist path/to/certificates \n  recovers certs.list with all certificates found under tree $current_pwd/path/to/certificates"
         [getallkrblist]="getallkrblist path/to/kerberos \n  recovers krb.list with all principals found under tree $current_pwd/path/to/kerberos"
-        [getallcertexpiration]="getallcertexpiration path/to/certificate \n  shows expiration date for all certificates found under tree $current_pwd/path/to/certificates"
+        [getallcertexpiration]="getallcertexpiration [-oo|-ow|-oc] path/to/certificate \n  shows expiration date for all certificates found under tree $current_pwd/path/to/certificates\n  -oo: omit ok certs\n  -ow: omit certs in warning threshold ($cert_warning_threshold days)\n  -oc: omit certs in critical threshold ($cert_critical_threshold days)"
         [getsan]="getsan path/to/secret \n  shows certificate's SAN stored in $current_pwd/path/to/secret"
         [getprinc]="getprinc path/to/secret \n  shows pincipal stored in keytab $current_pwd/path/to/secret"
         [certinfo]="certinfo path/to/secret \n  shows certificate info stored in $current_pwd/path/to/secret"
@@ -184,20 +185,27 @@ declare -A vcli_commands_help=(
 
 # return whether is a command or not
 function is_cmd(){
-    local cmd="$*"
+    local cmd=${1%% *}
+    local arg=${1##* }
+    if [[ $cmd == "$arg" ]]; then unset arg; fi
     local args
-    debug "is_cmd: $cmd"
+    debug "IS_CMD1: cmd=$cmd arg=$arg"
     for command in "${!vcli_commands[@]}"; do
-        if [[ ${vcli_commands[$command]} = "has_arg" ]]; then
-            args=".*"
-        else unset args
-        fi
-        if [[ $cmd =~ ^$command$args ]]; then
-            debug "$cmd = $command$args"
+        debug "IS_CMD2: command=$command, args=$args"
+        debug "IS_CMD3: $cmd =~ ^$command$"
+        if [[ $cmd =~ ^$command$ ]]; then
+            if [[ ${vcli_commands[$command]} = "noarg" ]]; then
+                if [[ $arg ]]; then
+                    return 1
+                else
+                    debug "IS_CMD4: MATCHED"
+                    return 0
+                fi
+            fi
+            debug "IS_CMD4: MATCHED"
             return 0
         fi
     done
-    debug "exiting is_cmd"
     return 1
 }
 
@@ -486,7 +494,7 @@ function commands_help(){
     local arg="$1"
     local _cmd
     local commands
-    commands="${!vcli_commands[*]}"
+    commands="${!vcli_commands[@]}"
     commands=${commands// /|}
     if [[ ! $arg ]]; then
         echo -e "Available commands:\n"
@@ -502,13 +510,13 @@ function commands_help(){
     fi
     for _cmd in "${!vcli_commands[@]}"; do
         if [[ "$_cmd" = "$arg" ]]; then
-            echo -e "${vcli_commands_help[$cmd]}"
+            echo -e "${vcli_commands_help[$_cmd]}"
             return 0
         fi
     done
     echo -e "unkown '$arg' vcli command. Available commands:"
-    while read line ; do        echo "   $line"
-    done< <(echo -e ${commands//|/\\n}) | sort
+    while read -r line ; do        echo "   $line"
+    done< <(echo -e "${commands//|/\\n}") | sort
     return 1
 }
 
@@ -617,7 +625,7 @@ function _curl(){
 function run_cmd(){
     local cmd="$*"
     backIFS=$IFS
-    while IFS=$' ' read -r cmd arg1 arg2; do
+    while IFS=$' ' read -r cmd arg1 arg2 arg3; do
         if [[ $arg1 == "!$" ]]; then
             arg1=$(get_lastcmd_arg)
         fi
@@ -650,10 +658,10 @@ function run_cmd(){
             getprinc)               _getprinc "$arg1" ;;
             getcertlist)            _getcertlist "$arg1" ;;
             getkrblist)             _getkrblist "$arg1" ;;
-            getcertexpiration)      _getcertexpiration "$arg1" ;;
+            getcertexpiration)      _getcertexpiration "$arg1" "$arg2" "$arg3" ;;
             getallcertlist)         _getallcertlist "$arg1" ;;
             getallkrblist)          _getallkrblist "$arg1" ;;
-            getallcertexpiration)   _getallcertexpiration "$arg1" ;;
+            getallcertexpiration)   _getallcertexpiration "$arg1" "$arg2" ;;
             certinfo)               _certinfo "$arg1" ;;
             getkrb)                 _getkrb "$arg1" ;;
             krbinfo)                _krbinfo "$arg1" ;;
@@ -679,7 +687,7 @@ function run_cmd(){
         esac
         debug "run_cmd: $cmd $arg1 $arg2"
         debug "run_cmd: http_code=$http_code"
-        add_cmd "$cmd $arg1 $arg2"
+        add_cmd "$cmd $arg1 $arg2 $arg3"
     done< <(echo "$cmd")
 }
 
@@ -1699,17 +1707,26 @@ function _getcertlist(){
 
 # returns expiration date for specified certificates secret
 function _getcertexpiration(){
-    local funcname date expiration_date expiration_date_human warning_date critical_date warning_threshold critical_threshold diff colour
+    local url funcname date expiration_date expiration_date_human warning_date critical_date diff omit_ok omit_warn omit_crit
     funcname="${FUNCNAME[0]}"
-    warning_threshold="30"
-    critical_threshold="15"
-    local url="$1"
+    # If -o specified ok certs are omitted
+    while [[ "$#" -ge 1 ]]; do
+        case $1 in
+            -oo)    omit_ok="yes" ;;
+            -ow)    omit_warn="yes" ;;
+            -oc)    omit_crit="yes" ;;
+            /*)     url="$1" ;;
+            *)      : ;;
+        esac
+        shift
+    done
     local _CRT _KEY _client _server
     if [[ ! $url ]]; then
         echo "Error! Missing cert path"
         commands_help "${funcname//_/}"
         return
     fi
+    debug "${funcname//_/}: omit_ok: $omit_ok, omit_warn: $omit_warn, omit_crit: $omit_crit"
     local _certs _cert shacrt _keys _key shakey
     tmp=$(mktemp -p /dev/shm -t .certinfo.XXXX)
     _cat "$url" > "$tmp"
@@ -1733,21 +1750,26 @@ function _getcertexpiration(){
         shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
 
         expiration_date_human=$(date -R -d "$(echo -e "$_CRT" | openssl x509 -noout -enddate | cut -d '=' -f2)")
-        echo "${_cert//\"/}:" | sed -e "s/_crt//"
-        warning_date=$(date -d "$expiration_date_human -$warning_threshold days" +%s)
-        critical_date=$(date -d "$expiration_date_human -$critical_threshold days" +%s)
+        _cert=${_cert//\"/}
+        _cert="${_cert%%_crt}:"
+        warning_date=$(date -d "$expiration_date_human -$cert_warning_threshold days" +%s)
+        critical_date=$(date -d "$expiration_date_human -$cert_critical_threshold days" +%s)
         expiration_date=$(date -d"$expiration_date_human" +%s)
         date=$(date +%s)
         diff=$(echo "($expiration_date-$date)/(60*60*24)" | bc)
+        debug "${funcname//_/}: omit_ok: $omit_ok, omit_warn: $omit_warn, omit_crit: $omit_crit"
         if [[ "$date" -ge "$warning_date" ]]; then
-            diff="$YELLOW$diff$NONE"
+            if [[ ! $omit_warn ]]; then
+                echo -e "$_cert ($url)\n   $YELLOW$diff$NONE days to renew certificate ($expiration_date_human)"
+            fi
         elif [[ "$date" -ge "$critical_date" ]]; then
-            diff="$RED$diff$NONE"
-        else
-            diff="$GREEN$diff$NONE"
+            if [[ ! $omit_crit ]]; then
+                echo -e "$_cert ($url)\n   $RED$diff$NONE days to renew certificate ($expiration_date_human)"
+            fi
+        elif [[ ! $omit_ok ]]; then
+            echo -e "$_cert ($url)\n   $GREEN$diff$NONE days to renew certificate ($expiration_date_human)"
         fi
-        echo "   $diff days to renew certificate ($expiration_date_human)"
-        unset _client _server
+        unset _client _server date expiration_date expiration_date_human
     done
     rm -f "$tmp"
     IFS=$backIFS
@@ -1843,9 +1865,13 @@ function _getallcertlist(){
 
 # shows all certificate's expiration dates
 function _getallcertexpiration(){
-    local funcname
+    local funcname arg
     funcname="${FUNCNAME[0]}"
     local url
+    if [[ $1 =~ ^-o[owc]+$ ]]; then
+        arg="$1"
+        shift
+    fi
     if [[ ! $1 =~ ^/ ]]; then
         url="$current_pwd$1"
     else
@@ -1855,6 +1881,11 @@ function _getallcertexpiration(){
         echo "Error! Missing certs path"
         commands_help "${funcname//_/}"
         return
+    fi
+    shift
+    if [[ $1 =~ ^-o[owc]+$ ]]; then
+        arg="$1"
+        shift
     fi
     local depth="$2"
     local space="$3"
@@ -1878,7 +1909,7 @@ function _getallcertexpiration(){
         if [[ $path =~ /$ ]]; then
             _getallcertexpiration "$url/$path" "$depth" "$space+ " "$echo_space   "
         else
-            _getcertexpiration "$url/$path"
+            _getcertexpiration "$url/$path" "$arg"
         fi
     done
     IFS=$backIFS
