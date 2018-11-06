@@ -1778,7 +1778,7 @@ function _getcertexpiration(){
 
 # recovers krb.list with all keytabs found under the specified folder
 function _getallkrblist(){
-    local funcname
+    local funcname IFS backIFS
     funcname="${FUNCNAME[0]}"
     local url
     if [[ ! $1 =~ ^/ ]]; then
@@ -1821,7 +1821,7 @@ function _getallkrblist(){
 
 # recovers cert.list with all certificates found under the specified folder
 function _getallcertlist(){
-    local funcname
+    local funcname IFS backIFS
     funcname="${FUNCNAME[0]}"
     local url
     if [[ ! $1 =~ ^/ ]]; then
@@ -1865,7 +1865,7 @@ function _getallcertlist(){
 
 # shows all certificate's expiration dates
 function _getallcertexpiration(){
-    local funcname arg
+    local funcname arg IFS backIFS
     funcname="${FUNCNAME[0]}"
     local url
     if [[ $1 =~ ^-o[owc]+$ ]]; then
@@ -2182,9 +2182,6 @@ function main(){
             $'\x04') # Ctrl+d behaviour is exit
                 clean_n_exit
             ;;
-            $'')
-                clean_n_exit
-            ;;
             $'\x20'|*) # NORMAL CHARS
                 tput ich 1 # insert chars rather than overwriting them
                 [[ ! $disable_prompt ]] && echo -n "$_key" #| hexdump -C
@@ -2195,6 +2192,9 @@ function main(){
                 cmd="${cmd:0:$((pos-2))}$_key${cmd:$((pos-2)):${#cmd}}"
                 debug " => ${#cmd}: \"$cmd\""
                 debug "pos: $pos, len: $len"
+            ;;
+            $'')
+                clean_n_exit
             ;;
         esac
         # Exit history search mode
