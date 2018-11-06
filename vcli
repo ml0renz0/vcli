@@ -1762,7 +1762,7 @@ function _getcertexpiration(){
             if [[ ! $omit_warn ]]; then
                 echo -e "$_cert ($url)\n   $YELLOW$diff$NONE days to renew certificate ($expiration_date_human)"
             fi
-        elif [[ "$date" -ge "$critical_date" ]]; then
+        elif [[ "$date" -ge "$critical_date" || "$diff" -lt 0 ]]; then
             if [[ ! $omit_crit ]]; then
                 echo -e "$_cert ($url)\n   $RED$diff$NONE days to renew certificate ($expiration_date_human)"
             fi
