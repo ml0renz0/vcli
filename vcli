@@ -1882,7 +1882,6 @@ function _getallcertexpiration(){
         commands_help "${funcname//_/}"
         return
     fi
-    shift
     if [[ $1 =~ ^-o[owc]+$ ]]; then
         arg="$1"
         shift
@@ -1902,14 +1901,14 @@ function _getallcertexpiration(){
     debug "${echo_space}_$: '$url', depth: $depth, space: \"$space\""
     # if $url is /
     paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
-    debug "${echo_space}_getallcertlist: $paths"
+    debug "${echo_space}$funcname: $paths"
     for path in $paths; do
         debug "${echo_space}   depth: $depth => found: $paths"
         space=${space/+/ }
         if [[ $path =~ /$ ]]; then
             _getallcertexpiration "$url/$path" "$depth" "$space+ " "$echo_space   "
         else
-            _getcertexpiration "$url/$path" "$arg"
+            _getcertexpiration "$url$path" "$arg"
         fi
     done
     IFS=$backIFS
