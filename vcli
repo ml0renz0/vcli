@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.5.2"
+declare VERSION="0.5.3"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -1707,20 +1707,35 @@ function _getcertlist(){
 
 # returns expiration date for specified certificates secret
 function _getcertexpiration(){
-    local url funcname date expiration_date expiration_date_human warning_date critical_date diff omit_ok omit_warn omit_crit
+    local url funcname date expiration_date expiration_date_human warning_date critical_date diff omit_ok omit_warn omit_crit _CRT _KEY _client _server
     funcname="${FUNCNAME[0]}"
     # If -o specified ok certs are omitted
-    while [[ "$#" -ge 1 ]]; do
-        case $1 in
-            -oo)    omit_ok="yes" ;;
-            -ow)    omit_warn="yes" ;;
-            -oc)    omit_crit="yes" ;;
-            /*)     url="$1" ;;
-            *)      : ;;
-        esac
-        shift
-    done
-    local _CRT _KEY _client _server
+    case $1 in
+        -oo)    omit_ok="yes"   ; shift ;;
+        -ow)    omit_warn="yes" ; shift ;;
+        -oc)    omit_crit="yes" ; shift ;;
+        -*)     shift                   ;;
+    esac
+    if [[ ! $1 =~ ^/ ]]; then
+        url="$current_pwd$1"
+    else
+        url=${1//\/\//\/}
+    fi
+    url=${url//\/\//\/}
+    if [[ ! $url ]]; then
+        echo "Error! Missing cert path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    shift
+    # If -o specified ok certs are omitted
+    case $1 in
+        -oo)    omit_ok="yes"   ;;
+        -ow)    omit_warn="yes" ;;
+        -oc)    omit_crit="yes" ;;
+        -*)     shift           ;;
+    esac
+
     if [[ ! $url ]]; then
         echo "Error! Missing cert path"
         commands_help "${funcname//_/}"
@@ -1758,13 +1773,13 @@ function _getcertexpiration(){
         date=$(date +%s)
         diff=$(echo "($expiration_date-$date)/(60*60*24)" | bc)
         debug "${funcname//_/}: omit_ok: $omit_ok, omit_warn: $omit_warn, omit_crit: $omit_crit"
-        if [[ "$date" -ge "$warning_date" ]]; then
-            if [[ ! $omit_warn ]]; then
-                echo -e "$_cert ($url)\n   $YELLOW$diff$NONE days to renew certificate ($expiration_date_human)"
-            fi
-        elif [[ "$date" -ge "$critical_date" || "$diff" -lt 0 ]]; then
+        if [[ "$date" -ge "$critical_date" || "$diff" -lt 0 ]]; then
             if [[ ! $omit_crit ]]; then
                 echo -e "$_cert ($url)\n   $RED$diff$NONE days to renew certificate ($expiration_date_human)"
+            fi
+        elif [[ "$date" -ge "$warning_date" ]]; then
+            if [[ ! $omit_warn ]]; then
+                echo -e "$_cert ($url)\n   $YELLOW$diff$NONE days to renew certificate ($expiration_date_human)"
             fi
         elif [[ ! $omit_ok ]]; then
             echo -e "$_cert ($url)\n   $GREEN$diff$NONE days to renew certificate ($expiration_date_human)"
@@ -1865,11 +1880,14 @@ function _getallcertlist(){
 
 # shows all certificate's expiration dates
 function _getallcertexpiration(){
-    local funcname arg IFS backIFS
+    local url funcname arg IFS backIFS
     funcname="${FUNCNAME[0]}"
-    local url
     if [[ $1 =~ ^-o[owc]+$ ]]; then
         arg="$1"
+        shift
+    elif [[ $1 =~ ^- ]]; then
+        shift
+    elif [[ ! $1 ]]; then
         shift
     fi
     if [[ ! $1 =~ ^/ ]]; then
@@ -1877,14 +1895,17 @@ function _getallcertexpiration(){
     else
         url=${1//\/\//\/}
     fi
+    url=${url//\/\//\/}
+    url=${url%%\/}
+    if [[ $2 =~ ^-o[owc]+$ ]]; then
+        arg="$2"
+        shift
+    fi
+    debug "${echo_space}$funcname: URL=$url, args=$arg"
     if [[ ! $url ]]; then
         echo "Error! Missing certs path"
         commands_help "${funcname//_/}"
         return
-    fi
-    if [[ $1 =~ ^-o[owc]+$ ]]; then
-        arg="$1"
-        shift
     fi
     local depth="$2"
     local space="$3"
@@ -1903,12 +1924,15 @@ function _getallcertexpiration(){
     paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
     debug "${echo_space}$funcname: $paths"
     for path in $paths; do
+        path=${path//\/\//\/}
         debug "${echo_space}   depth: $depth => found: $paths"
         space=${space/+/ }
         if [[ $path =~ /$ ]]; then
-            _getallcertexpiration "$url/$path" "$depth" "$space+ " "$echo_space   "
+            debug "$funcname: _getallcertexpiration $arg $url/$path $depth"
+            _getallcertexpiration "$arg" "$url/$path" "$depth" "$space+ " "$echo_space   "
         else
-            _getcertexpiration "$url$path" "$arg"
+            debug "$funcname: _getcertexpiration $url/$path $arg"
+            _getcertexpiration "$url/$path" "$arg"
         fi
     done
     IFS=$backIFS
@@ -2181,6 +2205,9 @@ function main(){
             $'\x04') # Ctrl+d behaviour is exit
                 clean_n_exit
             ;;
+            $'')
+                clean_n_exit
+            ;;
             $'\x20'|*) # NORMAL CHARS
                 tput ich 1 # insert chars rather than overwriting them
                 [[ ! $disable_prompt ]] && echo -n "$_key" #| hexdump -C
@@ -2191,9 +2218,6 @@ function main(){
                 cmd="${cmd:0:$((pos-2))}$_key${cmd:$((pos-2)):${#cmd}}"
                 debug " => ${#cmd}: \"$cmd\""
                 debug "pos: $pos, len: $len"
-            ;;
-            $'')
-                clean_n_exit
             ;;
         esac
         # Exit history search mode
