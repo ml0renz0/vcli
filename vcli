@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.5.4"
+declare VERSION="0.5.5"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -1687,7 +1687,8 @@ function _getcertlist(){
         if echo -e "$_CRT" | openssl x509 -text -noout | grep -q "TLS Web Server Authentication"; then
             _server=yes
         fi
-        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject:.*CN.*=[[:space:]]*" | sed -e "s/^.*CN.*=[[:space:]]*//" | tr -d '\n'
+        _cert=${_cert//\"/}
+        echo -en "${_cert%%_crt}"
         echo -en " | \""
         echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject Alternative Name" -A1 | tail -1 | sed -e "s/^\s*//" | tr -d ' ' | tr -d '\n'
         echo -en "\" | "
