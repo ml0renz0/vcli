@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.5.5"
+declare VERSION="0.5.6"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -1844,6 +1844,9 @@ function _getallcertlist(){
         url="$current_pwd$1"
     else
         url=${1//\/\//\/}
+    fi
+    if [[ $url =~ /$ ]]; then
+        url=${url: -${#url}:$((${#url}-1))}
     fi
     if [[ ! $url ]]; then
         echo "Error! Missing certs path"
