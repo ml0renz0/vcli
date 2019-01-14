@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.5.8"
+declare VERSION="0.5.9"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -566,6 +566,7 @@ function _run(){
 # simplified curl function
 function _curl(){
     local enable_f="-f"
+    local tmp
     if [[ "$1" == "-_disable_-f_-" ]]; then
         unset enable_f
         shift
@@ -586,13 +587,17 @@ function _curl(){
     local method="${3:-GET}"
     debug "curl: _curl '$1' '$2' '$3'"
     if [[ $data ]]; then
+        tmp=$(mktemp -p /dev/shm -t .curl.XXXX)
+        echo -e "$data" | tr -d '\\' > "$tmp"
+        cp "$tmp" /tmp/jarl
         if [[ "$VERBOSE" = "yes" ]]; then
             debug "url: $protocol://$vault_host:$vault_port/v1/$endpoint\nmethod: $method\ndata:$data"
         fi
         mapfile -t response < <(_run "/usr/bin/curl -w \"%{http_code}\n\" -s $enable_f -k -L -X$method -H \"X-Vault-Token:$vault_token\" \
                       -H 'Content-type: application/json' \
-                      -d \"$data\" \
+                      -d @\"$tmp\" \
                       \"$protocol://$vault_host:$vault_port/v1/$endpoint\"")
+        rm -fr "$tmp"
     else
         if [[ "$VERBOSE" = "yes" ]]; then
             debug "url: $protocol://$vault_host:$vault_port/v1/$endpoint\nmethod: $method"
