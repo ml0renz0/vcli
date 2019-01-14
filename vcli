@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.5.7"
+declare VERSION="0.5.8"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -641,15 +641,15 @@ function run_cmd(){
             lspol)                  _lspol ;;
             showpol)                _showpol "$arg1" ;;
             tree)                   backIFS=$IFS; IFS=$' ' ; _tree "$arg1" ; IFS=$backIFS;;
-            find)                   backIFS=$IFS; IFS=$' ' ; _find "$arg1" "$arg2" ; IFS=$backIFS;;
-            replace)                backIFS=$IFS; IFS=$' ' ; _replace "$arg1" "$arg2" ; IFS=$backIFS;;
+            find)                   backIFS=$IFS; IFS=$' ' ; _find "$arg1" "$arg2 $arg3" ; IFS=$backIFS;;
+            replace)                backIFS=$IFS; IFS=$' ' ; _replace "$arg1" "$arg2 $arg3" ; IFS=$backIFS;;
             cptree)                 backIFS=$IFS; IFS=$' ' ; _cptree "$arg1" "$arg2" ; IFS=$backIFS;;
             rmtree)                 backIFS=$IFS; IFS=$' ' ; _rmtree "$arg1" ; IFS=$backIFS;;
             backup)                 backIFS=$IFS; IFS=$' ' ; _backup "$arg1" ; IFS=$backIFS;;
             restore)                backIFS=$IFS; IFS=$' ' ; _restore "$arg1" ; IFS=$backIFS;;
             cat)                    _cat "$arg1" ;;
-            put)                    _put "$arg1" "$arg2" ;;
-            addsecret)              _addsecret "$arg1" "$arg2" ;;
+            put)                    _put "$arg1" "$arg2 $arg3" ;;
+            addsecret)              _addsecret "$arg1" "$arg2 $arg3" ;;
             delsecret)              _delsecret "$arg1" "$arg2" ;;
             rm)                     _rm "$arg1" ;;
             cp)                     _cp "$arg1" "$arg2" ;;
@@ -960,6 +960,9 @@ function _replace(){
         url=${1//\/\//\/}
     fi
     shift
+    if [[ ! $url =~ /$ ]]; then
+        url+="/"
+    fi
     debug "replace2: url=$url"
     debug "replace3: rest=\"$*\""
     local data
