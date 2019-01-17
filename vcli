@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.5.9"
+declare VERSION="0.5.10"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -588,7 +588,7 @@ function _curl(){
     debug "curl: _curl '$1' '$2' '$3'"
     if [[ $data ]]; then
         tmp=$(mktemp -p /dev/shm -t .curl.XXXX)
-        echo -e "$data" | tr -d '\\' > "$tmp"
+        echo -e "$data" | tr -d '\\' | envsubst > "$tmp"
         cp "$tmp" /tmp/jarl
         if [[ "$VERBOSE" = "yes" ]]; then
             debug "url: $protocol://$vault_host:$vault_port/v1/$endpoint\nmethod: $method\ndata:$data"
