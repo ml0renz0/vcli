@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.5.10"
+declare VERSION="0.5.11"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -1142,7 +1142,7 @@ function _backup(){
         return
     fi
     # Check for $url existence
-    if ( [[ $url != "/" ]] && ! _ls  "-_disable_colors_-" "$url" | grep -q "." ) || [[ "$url" == ".." ]]; then
+    if [[ "$url" == ".." ]]; then
         debug "${echo_space}Error! '$url' doesn't exist or contains no secrets. Relative references like '..' are not supported"
         return
     fi
