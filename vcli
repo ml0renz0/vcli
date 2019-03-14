@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.5.11"
+declare VERSION="0.5.12"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -794,6 +794,10 @@ function _ls(){
         local disable_colors="yes"
         shift
     fi
+    if [[ "$1" == "-i" ]]; then
+        local ignore_http_code="-i"
+        shift
+    fi
     if [[ ! $1 =~ ^/ ]]; then
         url="$current_pwd/$1"
     else
@@ -813,11 +817,11 @@ function _ls(){
     fi
     if [[ $disable_colors ]]; then
         tmp=$(mktemp -p /dev/shm -t ls.XXXX)
-        _curl "$url" > "$tmp"
+        _curl $ignore_http_code "$url" > "$tmp"
         jq '.data .keys[]' -r < "$tmp"
     else
         tmp=$(mktemp -p /dev/shm -t ls.XXXX)
-        _curl "$url" > "$tmp"
+        _curl $ignore_http_code "$url" > "$tmp"
         jq '.data .keys[]' -r < "$tmp" | sed -e "s/\//$CYAN\/$NONE/"
     fi
     rm -f "$tmp"
@@ -1120,9 +1124,9 @@ function _backup(){
     funcname="${FUNCNAME[0]}"
     local url backupath
     if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd/$1/"
+        url="$current_pwd/$1"
     else
-        url="$1/"
+        url="$1"
     fi
     url=${url//\/\//\/}
     backupath=${url//\//-}
@@ -1155,39 +1159,57 @@ function _backup(){
             destfile="$TMP/backup_vault.$(date +%d-%m-%Y@%H:%M:%S).tgz"
         fi
     fi
-    # If no depth was passed then this iteration is the very first one, so depth=0
-    if [[ ! $depth ]]; then
-        depth=0
+    debug "backup url=$url"
+    local old_http_code=$http_code
+    _cat "$url" > /dev/null
+    if [[ $http_code == "200" ]]; then
         first="yes"
+        debug "backup: $url is NOT a folder"
+        mkdir -p "$(dirname "$dest/$url")"
         echo -n "Backing up Vault to '$destfile'"
-        if [[ $url != "/" ]]; then
-            mkdir -p "$dest/$url"
-        fi
-    # other wise we increment a depth as we go deeper in the structure
+        _cat "$url" | jq '.data' > "$dest/$url"
     else
-        unset first
-        let depth++
-    fi
-    debug "${echo_space}backup: '$url', depth: $depth, dest: $dest, space: \"$space\""
-    # if $url is /
-    #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
-    paths=$(_ls "-_disable_colors_-" "$url" | sed -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-
-    debug "${echo_space}   depth: $depth => found: $paths"
-    for path in $paths; do
-        space=${space/+/ }
-        if [[ $path =~ /$ ]]; then
-            _backup "$url$path" "$dest" "$depth" "$space+ " "$echo_space   " &
-        else
-            mkdir -p "$dest/$url"
-            debug "${echo_space}   backup: $url$path => $dest/$url$path"
-            _cat "$url$path" | jq '.data' > "$dest/$url$path"
-            echo -n "."
+        http_code=$old_http_code
+        _ls "-_disable_colors_-" "$url" > /dev/null
+        if [[ $http_code != "200" ]]; then
+            echo "'$url' does not exist"
+            return
         fi
-    done
+        debug "backup: $url is a folder"
+        debug "${echo_space}backup: '$url', depth: $depth, dest: $dest, space: \"$space\""
+        # If no depth was passed then this iteration is the very first one, so depth=0
+        if [[ ! $depth ]]; then
+            depth=0
+            first="yes"
+            echo -n "Backing up Vault to '$destfile'"
+            if [[ $url != "/" ]]; then
+                mkdir -p "$dest/$url"
+            fi
+        # other wise we increment a depth as we go deeper in the structure
+        else
+            unset first
+            let depth++
+        fi
+        # if $url is /
+        #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
+        paths=$(_ls "-_disable_colors_-" "$url" | sed -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
+        debug "${echo_space}   depth: $depth => found: $paths"
+        for path in $paths; do
+            space=${space/+/ }
+            if [[ $path =~ /$ ]]; then
+                _backup "$url$path" "$dest" "$depth" "$space+ " "$echo_space   " &
+            else
+                mkdir -p "$dest/$url"
+                debug "${echo_space}   backup: $url$path => $dest/$url/$path"
+                _cat "$url/$path" | jq '.data' > "$dest/$url/$path"
+                echo -n "."
+            fi
+        done
+    fi
     wait
     if [[ $first ]]; then
-        cd "$dest"
+        cd "$dest" || return 
+        debug "backup: $url => $destfile"
         tar cfz "$destfile" ./* > /dev/null
         rm -fr "$dest"
         echo " done"
@@ -1261,6 +1283,10 @@ function _restore(){
 function _cat(){
     local funcname
     funcname="${FUNCNAME[0]}"
+    if [[ "$1" == "-i" ]]; then
+        local ignore_http_code="true"
+        shift
+    fi
     if [[ "$1" == "-_disable_-f_-" ]]; then
         disable_f="$1"
         shift
@@ -1274,9 +1300,13 @@ function _cat(){
         commands_help "${funcname//_/}"
         return
     fi
-    debug "cat: url=$url"
+    debug "cat:  url=$url"
     local arg="$2"
-    _curl "$disable_f" "$url" "$arg"
+    if [[ $ignore_http_code ]]; then
+        _curl "$disable_f" -i "$url" "$arg"
+    else
+        _curl "$disable_f" "$url" "$arg"
+    fi
 }
 
 
