@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.5.12"
+declare VERSION="0.5.13"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -849,6 +849,7 @@ function _showrole(){
     fi
     tmp=$(mktemp -p /dev/shm -t showrole.XXXX)
     _cat /auth/approle/role/"$role" > "$tmp"
+    echo -n "policies: "
     jq ".data .policies[]" -r < "$tmp"
     rm "$tmp"
 }
@@ -1554,8 +1555,10 @@ function _certinfo(){
                           -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
                           -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
         debug "jq .data .$_key -r < $tmp"
-        _KEY=$(jq ".data .$_key" -r < "$tmp"  | \
+        _KEY=$(jq ".data .$_key" -r < "$tmp" | \
                       sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
+                          -e 's/-----BEGIN PRIVATE KEY-----/-----BEGIN PRIVATE KEY-----\n/g' \
+                          -e 's/-----END PRIVATE KEY-----/\n-----END PRIVATE KEY-----/g' \
                           -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
         shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
         shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
@@ -1634,8 +1637,10 @@ function _getsan(){
                           -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
                           -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
         debug "jq .data .$_key -r < $tmp"
-        _KEY=$(jq ".data .$_key" -r < "$tmp"  | \
+        _KEY=$(jq ".data .$_key" -r < "$tmp" | \
                       sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
+                          -e 's/-----BEGIN PRIVATE KEY-----/-----BEGIN PRIVATE KEY-----\n/g' \
+                          -e 's/-----END PRIVATE KEY-----/\n-----END PRIVATE KEY-----/g' \
                           -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
         shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
         shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
@@ -1714,8 +1719,10 @@ function _getcertlist(){
                           -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
                           -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
         debug "jq .data .$_key -r < $tmp"
-        _KEY=$(jq ".data .$_key" -r < "$tmp"  | \
+        _KEY=$(jq ".data .$_key" -r < "$tmp" | \
                       sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
+                          -e 's/-----BEGIN PRIVATE KEY-----/-----BEGIN PRIVATE KEY-----\n/g' \
+                          -e 's/-----END PRIVATE KEY-----/\n-----END PRIVATE KEY-----/g' \
                           -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
         shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
         shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
@@ -1798,8 +1805,10 @@ function _getcertexpiration(){
                           -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
                           -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
         debug "jq .data .$_key -r < $tmp"
-        _KEY=$(jq ".data .$_key" -r < "$tmp"  | \
+        _KEY=$(jq ".data .$_key" -r < "$tmp" | \
                       sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
+                          -e 's/-----BEGIN PRIVATE KEY-----/-----BEGIN PRIVATE KEY-----\n/g' \
+                          -e 's/-----END PRIVATE KEY-----/\n-----END PRIVATE KEY-----/g' \
                           -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
         shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
         shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
@@ -2011,6 +2020,8 @@ function _getcert(){
         debug "jq .data .$_key -r < $tmp"
         _KEY=$(jq ".data .$_key" -r < "$tmp" | \
                       sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
+                          -e 's/-----BEGIN PRIVATE KEY-----/-----BEGIN PRIVATE KEY-----\n/g' \
+                          -e 's/-----END PRIVATE KEY-----/\n-----END PRIVATE KEY-----/g' \
                           -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
         _cert=${_cert//\"/}
         _key=${_key//\"/}
