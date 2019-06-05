@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.5.13"
+declare VERSION="0.5.14"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -142,7 +142,7 @@ declare -A vcli_commands_help=(
         [mount]="mount path/to/mount \n  creates mount $current_pwd/path/to/mount"
         [umount]="umount path/to/mount \n  destroys mount $current_pwd/path/to/mount"
         [cd]="cd path/to/secret \n  changes to directory $current_pwd/path/to/secret"
-        [ls]="ls path/to/secret \n  lists paths and keys on $current_pwd/path/to/secret"
+        [ls]="ls path/to/secret \n  lists paths and secrets on $current_pwd/path/to/secret"
         [lsrole]="lsrole \n  lists Vault roles"
         [showrole]="showrole myrole \n  shows Vault role named myrole"
         [lspol]="lspol \n  lists Vault policies"
@@ -154,7 +154,7 @@ declare -A vcli_commands_help=(
         [rmtree]="rmtree path/to/secret \n  removes path $current_pwd/path/to/secret recursively"
         [backup]="backup path/to/secrets \n  backs up Vault /path to $TMP folder"
         [restore]="restore /local/dir/file \n  restores Vault backup"
-        [cat]="cat path/to/secret \n  shows contents of key $current_pwd/path/to/secret"
+        [cat]="cat path/to/secret \n  shows contents of secret $current_pwd/path/to/secret"
         [cp]="cp path/to/secret path/to/other_secret \n  copies contents of path to path $current_pwd/path/to/other_secret"
         [getcert]="getcert path/to/secret \n  downloads certificate CRT and KEY stored in $current_pwd/path/to/secret"
         [getcertlist]="getcertlist path/to/certificates \n  recovers certs.list with certificates found in $current_pwd/path/to/certificates"
@@ -169,10 +169,10 @@ declare -A vcli_commands_help=(
         [getkrb]="getkrb path/to/secret \n  exports keytab file to $TMP/principal.keytab"
         [krbinfo]="krbinfo path/to/secret \n  shows principal & keytab info stored in $current_pwd/path/to/secret"
         [mv]="mv path/to/secret path/to/other_secret \n  moves contents of path to path $current_pwd/path/to/other_secret"
-        [put]="put path/to/secret { \"key\": \"value\" } \n  adds json={ \"key\": \"value\" } to $current_pwd/path/to/secret"
-        [addsecret]="addsecret path/to/secret { \"key2\": \"value2\" } \n  adds secret { \"key2\": \"value2\" } to existing data on $current_pwd/path/to/secret"
+        [put]="put path/to/secret { \"key\": \"value\" } \n  adds json={ \"key\": \"value\" } to secret $current_pwd/path/to/secret"
+        [addsecret]="addsecret path/to/secret { \"key2\": \"value2\" } \n  adds secret { \"key2\": \"value2\" } to existing secret $current_pwd/path/to/secret"
         [delsecret]="delsecret path/to/secret key \n  deletes key from secret"
-        [rm]="rm path/to/secret \n  removes key $current_pwd/path/to/secret"
+        [rm]="rm path/to/secret \n  removes secret $current_pwd/path/to/secret"
         [help]="help [vcli_command] \n  shows this help or the specified's command"
         [history]="history \n  shows vcli history"
         [verbose]="verbose \n  toggle verbosity"
