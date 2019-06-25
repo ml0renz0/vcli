@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.5.14"
+declare VERSION="0.5.15"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -2263,8 +2263,10 @@ function main(){
                 clean_n_exit
             ;;
             $'\x20'|*) # NORMAL CHARS
-                tput ich 1 # insert chars rather than overwriting them
-                [[ ! $disable_prompt ]] && echo -n "$_key" #| hexdump -C
+                if [[ ! $disable_prompt ]]; then
+                    tput ich 1 # insert chars rather than overwriting them
+                    echo -n "$_key" #| hexdump -C
+                fi
                 let len+=1
                 let pos+=1
                 tmpmsg="${#cmd}: \"$cmd\""
