@@ -18,7 +18,16 @@ Now it has become a useful tool here at [Stratio](http://www.stratio.com)
 * autoexpands shell variables in the JSON to upload when using put command
 * enable-debug/disable-debug: commands to enable/disable debug output to /tmp/debug
 * if exported, vcli will use $VAULT_HOST, $VAULT_TOKEN and $VAULT_PORT or [$VAULT_ADDR](https://github.com/mlorenzo-stratio/vcli/issues/3) to connect to Vault
-* Can be exited with Ctrl+c, Ctrl+d or with exit command
+* Can be exited with Ctrl+d or with exit command
+* Can be run in batch mode:
+  ```shell
+  cat << V | /stratio/secret-utils/vcli -v vault.service.eos.alpha.hetzner.stratio.com -t <root_token> -n
+  put /userland/passwords/test {"user":"usuario","pass":"password" }
+  cat /userland/passwords/test
+  rm /userland/passwords/test
+  ls /userland/passwords/
+  V
+  ```
 
 # Demo
 [![asciicast](https://asciinema.org/a/132636.png)](https://asciinema.org/a/132636)
