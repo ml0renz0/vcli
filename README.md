@@ -22,7 +22,7 @@ Now it has become a useful tool here at [Stratio](http://www.stratio.com)
 * Can be run in batch mode:
   ```shell
   cat << V | /stratio/secret-utils/vcli -v vault.service.eos.alpha.hetzner.stratio.com -t <root_token> -n
-  put /userland/passwords/test {"user":"usuario","pass":"password" }
+  put /userland/passwords/test {"user":"myuser","pass":"verysecurepass" }
   cat /userland/passwords/test
   rm /userland/passwords/test
   ls /userland/passwords/
