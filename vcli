@@ -95,7 +95,7 @@ function debug(){
 
 declare -A vcli_commands=(
                       [mount]=arg
-                      [umount]=noarg
+                      [umount]=arg
                       [cd]=arg
                       [ls]=arg
                       [lsrole]=noarg
