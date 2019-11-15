@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.5.15"
+declare VERSION="0.5.16"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -61,7 +61,7 @@ function new_version(){
     [[ $disable_prompt ]] && return
     latest_release="$(timeout 2 curl -s https://api.github.com/repos/mlorenzo-stratio/vcli/releases/latest | jq -r '.tag_name')"
     if [[ $latest_release && $latest_release != "null" && $VERSION != "$latest_release" ]]; then
-        echo -e "New version available: $latest_release\nYou can download it by running:\n   curl -L https://github.com/mlorenzo-stratio/vcli/raw/$latest_release/vcli > $0"
+        echo -e "New version available: $latest_release\nYou can download it by running:\n   curl -sL https://github.com/mlorenzo-stratio/vcli/raw/$latest_release/vcli > $0"
         return 0
     fi
     return 1
@@ -180,7 +180,7 @@ declare -A vcli_commands_help=(
         [disable-debug]="disable-debug \n  disable debugging"
         [enable-hexdump-debug]="enable-hexdump-debug \n  enable input hexdump debugging"
         [disable-hexdump-debug]="disable-hexdump-debug \n  disable input hexdump debugging"
-        [exit]="exit \n  exits vcli" 
+        [exit]="exit \n  exits vcli"
                               )
 
 # return whether is a command or not
@@ -1090,6 +1090,7 @@ function _rmtree(){
     if [[ ! $depth ]]; then
         depth=0
         first="yes"
+        # TODO: Ask user before removing tree
         echo -n "Removing recursively '$url'"
     # other wise we increment a depth as we go deeper in the structure
     else
@@ -1209,7 +1210,7 @@ function _backup(){
     fi
     wait
     if [[ $first ]]; then
-        cd "$dest" || return 
+        cd "$dest" || return
         debug "backup: $url => $destfile"
         tar cfz "$destfile" ./* > /dev/null
         rm -fr "$dest"
