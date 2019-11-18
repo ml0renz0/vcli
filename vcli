@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.5.16"
+declare VERSION="0.5.17"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -1090,7 +1090,14 @@ function _rmtree(){
     if [[ ! $depth ]]; then
         depth=0
         first="yes"
-        # TODO: Ask user before removing tree
+        while read -p "Do you want to remove $url? (yes/no): " ANSWER </dev/tty; do
+            if [[ "$ANSWER" == "no" ]]; then
+                return
+            elif [[ "$ANSWER" == "yes" ]]; then
+                break
+            fi
+            echo "Please type 'yes' or 'no'"
+        done
         echo -n "Removing recursively '$url'"
     # other wise we increment a depth as we go deeper in the structure
     else
