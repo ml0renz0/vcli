@@ -1069,7 +1069,7 @@ function _cptree(){
 
 # removes recursively a vault path
 function _rmtree(){
-    local funcname
+    local funcname question
     funcname="${FUNCNAME[0]}"
     local url
     if [[ ! $1 =~ ^/ ]]; then
@@ -1090,13 +1090,14 @@ function _rmtree(){
     if [[ ! $depth ]]; then
         depth=0
         first="yes"
-        while read -p "Do you want to remove $url? (yes/no): " ANSWER </dev/tty; do
+        question="Do you want to remove $url? (yes/no): "
+        while read -p "$question" ANSWER </dev/tty; do
             if [[ "$ANSWER" == "no" ]]; then
                 return
             elif [[ "$ANSWER" == "yes" ]]; then
                 break
             fi
-            echo "Please type 'yes' or 'no'"
+            question="Please type 'yes' or 'no': "
         done
         echo -n "Removing recursively '$url'"
     # other wise we increment a depth as we go deeper in the structure
@@ -2296,3 +2297,4 @@ function main(){
 }
 
 main "$@"
+
