@@ -35,3 +35,9 @@ Now it has become a useful tool here at [Stratio](http://www.stratio.com)
 # Known bugs
 * If you type really fast enough you may incur a race condition on the loop that manages the keyboard input.
 * Home/End keys do not work when ran within a screen shell
+
+# Contributors
+
+* Marcos Lorenzo (Creator) ([mlorenzo-stratio](https://github.com/mlorenzo-stratio))
+* Ángel Prada ([aprada-stratio](https://github.com/aprada-stratio))
+* Viktor Jacynycz ([vjacynycz-stratio](https://github.com/vjacynycz-stratio))
