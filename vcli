@@ -3,14 +3,13 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.5.17"
+declare VERSION="0.5.18"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
 declare DEBUGFILE="/tmp/vcli.debug"
 declare TMP="/tmp"
 declare is_command cmd cmd_history restcmd _key len pos history_index
-declare -a mounted_paths
 declare timeout="2" # timeout to verify connection to Vault
 declare http_code
 declare vault_host vault_port vault_token current_pwd
@@ -35,6 +34,11 @@ YELLOW="$(tput setaf 3)"
 CYAN="$(tput setaf 6; tput bold)"
 NONE="$(tput sgr0)"
 BOLD="$(tput bold)"
+
+# URI encoder
+function urlencode {
+    jq -nr --arg v "$1" '$v|@uri'
+}
 
 # Check dependencies
 function check_dependency(){
@@ -186,16 +190,16 @@ declare -A vcli_commands_help=(
 # return whether is a command or not
 function is_cmd(){
     local cmd=${1%% *}
-    local arg=${1##* }
-    if [[ $cmd == "$arg" ]]; then unset arg; fi
+    local args=${1#* }
+    if [[ $cmd == "$args" ]]; then unset args; fi
     local args
-    debug "IS_CMD1: cmd=$cmd arg=$arg"
+    debug "IS_CMD1: cmd=$cmd args=$args"
     for command in "${!vcli_commands[@]}"; do
         debug "IS_CMD2: command=$command, args=$args"
         debug "IS_CMD3: $cmd =~ ^$command$"
         if [[ $cmd =~ ^$command$ ]]; then
             if [[ ${vcli_commands[$command]} = "noarg" ]]; then
-                if [[ $arg ]]; then
+                if [[ $args ]]; then
                     return 1
                 else
                     debug "IS_CMD4: MATCHED"
@@ -344,6 +348,9 @@ function add_cmd(){
         local cmd
         cmd="$(echo "$*" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')"
         is_cmd "$cmd" || return 1
+        if [[ $cmd =~ ^mount || $cmd =~ ^umount ]]; then
+            return 0
+        fi
         local -a new_history
         new_history=( "$cmd" )
         for old_cmd in "${cmd_history[@]}"; do
@@ -576,7 +583,8 @@ function _curl(){
     elif [[ "$1" == "" ]]; then
         shift
     fi
-    local endpoint="${1#/}" # remove initial '/' if exists
+    local endpoint
+    endpoint="$(urlencode "${1#/}")" # remove initial '/' if exists
     local data="$2"
     local response
     if [[ "$data" == "-_list_root_-" ]]; then
@@ -628,13 +636,18 @@ function _curl(){
 
 # run command entered in CLI
 function run_cmd(){
-    local cmd="$*"
+    local args
+    local fullcmd="$*"
+    args=${*#* }
+    if [[ $fullcmd == "$args" ]]; then
+        unset args
+    fi
     backIFS=$IFS
     while IFS=$' ' read -r cmd arg1 arg2 arg3; do
         if [[ $arg1 == "!$" ]]; then
             arg1=$(get_lastcmd_arg)
         fi
-        if ! is_cmd "$*"; then
+        if ! is_cmd "$fullcmd"; then
             commands_help "$cmd"
             return 1
         fi
@@ -671,8 +684,8 @@ function run_cmd(){
             getkrb)                 _getkrb "$arg1" ;;
             krbinfo)                _krbinfo "$arg1" ;;
             mv)                     _mv "$arg1" "$arg2" ;;
-            mount)                  _mount "$arg1" ;;
-            umount)                 _umount "$arg1" ;;
+            mount)                  _mount $args ;;
+            umount)                 _umount $args ;;
             history)                print_history ;;
             exit)                   save_history; exit ;;
             help)                   commands_help "$arg1" ;;
@@ -693,7 +706,7 @@ function run_cmd(){
         debug "run_cmd: $cmd $arg1 $arg2"
         debug "run_cmd: http_code=$http_code"
         add_cmd "$cmd $arg1 $arg2 $arg3"
-    done< <(echo "$cmd")
+    done< <(echo "$fullcmd")
 }
 
 # mount function
@@ -702,15 +715,11 @@ function _mount(){
         local ignore_http_code="true"
         shift
     fi
-    local url="$1"
+    local url="$*"
     local data
     if [[ ! $url ]]; then
         echo "mounted paths:"
-        for path in "${mounted_paths[@]}"; do
-            if [[ $path ]]; then
-                echo "$path"
-            fi
-        done
+        _ls /
     # mount $url
     else
         # get full path if relative reference
@@ -719,19 +728,13 @@ function _mount(){
         else
             url="/sys/mounts$url"
         fi
-        # check if already mounted in this session
-        if [[ ! "${mounted_paths[*]}" =~ $url ]]; then
-            data="{ \\\"type\\\": \\\"generic\\\", \\\"description\\\": \\\"$url secret backend\\\" }"
-            if [[ $ignore_http_code ]]; then
-                _curl -i "$url" "$data" "POST"
-            else
-                _curl "$url" "$data" "POST"
-            fi
-            mounted_paths+=( "$url" )
-            echo "mounted '$url'"
+        data="{ \\\"type\\\": \\\"generic\\\", \\\"description\\\": \\\"$url secret backend\\\" }"
+        if [[ $ignore_http_code ]]; then
+            _curl -i "$url" "$data" "POST"
         else
-            echo "'$url' already mounted in this session."
+            _curl "$url" "$data" "POST"
         fi
+        echo "mounted '$url'"
     fi
 }
 
@@ -741,7 +744,7 @@ function _umount(){
         local ignore_http_code="true"
         shift
     fi
-    local url="$1"
+    local url="$*"
     if [[ ! $url ]]; then
         echo "umount needs an argument"
         _mount
@@ -757,7 +760,6 @@ function _umount(){
     else
         _curl "$url" "" "DELETE"
     fi
-    mounted_paths=( "${mounted_paths[@]/$url}" ) # delete mounted mountpoint
 }
 
 # cd function
@@ -789,7 +791,7 @@ function _cd(){
 
 # ls function
 function _ls(){
-    local url tmp
+    local url tmp method
     if [[ $1 == "-_disable_colors_-" ]]; then
         local disable_colors="yes"
         shift
@@ -811,17 +813,19 @@ function _ls(){
         fi
         return
     elif [[ $url ]]; then
-        url="$url?list=true"
+        url="$url"
+        method="LIST"
     else
-        url="$current_pwd?list=true"
+        url="$current_pwd"
+        method="LIST"
     fi
     if [[ $disable_colors ]]; then
         tmp=$(mktemp -p /dev/shm -t ls.XXXX)
-        _curl $ignore_http_code "$url" > "$tmp"
+        _curl $ignore_http_code "$url" "" "$method" > "$tmp"
         jq '.data .keys[]' -r < "$tmp"
     else
         tmp=$(mktemp -p /dev/shm -t ls.XXXX)
-        _curl $ignore_http_code "$url" > "$tmp"
+        _curl $ignore_http_code "$url" "" "$method" > "$tmp"
         jq '.data .keys[]' -r < "$tmp" | sed -e "s/\//$CYAN\/$NONE/"
     fi
     rm -f "$tmp"
