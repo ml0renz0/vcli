@@ -39,5 +39,5 @@ Now it has become a useful tool here at [Stratio](http://www.stratio.com)
 # Contributors
 
 * Marcos Lorenzo (Creator) ([mlorenzo-stratio](https://github.com/mlorenzo-stratio))
-* Ángel Prada ([aprada-stratio](https://github.com/aprada-stratio))
+* Ángel Prada ([angelprada](https://github.com/angelprada))
 * Viktor Jacynycz ([vjacynycz-stratio](https://github.com/vjacynycz-stratio))
