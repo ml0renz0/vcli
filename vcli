@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.5.18"
+declare VERSION="0.5.19"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -193,20 +193,20 @@ function is_cmd(){
     local args=${1#* }
     if [[ $cmd == "$args" ]]; then unset args; fi
     local args
-    debug "IS_CMD1: cmd=$cmd args=$args"
+    #debug "IS_CMD1: cmd=$cmd args=$args"
     for command in "${!vcli_commands[@]}"; do
-        debug "IS_CMD2: command=$command, args=$args"
-        debug "IS_CMD3: $cmd =~ ^$command$"
+        #debug "IS_CMD2: command=$command, args=$args"
+        #debug "IS_CMD3: $cmd =~ ^$command$"
         if [[ $cmd =~ ^$command$ ]]; then
             if [[ ${vcli_commands[$command]} = "noarg" ]]; then
                 if [[ $args ]]; then
                     return 1
                 else
-                    debug "IS_CMD4: MATCHED"
+                    #debug "IS_CMD4: MATCHED"
                     return 0
                 fi
             fi
-            debug "IS_CMD4: MATCHED"
+            #debug "IS_CMD4: MATCHED"
             return 0
         fi
     done
@@ -432,10 +432,7 @@ function save_history(){
 # loads history from $HOME/.vclistory
 function load_history(){
     [[ ! -e $VCLISTORY ]] && return
-    [[ $disable_prompt ]] && return
-    #echo -n "Loading history... "
     add_cmd "$VCLISTORY"
-    #echo "done"
 }
 
 # loads history from $HOME/.vclistory
@@ -595,17 +592,14 @@ function _curl(){
     local method="${3:-GET}"
     debug "curl: _curl '$1' '$2' '$3'"
     if [[ $data ]]; then
-        tmp=$(mktemp -p /dev/shm -t .curl.XXXX)
-        echo -e "$data" | tr -d '\\' | envsubst > "$tmp"
-        cp "$tmp" /tmp/jarl
         if [[ "$VERBOSE" = "yes" ]]; then
             debug "url: $protocol://$vault_host:$vault_port/v1/$endpoint\nmethod: $method\ndata:$data"
         fi
         mapfile -t response < <(_run "/usr/bin/curl -w \"%{http_code}\n\" -s $enable_f -k -L -X$method -H \"X-Vault-Token:$vault_token\" \
                       -H 'Content-type: application/json' \
-                      -d @\"$tmp\" \
+                      -d @\"$data\" \
                       \"$protocol://$vault_host:$vault_port/v1/$endpoint\"")
-        rm -fr "$tmp"
+        rm -fr "$data"
     else
         if [[ "$VERBOSE" = "yes" ]]; then
             debug "url: $protocol://$vault_host:$vault_port/v1/$endpoint\nmethod: $method"
@@ -1452,7 +1446,9 @@ function _put(){
         url="$current_pwd$1"
     fi
     debug "put: url=$url"
-    local data=${2//\"/\\\"}
+    debug "data: data=$2"
+    data=$(mktemp -p /dev/shm -t .put.XXXX)
+    echo "$2" > "$data"
     if [[ ! $url ]]; then
         echo "Error! Missing secret path"
         commands_help "${funcname//_/}"
@@ -2175,7 +2171,7 @@ function main(){
                 fi
                 unset ENDHIST
             ;;
-            $'\x0a'|';') # ENTER
+            $'\x0a') # ENTER
                 unset ENDHIST
                 is_command="true"
                 debug "current_pwd=$current_pwd"
