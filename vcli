@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.5.19"
+declare VERSION="0.6.0"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -599,7 +599,9 @@ function _curl(){
                       -H 'Content-type: application/json' \
                       -d @\"$data\" \
                       \"$protocol://$vault_host:$vault_port/v1/$endpoint\"")
-        rm -fr "$data"
+        if [[ -f "$data" ]]; then
+            rm -fr "$data"
+        fi
     else
         if [[ "$VERBOSE" = "yes" ]]; then
             debug "url: $protocol://$vault_host:$vault_port/v1/$endpoint\nmethod: $method"
