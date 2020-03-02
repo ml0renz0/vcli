@@ -219,8 +219,12 @@ function completion(){
     local -a tmparray
     local found _cmd _path _secret paths
     local -a commands=( ${!vcli_commands[@]} )
-    IFS=' ' read -r _cmd _path < <(echo "$@")
-    debug "cmd: $_cmd, path: $_path"
+    IFS=' ' read -r _cmd _option _path <<< "${@}"
+    if [[ ! $_path ]]; then
+        _path=$_option
+        unset _option
+    fi
+    debug "cmd: $_cmd, option: $_option, path: $_path"
     # complete command
     if [[ ! $_path ]]; then
         if ! is_cmd "$_cmd" || [[ ! $_cmd =~ \ $ ]]; then
@@ -298,7 +302,7 @@ function completion(){
         debug "cmd: $_cmd $_path"
         local tmpath_so_far path_so_far
         if [[ $found == 1 ]]; then
-            cmd="$_cmd $_path${tmparray[0]}"
+            cmd="$_cmd $_option $_path${tmparray[0]}"
             debug "new_cmd path1: $cmd"
         elif [[ $found -gt 1 ]]; then
             echo
@@ -327,7 +331,7 @@ function completion(){
                 let n++
                 let i=0
             done
-            cmd="$_cmd $_path$path_so_far"
+            cmd="$_cmd $_option $_path$path_so_far"
             debug "new_cmd path+1: $cmd"
             unset tmparray tmpath_so_far path_so_far end
             prompt
@@ -418,7 +422,11 @@ function get_next_cmd(){
 
 # returns last command's path
 function get_lastcmd_arg(){
-    echo "${cmd_history[$((history_index+1))]}" | cut -d' ' -f2
+    if [[ "$(echo "${cmd_history[$((history_index+1))]}" | cut -d' ' -f2)" =~ ^- ]]; then
+        echo "${cmd_history[$((history_index+1))]}" | cut -d' ' -f3
+    else
+        echo "${cmd_history[$((history_index+1))]}" | cut -d' ' -f2
+    fi
 }
 
 # saves history to $HOME/.vclistory
@@ -658,7 +666,7 @@ function run_cmd(){
             find)                   backIFS=$IFS; IFS=$' ' ; _find "$arg1" "$arg2 $arg3" ; IFS=$backIFS;;
             replace)                backIFS=$IFS; IFS=$' ' ; _replace "$arg1" "$arg2 $arg3" ; IFS=$backIFS;;
             cptree)                 backIFS=$IFS; IFS=$' ' ; _cptree "$arg1" "$arg2" ; IFS=$backIFS;;
-            rmtree)                 backIFS=$IFS; IFS=$' ' ; _rmtree "$arg1" "$arg2"; if [[ "$arg1" == -f ]]; then arg1=$arg2; unset arg2; fi; IFS=$backIFS;;
+            rmtree)                 backIFS=$IFS; IFS=$' ' ; _rmtree "$arg1" "$arg2"; IFS=$backIFS;;
             backup)                 backIFS=$IFS; IFS=$' ' ; _backup "$arg1" ; IFS=$backIFS;;
             restore)                backIFS=$IFS; IFS=$' ' ; _restore "$arg1" ; IFS=$backIFS;;
             cat)                    _cat "$arg1" ;;
@@ -680,8 +688,8 @@ function run_cmd(){
             getkrb)                 _getkrb "$arg1" ;;
             krbinfo)                _krbinfo "$arg1" ;;
             mv)                     _mv "$arg1" "$arg2" ;;
-            mount)                  _mount $args ;;
-            umount)                 _umount $args ;;
+            mount)                  _mount "$args" ;;
+            umount)                 _umount "$args" ;;
             history)                print_history ;;
             exit)                   save_history; exit ;;
             help)                   commands_help "$arg1" ;;
@@ -1081,6 +1089,9 @@ function _rmtree(){
         url="$current_pwd$1/"
     else
         url=${1//\/\//\/}
+    fi
+    if [[ ! $url =~ /$ ]]; then
+        url+='/'
     fi
     local first
     local depth="$2"
