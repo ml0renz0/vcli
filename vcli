@@ -3,7 +3,7 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.6.1"
+declare VERSION="0.6.2"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
@@ -352,9 +352,6 @@ function add_cmd(){
         local cmd
         cmd="$(echo "$*" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')"
         is_cmd "$cmd" || return 1
-        if [[ $cmd =~ ^mount || $cmd =~ ^umount ]]; then
-            return 0
-        fi
         local -a new_history
         new_history=( "$cmd" )
         for old_cmd in "${cmd_history[@]}"; do
@@ -732,7 +729,8 @@ function _mount(){
         else
             url="/sys/mounts$url"
         fi
-        data="{ \\\"type\\\": \\\"generic\\\", \\\"description\\\": \\\"$url secret backend\\\" }"
+        data=$(mktemp -p /dev/shm -t .put.XXXX)
+        echo "{ \"type\": \"generic\", \"description\": \"$url secret backend\" }" > "$data"
         if [[ $ignore_http_code ]]; then
             _curl -i "$url" "$data" "POST"
         else
@@ -1468,7 +1466,7 @@ function _put(){
     debug "put: url=$url"
     debug "data: data=$2"
     data=$(mktemp -p /dev/shm -t .put.XXXX)
-    echo "$2" > "$data"
+    echo "$2" | envsubst > "$data"
     if [[ ! $url ]]; then
         echo "Error! Missing secret path"
         commands_help "${funcname//_/}"
