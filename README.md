@@ -41,3 +41,4 @@ Now it has become a useful tool here at [Stratio](http://www.stratio.com)
 * Marcos Lorenzo (Creator) ([mlorenzo-stratio](https://github.com/mlorenzo-stratio))
 * Ángel Prada ([angelprada](https://github.com/angelprada))
 * Viktor Jacynycz ([vjacynycz-stratio](https://github.com/vjacynycz-stratio))
+
