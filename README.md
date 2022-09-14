@@ -33,6 +33,29 @@ Now it has become a useful tool here at [Stratio](http://www.stratio.com)
 [![asciicast](https://asciinema.org/a/132636.png)](https://asciinema.org/a/132636)
 
 # Known bugs
+* If you cd `path` instead of `path/` you will not be able to refer to secrets:
+  ```
+  [200] vcli@vault.service.test:8200/userland/passwords > cat test
+  {
+    "errors": []
+  }
+  [404] vcli@vault.service.test:8200/userland/passwords > cd /userland/passwords/
+  [404] vcli@vault.service.test:8200/userland/passwords/ > cat test
+  {
+    "request_id": "c9a74db2-740b-8ac4-dd4f-0fe58df085f8",
+    "lease_id": "",
+    "renewable": false,
+    "lease_duration": 2764800,
+    "data": {
+      "pass": "t35t",
+      "user": "test"
+    },
+    "wrap_info": null,
+    "warnings": null,
+    "auth": null
+  }
+  ```
+  It's better to use `tab` to autocomplete when changing path
 * If you type really fast enough you may incur a race condition on the loop that manages the keyboard input.
 * Home/End keys do not work when ran within a screen shell
 
