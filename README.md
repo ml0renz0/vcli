@@ -55,7 +55,7 @@ Now it has become a useful tool here at [Stratio](http://www.stratio.com)
     "auth": null
   }
   ```
-  It's better to use `tab` to autocomplete when changing path
+  It's better to use `tab` to autocomplete when changing path as it automatically inserts the last `/`
 * If you type really fast enough you may incur a race condition on the loop that manages the keyboard input.
 * Home/End keys do not work when ran within a screen shell
 
