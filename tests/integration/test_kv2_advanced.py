@@ -104,7 +104,7 @@ class KV2AdvancedTests(unittest.TestCase):
                         "VAULT_CACERT":os.environ["VAULT_CACERT"],
                         "VAULT_KV_VERSION":"2", "VAULT_KV_MOUNTS":"kv2,team/config"})
             def cli_cmd(cmd):
-                p=subprocess.run([str(VCLI),"-n"],input=cmd+"\\n",text=True,
+                p=subprocess.run([str(VCLI),"-n"],input=cmd+"\n",text=True,
                                  capture_output=True,env=env,timeout=20)
                 self.assertEqual(p.returncode,0,p.stdout+p.stderr)
             cli_cmd(f"backup kv2/{self.p}/snapshot")
