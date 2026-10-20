@@ -581,6 +581,20 @@ function vcli_is_kv2_path(){
     done
     return 1
 }
+function vcli_kv2_metadata_path(){
+    local path="/${1#/}" mount rest
+    local -a mounts
+    IFS=',' read -r -a mounts <<< "${VAULT_KV_MOUNTS:-secret}"
+    for mount in "${mounts[@]}"; do
+        mount="${mount#/}"; mount="${mount%/}"
+        if [[ -n $mount && $path == "/$mount/"* ]]; then
+            rest="${path#"/$mount/"}"
+            printf '/%s/metadata/%s\n' "$mount" "$rest"
+            return 0
+        fi
+    done
+    return 1
+}
 function vcli_kv_path(){
     local path="${1#/}" method="$2" mount rest
     VCLI_KV2_ACTIVE=no
@@ -1127,9 +1141,16 @@ function _replace(){
     leaves=$(_vcli_leaves "$root") || return 1
     while IFS= read -r leaf; do
         [[ -n $leaf ]] || continue
-        response=$(_cat "$leaf") || return 1
+        local version=""
+        if vcli_is_kv2_path "$leaf"; then
+            response=$(_curl "$leaf" "" GET raw) || return 1
+            version=$(jq -er '.data.metadata.version' <<< "$response") || return 1
+            response=$(jq -c '{data: .data.data}' <<< "$response") || return 1
+        else
+            response=$(_cat "$leaf") || return 1
+        fi
         if jq -e --argjson expected "$expected" '.data == $expected' <<< "$response" >/dev/null; then
-            _put "$leaf" "$replacement" || return 1
+            _put "$leaf" "$replacement" "$version" || return 1
             printf '%s\n' "$leaf"
         fi
     done <<< "$leaves"
@@ -1417,7 +1438,11 @@ function _cp(){
     debug "cp: url=$url dest=$dest"
     secret=$(_cat "$url" | jq ".data" )
     debug "$secret"
-    _put "$dest" "$secret"
+    if vcli_is_kv2_path "$dest"; then
+        _put "$dest" "$secret" 0
+    else
+        _put "$dest" "$secret"
+    fi
 }
 
 # mv function
@@ -1493,6 +1518,18 @@ function _put(){
     url="${url/\/\//\/}"
     debug "$data"
     debug "uploading '$data' to '$url'"
+    if [[ -z $cas ]] && vcli_is_kv2_path "$url"; then
+        local metadata version_response
+        metadata=$(vcli_kv2_metadata_path "$url") || return 1
+        if version_response=$(_curl "$metadata"); then
+            cas=$(jq -er '.data.current_version | select(type=="number")' <<< "$version_response") || return 1
+        elif [[ $http_code == 404 ]]; then
+            cas=0
+        else
+            echo "vcli: unable to read KV v2 metadata before write" >&2
+            return 1
+        fi
+    fi
     _curl "$url" "$data" "POST" "$cas"
 }
 
