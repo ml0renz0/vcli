@@ -570,6 +570,17 @@ function _run(){
 
 # Map legacy paths to KV v2 HTTP paths when opted in.
 # VAULT_KV_VERSION=2 VAULT_KV_MOUNTS=secret,teams/config
+function vcli_is_kv2_path(){
+    [[ ${VAULT_KV_VERSION:-1} == 2 ]] || return 1
+    local path="/${1#/}" mount
+    local -a mounts
+    IFS=',' read -r -a mounts <<< "${VAULT_KV_MOUNTS:-secret}"
+    for mount in "${mounts[@]}"; do
+        mount="${mount#/}"; mount="${mount%/}"
+        [[ -n $mount && $path == "/$mount/"* ]] && return 0
+    done
+    return 1
+}
 function vcli_kv_path(){
     local path="${1#/}" method="$2" mount rest
     VCLI_KV2_ACTIVE=no
@@ -673,7 +684,7 @@ function _curl(){
             *) break;;
         esac
     done
-    local path="${1#/}" data="${2:-}" method="${3:-GET}"
+    local path="${1#/}" data="${2:-}" method="${3:-GET}" cas="${4:-}"
     local kv2=no mount rest
     if [[ ${VAULT_KV_VERSION:-1} == 2 ]]; then
         local mounts="${VAULT_KV_MOUNTS:-secret}"
@@ -713,7 +724,12 @@ function _curl(){
         payload="$data"
         if [[ $kv2 == yes && ( $method == POST || $method == PUT || $method == PATCH ) ]]; then
             payload_file=$(mktemp -p "$TMP" .vcli.payload.XXXXXX) || return 1
-            if ! jq -c '{data: .}' "$data" > "$payload_file"; then
+            if [[ -n $cas ]]; then
+                if ! jq -c --argjson cas "$cas" '{data: ., options: {cas: $cas}}' "$data" > "$payload_file"; then
+                    rm -f "$response_file" "$payload_file"
+                    return 1
+                fi
+            elif ! jq -c '{data: .}' "$data" > "$payload_file"; then
                 rm -f "$response_file" "$payload_file"
                 return 1
             fi
@@ -751,7 +767,7 @@ function _curl(){
                 rm -f "$response_file"; return 1;
             }
         elif [[ -s $response_file ]]; then
-            if [[ $kv2 == yes && $method == GET && $status == 2* ]]; then
+            if [[ $kv2 == yes && $method == GET && $status == 2* && $cas != raw ]]; then
                 jq 'if (.data.data | type) == "object" then .data = .data.data else . end' "$response_file" || {
                     rm -f "$response_file"; return 1;
                 }
@@ -1172,7 +1188,11 @@ function _cptree(){
         payload=$(jq -ce '.data | select(type == "object")' <<< "$response") || {
             _vcli_partial_failure cptree "$completed" "$total" "$leaf"; return 1;
         }
-        _put "$dest/$relative" "$payload" || {
+        if vcli_is_kv2_path "$dest/$relative"; then
+            _put "$dest/$relative" "$payload" 0
+        else
+            _put "$dest/$relative" "$payload"
+        fi || {
             _vcli_partial_failure cptree "$completed" "$total" "$dest/$relative"; return 1;
         }
         (( completed+=1 ))
@@ -1338,50 +1358,38 @@ function _cat(){
 
 # addsecret function
 function _addsecret(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd$url"
+    local url="$1" additions="$2" snapshot version merged current
+    url=$(_vcli_absolute_path "$url") || return 1
+    [[ -n $additions ]] || { echo "Missing secret data" >&2; return 1; }
+    if vcli_is_kv2_path "$url"; then
+        snapshot=$(_curl "$url" "" GET raw) || return 1
+        version=$(jq -er '.data.metadata.version | select(type=="number")' <<< "$snapshot") || return 1
+        current=$(jq -ce '.data.data | select(type=="object")' <<< "$snapshot") || return 1
+    else
+        snapshot=$(_cat "$url") || return 1
+        current=$(jq -ce '.data | select(type=="object")' <<< "$snapshot") || return 1
+        version=""
     fi
-    local data="$2"
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    if [[ ! $data ]]; then
-        echo "Error! Missing secret data"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    secret=$(_cat "$url" | jq ".data" | tr -d '\n')
-    data="${secret/\}},${data/\{}"
-    debug "addsecret: url=$url $secret => $data"
-    _put "$url" "$data"
+    merged=$(jq -cn --argjson cur "$current" --argjson add "$additions" '$cur + $add') || return 1
+    _put "$url" "$merged" "$version"
 }
 
 # delsecret function
 function _delsecret(){
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd$url"
+    local url="$1" key="$2" snapshot version current updated
+    url=$(_vcli_absolute_path "$url") || return 1
+    [[ -n $key ]] || { echo "Missing key" >&2; return 1; }
+    if vcli_is_kv2_path "$url"; then
+        snapshot=$(_curl "$url" "" GET raw) || return 1
+        version=$(jq -er '.data.metadata.version | select(type=="number")' <<< "$snapshot") || return 1
+        current=$(jq -ce '.data.data | select(type=="object")' <<< "$snapshot") || return 1
+    else
+        snapshot=$(_cat "$url") || return 1
+        current=$(jq -ce '.data | select(type=="object")' <<< "$snapshot") || return 1
+        version=""
     fi
-    local key="$2"
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    if [[ ! $key ]]; then
-        echo "Error! Missing key"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    secret=$(_cat "$url" | jq ".data|del(.\"$key\")" | tr -d '\n')
-    debug "delsecret: url=$url $key"
-    _put "$url" "$secret"
+    updated=$(jq -cn --argjson obj "$current" --arg key "$key" '$obj | del(.[$key])') || return 1
+    _put "$url" "$updated" "$version"
 }
 
 # cp function
@@ -1457,6 +1465,7 @@ function _rm(){
 
 # put function
 function _put(){
+    local cas="${3:-}"
     local funcname
     funcname="${FUNCNAME[0]}"
     local url="$1"
@@ -1484,7 +1493,7 @@ function _put(){
     url="${url/\/\//\/}"
     debug "$data"
     debug "uploading '$data' to '$url'"
-    _curl "$url" "$data" "POST"
+    _curl "$url" "$data" "POST" "$cas"
 }
 
 # validate and show principals and keytab info
