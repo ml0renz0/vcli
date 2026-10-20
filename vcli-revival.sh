@@ -2053,6 +2053,18 @@ function main(){
     # print prompt
     prompt
 
+    # Batch mode is line-oriented: do not use the interactive one-byte reader.
+    # Propagate failed CLI command status even when no HTTP request was sent.
+    if [[ ${disable_prompt:-} == yes ]]; then
+        local batch_line batch_result=0
+        while IFS= read -r batch_line || [[ -n $batch_line ]]; do
+            [[ -z ${batch_line//[[:space:]]/} ]] && continue
+            if ! run_cmd "$batch_line"; then batch_result=1; fi
+        done
+        save_history
+        exit "$batch_result"
+    fi
+
     # Disable Ctrl+c
     trap : INT
 
