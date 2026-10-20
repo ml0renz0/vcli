@@ -6,7 +6,7 @@ set -Eeuo pipefail
 cd "$(dirname "$0")/../.."
 : "${VCLI_TEST_VAULT_TAG:?Set a pinned HashiCorp Vault image tag}"
 
-container="vcli-ci-vault-${RANDOM}-$"
+container="vcli-ci-vault-${RANDOM}-$$"
 root_token='local-ci-root-only'
 tls_dir=$(mktemp -d "${TMPDIR:-/tmp}/vcli-ci-tls.XXXXXX")
 export VAULT_ADDR='https://127.0.0.1:8200'
