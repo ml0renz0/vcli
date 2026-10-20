@@ -1,0 +1,2388 @@
+#!/usr/bin/env bash
+
+# vcli internal variables
+declare SCRIPTNAME
+SCRIPTNAME="$(basename "$0")"
+declare VERSION="0.6.3-revival"
+declare VERBOSE=${VERBOSE:-"no"}
+declare DEBUG=${DEBUG:-"no"}
+declare DEBUG_HEXDUMP="no"
+declare DEBUGFILE="${VCLI_DEBUGFILE:-$HOME/.vcli.debug}"
+declare TMP="${TMPDIR:-/tmp}"
+# Private temporary data and exported secret files.
+umask 077
+declare is_command cmd cmd_history restcmd _key len pos history_index
+declare timeout="2" # timeout to verify connection to Vault
+declare http_code
+declare vault_host vault_port vault_token current_pwd
+
+# History related vars
+declare VCLISTORY="$HOME/.vclistory"
+declare pri_suffix="_principal"
+declare crt_suffix="_crt"
+declare key_suffix="_key"
+declare SEARCHIST ENDHIST ADDTMPCMD search_cmd
+declare -a cmd_history tmp_history
+declare cert_warning_threshold="30"
+declare cert_critical_threshold="15"
+# vcli dependencies
+declare DEPENDENCIES="curl jq mktemp timeout"
+
+# COLOURS
+# Non-interactive shells and minimal containers may lack TERM/tput.
+TAB="" RED="" GREEN="" YELLOW="" CYAN="" NONE="" BOLD=""
+if [[ -t 1 && -n ${TERM:-} && $TERM != dumb ]] && command -v tput >/dev/null 2>&1; then
+    TAB=$(tput setaf 4; tput bold)
+    RED=$(tput setaf 1; tput bold)
+    GREEN=$(tput setaf 2; tput bold)
+    YELLOW=$(tput setaf 3)
+    CYAN=$(tput setaf 6; tput bold)
+    NONE=$(tput sgr0)
+    BOLD=$(tput bold)
+fi
+
+# URI encoder
+function urlencode {
+    jq -nr --arg v "$1" '$v|@uri'
+}
+
+# Check dependencies
+function check_dependency(){
+    local dependencies
+    dependencies=$*
+    for dependency in $dependencies; do
+        if ! command -v "$dependency" >/dev/null; then
+            echo "$SCRIPTNAME: command '$dependency' not found"
+            exit 1
+        fi
+    done
+}
+
+function check_connectivity(){
+    if ! timeout $timeout bash -c "</dev/tcp/$vault_host/$vault_port"; then
+        echo "Cannot establish connection to $protocol://$vault_host:$vault_port"
+        exit 1
+    fi
+}
+
+# check vcli latest version
+function new_version(){
+    # The original upstream release check is obsolete and adds network traffic.
+    # Keep this function as a compatibility stub; a modern release process can
+    # restore update checks later.
+    return 1
+}
+
+# Print prompt
+function prompt(){
+    if [[ $disable_prompt ]]; then
+        return
+    fi
+    local COLOUR=$CYAN
+    debug "prompt: http_code=$http_code"
+    if [[ $http_code =~ ^2 ]]; then
+        COLOUR=$GREEN
+    elif [[ $http_code =~ ^3 ]]; then
+        COLOUR=$YELLOW
+    elif [[ $http_code =~ ^4 ]] || [[ $http_code =~ ^5 ]]; then
+        COLOUR=$RED
+    fi
+    echo -n "[$COLOUR$http_code$NONE] $BOLD$SCRIPTNAME$TAB@$NONE$BOLD$vault_host$TAB:$NONE$BOLD$vault_port$current_pwd$TAB >$NONE "
+}
+
+function debug(){
+    local msg="$*"
+    if [[ $DEBUG == "yes" ]]; then
+        echo -e "$msg" >> $DEBUGFILE
+    fi
+}
+
+################################################# CLI FUNCTIONS #################################################
+
+declare -A vcli_commands=(
+                      [mount]=arg
+                      [umount]=arg
+                      [cd]=arg
+                      [ls]=arg
+                      [lsrole]=noarg
+                      [showrole]=arg
+                      [lspol]=noarg
+                      [showpol]=arg
+                      [tree]=arg
+                      [find]=arg
+                      [replace]=arg
+                      [cptree]=arg
+                      [rmtree]=arg
+                      [backup]=arg
+                      [restore]=arg
+                      [cat]=arg
+                      [cp]=arg
+                      [getcert]=arg
+                      [getcertlist]=arg
+                      [getkrblist]=arg
+                      [getcertexpiration]=arg
+                      [getallcertlist]=arg
+                      [getallkrblist]=arg
+                      [getallcertexpiration]=arg
+                      [getsan]=arg
+                      [getprinc]=arg
+                      [certinfo]=arg
+                      [getkrb]=arg
+                      [krbinfo]=arg
+                      [mv]=arg
+                      [put]=arg
+                      [addsecret]=arg
+                      [delsecret]=arg
+                      [rm]=arg
+                      [help]=arg
+                      [history]=noarg
+                      [exit]=noarg
+                      [verbose]=noarg
+                      [enable-debug]=noarg
+                      [disable-debug]=noarg
+                      [enable-hexdump-debug]=noarg
+                      [disable-hexdump-debug]=noarg
+                    )
+
+declare -A vcli_commands_help=(
+        [mount]="mount path/to/mount \n  creates mount $current_pwd/path/to/mount"
+        [umount]="umount path/to/mount \n  destroys mount $current_pwd/path/to/mount"
+        [cd]="cd path/to/secret \n  changes to directory $current_pwd/path/to/secret"
+        [ls]="ls path/to/secret \n  lists paths and secrets on $current_pwd/path/to/secret"
+        [lsrole]="lsrole \n  lists Vault roles"
+        [showrole]="showrole myrole \n  shows Vault role named myrole"
+        [lspol]="lspol \n  lists Vault policies"
+        [showpol]="showpol mypolicy \n  shows Vault policy named mypolicy"
+        [tree]="tree path/to/secret \n  prints vault's secrets tree with $current_pwd/path/to/secret as its root"
+        [find]="find path/to/search { \"key\": \"value\" } \n  finds vault's secrets that match the JSON data provided on path $current_pwd/path/to/search"
+        [replace]="replace path/to/replace { \"key\": \"value\" } { \"newkey\": \"newvalue\" } \n  replaces vault's secrets under $current_pwd/path/to/replace that match the JSON data with the new JSON data provided"
+        [cptree]="cptree path/to/secret path/to/other_secret \n  copies tree to destination path $current_pwd/path/to/other_secret"
+        [rmtree]="rmtree [-f] path/to/secret \n  removes path $current_pwd/path/to/secret recursively. Use '-f' as first argument to avoid delete confirmation"
+        [backup]="backup path/to/secrets \n  backs up Vault /path to $TMP folder"
+        [restore]="restore /local/dir/file \n  restores Vault backup"
+        [cat]="cat path/to/secret \n  shows contents of secret $current_pwd/path/to/secret"
+        [cp]="cp path/to/secret path/to/other_secret \n  copies contents of path to path $current_pwd/path/to/other_secret"
+        [getcert]="getcert path/to/secret \n  downloads certificate CRT and KEY stored in $current_pwd/path/to/secret"
+        [getcertlist]="getcertlist path/to/certificates \n  recovers certs.list with certificates found in $current_pwd/path/to/certificates"
+        [getkrblist]="getkrblist path/to/kerberos \n  recovers krb.list with principals found in $current_pwd/path/to/kerberos"
+        [getcertexpiration]="getcertexpiration [-oo|-ow|-oc] path/to/certificate \n  shows expiration date for specified certificate $current_pwd/path/to/certificates\n  -oo: omit ok certs\n  -ow: omit certs in warning threshold ($cert_warning_threshold days)\n  -oc: omit certs in critical threshold ($cert_critical_threshold days)"
+        [getallcertlist]="getallcertlist path/to/certificates \n  recovers certs.list with all certificates found under tree $current_pwd/path/to/certificates"
+        [getallkrblist]="getallkrblist path/to/kerberos \n  recovers krb.list with all principals found under tree $current_pwd/path/to/kerberos"
+        [getallcertexpiration]="getallcertexpiration [-oo|-ow|-oc] path/to/certificate \n  shows expiration date for all certificates found under tree $current_pwd/path/to/certificates\n  -oo: omit ok certs\n  -ow: omit certs in warning threshold ($cert_warning_threshold days)\n  -oc: omit certs in critical threshold ($cert_critical_threshold days)"
+        [getsan]="getsan path/to/secret \n  shows certificate's SAN stored in $current_pwd/path/to/secret"
+        [getprinc]="getprinc path/to/secret \n  shows pincipal stored in keytab $current_pwd/path/to/secret"
+        [certinfo]="certinfo path/to/secret \n  shows certificate info stored in $current_pwd/path/to/secret"
+        [getkrb]="getkrb path/to/secret \n  exports keytab file to $TMP/principal.keytab"
+        [krbinfo]="krbinfo path/to/secret \n  shows principal & keytab info stored in $current_pwd/path/to/secret"
+        [mv]="mv path/to/secret path/to/other_secret \n  moves contents of path to path $current_pwd/path/to/other_secret"
+        [put]="put path/to/secret { \"key\": \"value\" } \n  adds json={ \"key\": \"value\" } to secret $current_pwd/path/to/secret"
+        [addsecret]="addsecret path/to/secret { \"key2\": \"value2\" } \n  adds secret { \"key2\": \"value2\" } to existing secret $current_pwd/path/to/secret"
+        [delsecret]="delsecret path/to/secret key \n  deletes key from secret"
+        [rm]="rm path/to/secret \n  removes secret $current_pwd/path/to/secret"
+        [help]="help [vcli_command] \n  shows this help or the specified's command"
+        [history]="history \n  shows vcli history"
+        [verbose]="verbose \n  toggle verbosity"
+        [enable-debug]="enable-debug \n  enable debugging"
+        [disable-debug]="disable-debug \n  disable debugging"
+        [enable-hexdump-debug]="enable-hexdump-debug \n  enable input hexdump debugging"
+        [disable-hexdump-debug]="disable-hexdump-debug \n  disable input hexdump debugging"
+        [exit]="exit \n  exits vcli"
+                              )
+
+# return whether is a command or not
+function is_cmd(){
+    local cmd=${1%% *}
+    local args=${1#* }
+    if [[ $cmd == "$args" ]]; then unset args; fi
+    local args
+    #debug "IS_CMD1: cmd=$cmd args=$args"
+    for command in "${!vcli_commands[@]}"; do
+        #debug "IS_CMD2: command=$command, args=$args"
+        #debug "IS_CMD3: $cmd =~ ^$command$"
+        if [[ $cmd =~ ^$command$ ]]; then
+            if [[ ${vcli_commands[$command]} = "noarg" ]]; then
+                if [[ $args ]]; then
+                    return 1
+                else
+                    #debug "IS_CMD4: MATCHED"
+                    return 0
+                fi
+            fi
+            #debug "IS_CMD4: MATCHED"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# complete command
+function completion(){
+    debug "run completion"
+    local -a tmparray
+    local found _cmd _path _secret paths
+    local -a commands=( ${!vcli_commands[@]} )
+    IFS=' ' read -r _cmd _option _path <<< "${@}"
+    if [[ ! $_path ]]; then
+        _path=$_option
+        unset _option
+    fi
+    debug "cmd: $_cmd, option: $_option, path: $_path"
+    # complete command
+    if [[ ! $_path ]]; then
+        if ! is_cmd "$_cmd" || [[ ! $_cmd =~ \ $ ]]; then
+            for c in "${commands[@]}"; do
+                if [[ $c =~ ^$_cmd ]]; then
+                    debug "found: $c"
+                    tmparray+=( $c )
+                fi
+            done
+            found=${#tmparray[@]}
+            debug "commands_found $found: " "${tmparray[@]}"
+            local tmpcmd_so_far cmd_so_far
+            if [[ $found == 1 ]]; then
+                cmd="${tmparray[0]} "
+                debug "new_cmd cmd1: $cmd"
+            elif [[ $found -gt 1 ]]; then
+                echo
+                for p in "${tmparray[@]}"; do
+                    echo "$p"
+                done
+                local n=1
+                local i=0
+                # compare all found occurrences and build the common substring
+                while true ; do
+                    tmpcmd_so_far=${tmparray[$i]::$n}
+                    debug "tmpcmd_so_far: $tmpcmd_so_far"
+                    while [[ $i -lt ${#tmparray[@]} ]]; do
+                        debug "cmdmatch: i=$i n=$n ${tmparray[$i]::$n} == $tmpcmd_so_far"
+                        if [[ ${tmparray[$i]::$n} != "$tmpcmd_so_far" ]]; then
+                            end="true"
+                            break 2
+                        fi
+                        tmpcmd_so_far=${tmparray[$i]::$n}
+                        let i++
+                    done
+                    if [[ ! $end ]]; then
+                        cmd_so_far=$tmpcmd_so_far
+                        debug "cmdsofar: $cmd_so_far"
+                    fi
+                    let n++
+                    let i=0
+                done
+                cmd="$cmd_so_far"
+                debug "new_cmd cmd+1: $cmd"
+                unset tmparray tmpcmd_so_far cmd_so_far end
+                prompt
+                return 1
+            fi
+        fi
+    # complete path
+    else
+        debug "searching path $_path"
+        _secret=${_path##*/}
+        debug "1 path: $_path, secret: $_secret"
+        if [[ $_path != "$_secret" ]]; then
+            _path=${_path%$_secret*}
+        else
+            unset _path
+        fi
+        debug "2 path: $_path, secret: $_secret"
+        paths=$(_ls "-_disable_colors_-" "$_path" | tr -t '\n' ' ' | tr -s ' ')
+        debug "DEBUG: $(_ls "-_disable_colors_-" "$_path" | tr -t '\n' ' ' | tr -s ' ')"
+
+        backIFS=$IFS
+        IFS=$' '
+        for p in $paths; do
+            if [[ $p =~ ^$_secret ]]; then
+                debug "found path: $p"
+                tmparray+=( $p )
+            fi
+        done
+        IFS=$backIFS
+        found=${#tmparray[@]}
+        debug "paths_found $found: " "${tmparray[@]}"
+        debug "cmd: $_cmd $_path"
+        local tmpath_so_far path_so_far
+        if [[ $found == 1 ]]; then
+            cmd="$_cmd $_option $_path${tmparray[0]}"
+            debug "new_cmd path1: $cmd"
+        elif [[ $found -gt 1 ]]; then
+            echo
+            for p in "${tmparray[@]}"; do
+                echo "$p" | sed -e "s/\//$CYAN\/$NONE/"
+            done
+            local n=1
+            local i=0
+            # compare all found occurrences and build the common substring
+            while true ; do
+                tmpath_so_far=${tmparray[$i]::$n}
+                debug "tmpath_so_far: $tmpath_so_far"
+                while [[ $i -lt ${#tmparray[@]} ]]; do
+                    debug "pathmatch: i=$i n=$n ${tmparray[$i]::$n} == $tmpath_so_far"
+                    if [[ ${tmparray[$i]::$n} != "$tmpath_so_far" ]]; then
+                        end="true"
+                        break 2
+                    fi
+                    tmpath_so_far=${tmparray[$i]::$n}
+                    let i++
+                done
+                if [[ ! $end ]]; then
+                    path_so_far=$tmpath_so_far
+                    debug "pathsofar: $path_so_far"
+                fi
+                let n++
+                let i=0
+            done
+            cmd="$_cmd $_option $_path$path_so_far"
+            debug "new_cmd path+1: $cmd"
+            unset tmparray tmpath_so_far path_so_far end
+            prompt
+            return 1
+        fi
+    fi
+    unset tmparray found
+}
+
+# add $cmd to command history @cmd_history
+function add_cmd(){
+    local vclistory
+    # If "$1" is a file then process it
+    if [[ -r "$1" ]]; then
+        mapfile -t vclistory < <(sed '1!G;h;$!d' "$1") # read history in reverse
+        cmd_history=( "${vclistory[@]}" )
+    else
+        local cmd
+        cmd="$(echo "$*" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')"
+        is_cmd "$cmd" || return 1
+        # Commands may contain passwords/certificates. Do not persist their data.
+        if [[ ${VCLI_HISTORY_SECRETS:-false} != true &&
+              $cmd =~ ^(put|addsecret|replace|delsecret|find)[[:space:]] ]]; then
+            return 0
+        fi
+        local -a new_history
+        new_history=( "$cmd" )
+        for old_cmd in "${cmd_history[@]}"; do
+            if [[ $old_cmd != $"cmd" ]]; then
+                new_history+=( "$old_cmd" )
+            fi
+        done
+        cmd_history=( "${new_history[@]}" )
+        debug "add_cmd cmd_history[0]: $cmd"
+    fi
+}
+
+# UP: returns previous cmd in history
+function get_prev_cmd(){
+    if [[ ! $ADDTMPCMD ]]; then
+        debug "get_prev add tmp_cmd: $cmd"
+        add_cmd "$cmd"
+        ADDTMPCMD="yes"
+    fi
+    if [[ $history_index -lt $((${#cmd_history[@]}-1)) ]]; then
+        cmd="${cmd_history[$((++history_index))]}"
+        debug "get_prev cmd_history[$((history_index))]: $cmd"
+
+        # move the cursor to the beginning to print the command selected
+        [[ $pos != 1 ]] && tput cub $((pos-1)) # move cursor left to the beginning
+
+        # print the command found in history
+        echo -n "$cmd"
+        tput el # clean to the end of the line
+        let pos=$((${#cmd}+1))
+        let len=${#cmd}
+    else
+        debug "get_next reached oldest cmd: $cmd"
+    fi
+}
+
+# DOWN: returns next cmd in history
+function get_next_cmd(){
+    if [[ $history_index -gt 0 ]]; then
+        cmd="${cmd_history[$((--history_index))]}"
+        debug "get_next cmd_history[$((history_index))]: $cmd"
+
+        # move the cursor to the beginning to print the command selected
+        [[ $pos != 1 ]] && tput cub $((pos-1)) # move cursor left to the beginning
+
+        # print the command found in history
+        echo -n "$cmd"
+        tput el # clean to the end of the line
+        let pos=$((${#cmd}+1))
+        let len=${#cmd}
+    elif [[ ! $ENDHIST ]]; then
+        debug "get_next reached newest cmd: $cmd"
+        unset ADDTMPCMD
+        let history_index=-1
+        cmd=""
+        # move the cursor to the beginning to print the command selected
+        [[ $pos != 1 ]] && tput cub $((pos-1)) # move cursor left to the beginning
+
+        tput el # clean to the end of the line
+        let pos=$((${#cmd}+1))
+        let len=${#cmd}
+        ENDHIST=yes
+    fi
+}
+
+# returns last command's path
+function get_lastcmd_arg(){
+    if [[ "$(echo "${cmd_history[$((history_index+1))]}" | cut -d' ' -f2)" =~ ^- ]]; then
+        echo "${cmd_history[$((history_index+1))]}" | cut -d' ' -f3
+    else
+        echo "${cmd_history[$((history_index+1))]}" | cut -d' ' -f2
+    fi
+}
+
+# saves history to $HOME/.vclistory
+function save_history(){
+    : > "$VCLISTORY"
+    chmod 600 "$VCLISTORY" 2>/dev/null || true
+    for (( idx=${#cmd_history[@]}-1 ; idx>=0 ; idx-- )) ; do
+        echo "${cmd_history[$idx]}" >> "$VCLISTORY"
+    done
+}
+
+# loads history from $HOME/.vclistory
+function load_history(){
+    [[ ! -e $VCLISTORY ]] && return
+    add_cmd "$VCLISTORY"
+}
+
+# loads history from $HOME/.vclistory
+function print_history(){
+    if [[ ${#cmd_history[@]} == 0 ]]; then
+        echo "No history found"
+        return
+    fi
+    local n=1
+    local depth
+    local historylines=${#cmd_history[@]}
+    depth="$(( ${#historylines} - 1 ))"
+    for (( idx=${#cmd_history[@]}-1 ; idx>=0 ; idx-- )) ; do
+        npadded="$(printf %0"${depth}"d $n)"
+        echo "#$npadded: ${cmd_history[$idx]}"
+        let n++
+    done
+}
+
+# return vcli commands found in history matching $cmd
+function rotate_found_cmds(){
+    debug "rotate_found_cmds"
+    if [[ ! $search_cmd ]]; then
+        search_cmd="$*"
+    fi
+    debug "search_next_from: $search_cmd, \$SEARCHIST: $SEARCHIST"
+    if [[ ! $SEARCHIST ]]; then
+        # starting vcli search mode. Build a tmp_history with all matching commands
+        for (( idx=0 ; idx<=${#cmd_history[@]}-1 ; idx++ )) ; do
+            if [[ "${cmd_history[$idx]}" =~ $search_cmd ]]; then
+                tmp_history+=( "${cmd_history[$idx]}" )
+            fi
+            [[ ! $SEARCHIST ]] && SEARCHIST="0"
+        done
+        # print first command found
+        # if another Ctrl+r is hit next item will be printed
+        debug "\${#tmp_history}=${#tmp_history[@]}"
+        debug "\${tmp_history[$SEARCHIST]}=\"${tmp_history[$SEARCHIST]}"\"
+        cmd="${tmp_history[$SEARCHIST]}"
+    else
+        let SEARCHIST++
+        SEARCHIST=$((SEARCHIST%(${#tmp_history[@]})))
+        debug "\${#tmp_history}=${#tmp_history[@]}"
+        debug "\${tmp_history[$SEARCHIST]}=\"${tmp_history[$SEARCHIST]}"\"
+        cmd="${tmp_history[$SEARCHIST]}"
+    fi
+}
+################################################# CLI FUNCTIONS #################################################
+
+
+# Usage
+function help(){
+    cat <<EOH
+Usage: $SCRIPTNAME -v <vault_host> -p <vault_port> -t <vault_token> [-i] [-n]
+            -i: use insecure http
+            -n: do not print prompt or commands. Useful when input is piped from stdin
+       $SCRIPTNAME --version
+EOH
+}
+
+# Print commands help
+function commands_help(){
+    local arg="$1"
+    local _cmd
+    local commands
+    commands="${!vcli_commands[@]}"
+    commands=${commands// /|}
+    if [[ ! $arg ]]; then
+        echo -e "Available commands:\n"
+        backIFS=$IFS
+        IFS=$'|'
+        local _commands
+        _commands=$(echo "$commands" | tr -t '|' '\n' | sort | tr -t '\n' '|')
+        for command in $_commands; do
+            echo -e "$command: $(commands_help "$command")\n"
+        done
+        IFS=$backIFS
+        return
+    fi
+    for _cmd in "${!vcli_commands[@]}"; do
+        if [[ "$_cmd" = "$arg" ]]; then
+            echo -e "${vcli_commands_help[$_cmd]}"
+            return 0
+        fi
+    done
+    echo -e "unkown '$arg' vcli command. Available commands:"
+    while read -r line ; do        echo "   $line"
+    done< <(echo -e "${commands//|/\\n}") | sort
+    return 1
+}
+
+# Check for given arguments
+function check_arg(){
+    local arg=$1
+    local msg=$2
+    if [[ ! $arg ]]; then
+        echo -e "ERROR! No $msg provided\n"
+        help ; exit 1
+    fi
+}
+
+# save & clean & exit
+function clean_n_exit(){
+    save_history
+    [[ ! $disable_prompt ]] && echo
+    ## REMOVED: it seems this bug doesn't reproduce anymore ##
+    #
+    # reset terminal when running inside a container as local echo gets disabled (??)
+    # if ! head -n 1 /proc/1/sched | grep -qE "(systemd|init)"; then
+    #   reset
+    # fi
+    if [[ -n $http_code && ! $http_code =~ ^2 ]]; then exit_status=1 ; fi
+    exit $exit_status
+}
+
+# Run command and prettyfy stdout
+# _run used eval on interpolated HTTP commands; replaced by safe curl arrays.
+function _run(){
+    echo "Internal error: legacy _run is no longer supported" >&2
+    return 1
+}
+
+# Map legacy paths to KV v2 HTTP paths when opted in.
+# VAULT_KV_VERSION=2 VAULT_KV_MOUNTS=secret,teams/config
+function vcli_kv_path(){
+    local path="${1#/}" method="$2" mount rest
+    VCLI_KV2_ACTIVE=no
+    if [[ ${VAULT_KV_VERSION:-1} != 2 ]]; then
+        printf '%s' "$path"
+        return
+    fi
+    local mounts="${VAULT_KV_MOUNTS:-secret}"
+    local -a mount_array
+    IFS=',' read -r -a mount_array <<< "$mounts"
+    for mount in "${mount_array[@]}"; do
+        mount="${mount#/}"; mount="${mount%/}"
+        if [[ -z $mount || $path != "$mount/"* ]]; then continue; fi
+        rest="${path#"$mount/"}"
+        case "$rest" in
+            data/*|metadata/*) printf '%s' "$path"; return;;
+        esac
+        case "$method" in
+            LIST) printf '%s/metadata/%s' "$mount" "$rest" ;;
+            GET|POST|PUT|PATCH|DELETE) printf '%s/data/%s' "$mount" "$rest" ;;
+            *) printf '%s' "$path"; return;;
+        esac
+        # This function can be used in command substitutions; the caller must
+        # separately decide whether this is a KV v2 request.
+        return
+    done
+    printf '%s' "$path"
+}
+
+# Encode path components but do not encode / or the query delimiter ?.
+function vcli_encode_endpoint(){
+    local raw="${1#/}" path query seg result="" encoded
+    path="${raw%%\?*}"
+    local -a segments
+    IFS='/' read -r -a segments <<< "$path"
+    for seg in "${segments[@]}"; do
+        encoded=$(urlencode "$seg") || return 1
+        if [[ -n $result ]]; then result+='/'; fi
+        result+="$encoded"
+    done
+    # Preserve trailing / for root listing and folders.
+    [[ $path == */ && -n $result ]] && result+='/';
+    if [[ $raw == *\?* ]]; then
+        query="${raw#*\?}"
+        result+="?$query"
+    fi
+    printf '%s' "$result"
+}
+
+# simplified curl function
+function _curl(){
+    local ignore_http_code=no disable_fail=no
+    while :; do
+        case "${1:-}" in
+            -i) ignore_http_code=yes; shift;;
+            -_disable_-f_-) disable_fail=yes; shift;;
+            '') shift; break;;
+            *) break;;
+        esac
+    done
+    local path="${1#/}" data="${2:-}" method="${3:-GET}"
+    local kv2=no mount rest
+    if [[ ${VAULT_KV_VERSION:-1} == 2 ]]; then
+        local mounts="${VAULT_KV_MOUNTS:-secret}"
+        local -a mount_array
+        IFS=',' read -r -a mount_array <<< "$mounts"
+        for mount in "${mount_array[@]}"; do
+            mount="${mount#/}"; mount="${mount%/}"
+            [[ -z $mount || $path != "$mount/"* ]] && continue
+            rest="${path#"$mount/"}"
+            [[ $rest == data/* || $rest == metadata/* ]] && break
+            case "$method" in GET|POST|PUT|PATCH|DELETE|LIST)
+                kv2=yes; path=$(vcli_kv_path "$path" "$method");;
+            esac
+            break
+        done
+    fi
+
+    local encoded url response_file payload_file="" payload="" status curl_status
+    encoded=$(vcli_encode_endpoint "$path") || return 1
+    url="$protocol://$vault_host:$vault_port/v1/$encoded"
+    response_file=$(mktemp -p "$TMP" .vcli.response.XXXXXX) || return 1
+    local -a args=(--silent --show-error --connect-timeout "${VCLI_CONNECT_TIMEOUT:-2}"
+                  --max-time "${VCLI_HTTP_TIMEOUT:-30}" --request "$method"
+                  --output "$response_file" --write-out '%{http_code}'
+                  --header @- --header 'Content-Type: application/json')
+    case "${VAULT_SKIP_VERIFY:-false}" in 1|true|TRUE|yes|YES) args+=(--insecure);; esac
+    [[ -n ${VAULT_CACERT:-} ]] && args+=(--cacert "$VAULT_CACERT")
+    [[ -n ${VAULT_CAPATH:-} ]] && args+=(--capath "$VAULT_CAPATH")
+    [[ -n ${VAULT_NAMESPACE:-} ]] && args+=(--header "X-Vault-Namespace: $VAULT_NAMESPACE")
+
+    if [[ -n $data && $data != '-_list_root_-' ]]; then
+        if [[ ! -f $data ]]; then
+            echo "vcli: request payload file missing: $data" >&2
+            rm -f "$response_file"
+            return 1
+        fi
+        payload="$data"
+        if [[ $kv2 == yes && ( $method == POST || $method == PUT || $method == PATCH ) ]]; then
+            payload_file=$(mktemp -p "$TMP" .vcli.payload.XXXXXX) || return 1
+            if ! jq -c '{data: .}' "$data" > "$payload_file"; then
+                rm -f "$response_file" "$payload_file"
+                return 1
+            fi
+            payload="$payload_file"
+        fi
+        args+=(--data-binary "@$payload")
+    fi
+    debug "request: $method $url"
+    # Supply the Vault token over stdin, not as a process-list argument.
+    # --header @- is supported by modern curl versions.
+    status=$(printf 'X-Vault-Token: %s\n' "$vault_token" | curl "${args[@]}" "$url")
+    curl_status=$?
+    [[ -n $payload_file ]] && rm -f "$payload_file"
+    [[ -n $data && $data != '-_list_root_-' && -f $data ]] && rm -f "$data"
+    if (( curl_status != 0 )); then
+        http_code="000"
+        [[ $ignore_http_code == no ]] && cat "$response_file" >&2
+        rm -f "$response_file"
+        return 1
+    fi
+    if [[ $ignore_http_code == no ]]; then
+        http_code="$status"
+        if [[ $data == '-_list_root_-' ]]; then
+            jq -r '.data | keys[]' "$response_file" 2>/dev/null || true
+        elif [[ -s $response_file ]]; then
+            if [[ $kv2 == yes && $method == GET && $status == 2* ]]; then
+                jq 'if (.data.data | type) == "object" then .data = .data.data else . end' "$response_file"
+            else
+                jq '.' "$response_file" 2>/dev/null || cat "$response_file"
+            fi
+        fi
+    fi
+    rm -f "$response_file"
+    [[ $status == 2* || $disable_fail == yes ]]
+}
+
+# run command entered in CLI
+function run_cmd(){
+    local args
+    local fullcmd="$*"
+    args=${*#* }
+    if [[ $fullcmd == "$args" ]]; then
+        unset args
+    fi
+    backIFS=$IFS
+    while IFS=$' ' read -r cmd arg1 arg2 arg3; do
+        if [[ $arg1 == "!$" ]]; then
+            arg1=$(get_lastcmd_arg)
+        fi
+        if ! is_cmd "$fullcmd"; then
+            commands_help "$cmd"
+            return 1
+        fi
+        case $cmd in
+            cd)                     _cd "$arg1" ;;
+            ls)                     _ls "$arg1" ;;
+            lsrole)                 _lsrole ;;
+            showrole)               _showrole "$arg1" ;;
+            lspol)                  _lspol ;;
+            showpol)                _showpol "$arg1" ;;
+            tree)                   backIFS=$IFS; IFS=$' ' ; _tree "$arg1" ; IFS=$backIFS;;
+            find)                   backIFS=$IFS; IFS=$' ' ; _find "$arg1" "$arg2 $arg3" ; IFS=$backIFS;;
+            replace)                backIFS=$IFS; IFS=$' ' ; _replace "$arg1" "$arg2 $arg3" ; IFS=$backIFS;;
+            cptree)                 backIFS=$IFS; IFS=$' ' ; _cptree "$arg1" "$arg2" ; IFS=$backIFS;;
+            rmtree)                 backIFS=$IFS; IFS=$' ' ; _rmtree "$arg1" "$arg2"; IFS=$backIFS;;
+            backup)                 backIFS=$IFS; IFS=$' ' ; _backup "$arg1" ; IFS=$backIFS;;
+            restore)                backIFS=$IFS; IFS=$' ' ; _restore "$arg1" ; IFS=$backIFS;;
+            cat)                    _cat "$arg1" ;;
+            put)                    _put "$arg1" "$arg2 $arg3" ;;
+            addsecret)              _addsecret "$arg1" "$arg2 $arg3" ;;
+            delsecret)              _delsecret "$arg1" "$arg2" ;;
+            rm)                     _rm "$arg1" ;;
+            cp)                     _cp "$arg1" "$arg2" ;;
+            getcert)                _getcert "$arg1" ;;
+            getsan)                 _getsan "$arg1" ;;
+            getprinc)               _getprinc "$arg1" ;;
+            getcertlist)            _getcertlist "$arg1" ;;
+            getkrblist)             _getkrblist "$arg1" ;;
+            getcertexpiration)      _getcertexpiration "$arg1" "$arg2" "$arg3" ;;
+            getallcertlist)         _getallcertlist "$arg1" ;;
+            getallkrblist)          _getallkrblist "$arg1" ;;
+            getallcertexpiration)   _getallcertexpiration "$arg1" "$arg2" ;;
+            certinfo)               _certinfo "$arg1" ;;
+            getkrb)                 _getkrb "$arg1" ;;
+            krbinfo)                _krbinfo "$arg1" ;;
+            mv)                     _mv "$arg1" "$arg2" ;;
+            mount)                  _mount "$args" ;;
+            umount)                 _umount "$args" ;;
+            history)                print_history ;;
+            exit)                   save_history; exit ;;
+            help)                   commands_help "$arg1" ;;
+            enable-debug)           echo "debug enabled" ; DEBUG="yes";;
+            disable-debug)          echo "debug disabled" ; DEBUG="no";;
+            verbose)                if [[ $VERBOSE == "yes" ]]; then
+                                        echo "verbose mode OFF"
+                                        VERBOSE="no"
+                                    else
+                                        echo "verbose mode ON"
+                                        VERBOSE="yes"
+                                    fi ;;
+            enable-hexdump-debug)   echo "hexdump debug enabled" ; DEBUG_HEXDUMP="yes";;
+            disable-hexdump-debug)  echo "hexdump debug disabled" ; DEBUG_HEXDUMP="no";;
+            \#*)                    return;; # ignore commented lines
+            *)                      commands_help "$cmd" ; return 1 ;;
+        esac
+        debug "run_cmd: $cmd $arg1 $arg2"
+        debug "run_cmd: http_code=$http_code"
+        add_cmd "$cmd $arg1 $arg2 $arg3"
+    done< <(echo "$fullcmd")
+}
+
+# mount function
+function _mount(){
+    if [[ "$1" == "-i" ]]; then
+        local ignore_http_code="true"
+        shift
+    fi
+    local url="$*"
+    local data
+    if [[ ! $url ]]; then
+        echo "mounted paths:"
+        _ls /
+    # mount $url
+    else
+        # get full path if relative reference
+        if [[ ! "$url" =~ ^/ ]]; then
+            url="/sys/mounts/$current_pwd$url"
+        else
+            url="/sys/mounts$url"
+        fi
+        data=$(mktemp -p "$TMP" -t .put.XXXX)
+        jq -nc --arg d "$url secret backend" --arg v "${VAULT_KV_VERSION:-1}" '{type:"kv",description:$d,options:{version:$v}}' > "$data"
+        if [[ $ignore_http_code ]]; then
+            _curl -i "$url" "$data" "POST"
+        else
+            _curl "$url" "$data" "POST"
+        fi
+        echo "mounted '$url'"
+    fi
+}
+
+# umount function
+function _umount(){
+    if [[ "$1" == "-i" ]]; then
+        local ignore_http_code="true"
+        shift
+    fi
+    local url="$*"
+    if [[ ! $url ]]; then
+        echo "umount needs an argument"
+        _mount
+    fi
+    # get full path if relative reference
+    if [[ ! "$url" =~ ^/ ]] && [[ ! "$url" =~ ^/sys/mounts ]]; then
+        url="/sys/mounts/$current_pwd$url"
+    elif [[ ! "$url" =~  ^/sys/mounts ]]; then
+        url="/sys/mounts$url"
+    fi
+    if [[ $ignore_http_code ]]; then
+        _curl -i "$url" "" "DELETE"
+    else
+        _curl "$url" "" "DELETE"
+    fi
+}
+
+# cd function
+function _cd(){
+    local url="$1"
+    if [[ $url == ".." ]]; then
+        url=${current_pwd%*/}
+        url=${url%/*}/
+    elif [[ $url =~ ^/ ]]; then
+        : # do nothing url is perfect as it is
+    elif [[ $url ]]; then
+        url="$current_pwd/$url/"
+        url=${url//\/\//\/}
+    elif [[ $current_pwd ]]; then
+        url="$current_pwd/"
+        url=${url//\/\//\/}
+    else
+        current_pwd="/"
+    fi
+    if [[ $url != "/" ]] && [[ "$1" != ".." ]] && ! _ls "$url" | grep -q "."; then
+        echo "Error! '$url' not found"
+    elif [[ $url != "/" ]]; then
+        current_pwd="$url"
+    else
+        current_pwd=""
+    fi
+    debug "cd: cd $1 ; current_pwd=$current_pwd"
+}
+
+# ls function
+function _ls(){
+    local url tmp method
+    if [[ $1 == "-_disable_colors_-" ]]; then
+        local disable_colors="yes"
+        shift
+    fi
+    if [[ "$1" == "-i" ]]; then
+        local ignore_http_code="-i"
+        shift
+    fi
+    if [[ ! $1 =~ ^/ ]]; then
+        url="$current_pwd/$1"
+    else
+        url="$1"
+    fi
+    if [[ $url == '/' ]]; then
+        if [[ $disable_colors ]]; then
+            _cat /sys/mounts "-_list_root_-" | tr -d '"'
+        else
+            _cat /sys/mounts "-_list_root_-" | tr -d '"' | sed -e "s/\//$CYAN\/$NONE/"
+        fi
+        return
+    elif [[ $url ]]; then
+        url="$url"
+        method="LIST"
+    else
+        url="$current_pwd"
+        method="LIST"
+    fi
+    if [[ $disable_colors ]]; then
+        tmp=$(mktemp -p "$TMP" -t ls.XXXX)
+        _curl $ignore_http_code "$url" "" "$method" > "$tmp"
+        jq '.data .keys[]' -r < "$tmp"
+    else
+        tmp=$(mktemp -p "$TMP" -t ls.XXXX)
+        _curl $ignore_http_code "$url" "" "$method" > "$tmp"
+        jq '.data .keys[]' -r < "$tmp" | sed -e "s/\//$CYAN\/$NONE/"
+    fi
+    rm -f "$tmp"
+}
+
+# lsrole list roles
+function _lsrole(){
+    local tmp
+    tmp=$(mktemp -p "$TMP" -t lsrole.XXXX)
+    _cat /auth/approle/role?list=true > "$tmp"
+    jq '.data .keys[]' -r < "$tmp"
+    rm "$tmp"
+}
+
+# showpol list role policies
+function _showrole(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    local role="$1"
+    local tmp
+    if [[ ! $role ]]; then
+        echo "Error! Missing role"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    tmp=$(mktemp -p "$TMP" -t showrole.XXXX)
+    _cat /auth/approle/role/"$role" > "$tmp"
+    echo -n "policies: "
+    jq -r '(.data.token_policies // .data.policies // [])[]' < "$tmp"
+    rm "$tmp"
+}
+
+# lspol list policies
+function _lspol(){
+    local tmp
+    tmp=$(mktemp -p "$TMP" .vcli.policies.XXXXXX) || return 1
+    if ! _curl /sys/policies/acl "" LIST > "$tmp"; then
+        cat "$tmp" >&2; rm -f "$tmp"; return 1
+    fi
+    jq -r '(.data.keys // .keys // [])[]' "$tmp"
+    rm -f "$tmp"
+}
+
+# showpol list policy rules
+function _showpol(){
+    local policy="$1" tmp
+    if [[ -z $policy ]]; then
+        echo "Error! Missing policy" >&2; return 1
+    fi
+    tmp=$(mktemp -p "$TMP" .vcli.policy.XXXXXX) || return 1
+    if ! _curl "/sys/policies/acl/$policy" > "$tmp"; then
+        cat "$tmp" >&2; rm -f "$tmp"; return 1
+    fi
+    jq -r '.data.policy // .policy // empty' "$tmp"
+    rm -f "$tmp"
+}
+
+function padecho(){
+    local msg="$1"
+    local depth="$2"
+    local space="$3"
+    local echospace="$4"
+    # we print 2 spaces for every depth
+    for (( i=${#space} ; i<$((depth*2)) ; i++ )) ; do
+        # if is folder
+        echo -n " "
+    done
+    msg=${msg/\/\//\/}
+    msg=${msg//\//$CYAN\/$NONE}
+    space=${space//+/$CYAN+$NONE}
+    space=${space//\`/$CYAN\`$NONE}
+    debug "${echospace}msg: $msg, depth: $depth ; space: \"$space\""
+    echo "$space$msg"
+}
+
+# display the vault's secret tree
+function _tree(){
+    local url
+    if [[ ! $1 =~ ^/ ]]; then
+        url="$current_pwd$1"
+    else
+        url=${1//\/\//\/}
+    fi
+    local depth="$2"
+    local space="$3"
+    local echo_space="$4"
+    # If no "$2" was passed then this iteration is the very first one, so depth=0
+    if [[ ! $depth ]]; then
+        depth=0
+    # other wise we increment a depth as we go deeper in the structure
+    else
+        let depth++
+    fi
+    debug "${echo_space}tree: '$url', depth: $depth, space: \"$space\""
+    # if $url is /
+    padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
+    paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
+    for path in $paths; do
+        debug "${echo_space}   depth: $depth => found: $paths"
+        space=${space/+/ }
+        if [[ $path =~ /$ ]]; then
+            _tree "$url/$path" "$depth" "$space+ " "$echo_space   "
+        else
+            padecho "$path" "$((depth+1))" "$space\` " "$echo_space   "
+        fi
+    done
+}
+
+# find secret in the vault's tree
+function _find(){
+    local url
+    if [[ ! $1 =~ ^/ ]]; then
+        url="$current_pwd/$1"
+    else
+        url=${1//\/\//\/}
+    fi
+    shift
+    local data
+    data="$(echo "$@" | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
+    # if $url is /
+    paths=$(_ls "-_disable_colors_-" "$url" | sed -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
+    for path in $paths; do
+        debug "${echo_space}find: '$url' => found: $paths"
+        if [[ $path =~ /$ ]]; then
+            _find "$url/$path" "$data"
+        else
+            secret=$(_cat "$url/$path" | jq -M -S ".data" | tr -t '\n' ' ' | tr -s ' ')
+            debug "find: '$data' '$url'"
+            if [[ $secret == "$data" ]]; then
+                debug "find: $secret = $data!"
+                padecho "$url/$path" "0" "" ""
+            else
+                debug "find: $secret == $data"
+            fi
+        fi
+    done
+}
+
+# find in $1 and replace secret $2 with new secret $3
+function _replace(){
+    local url
+    if [[ ! $1 =~ ^/ ]]; then
+        url="$current_pwd$1"
+    else
+        url=${1//\/\//\/}
+    fi
+    shift
+    if [[ ! $url =~ /$ ]]; then
+        url+="/"
+    fi
+    debug "replace2: url=$url"
+    debug "replace3: rest=\"$*\""
+    local data
+    data="$(echo "${@%\{*}" | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
+    local newdata
+    newdata="$(echo "${@#*\}}" | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
+    debug "replaceX: data=${*%\{*}"
+    debug "replaceX: newdata=${*#*\}}"
+    # if $url is /
+    paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
+
+    debug "replace1: url=$url, data=\"$data\", newdata=\"$newdata\""
+    for path in $paths; do
+        if [[ $path =~ /$ ]]; then
+            _replace "$url/$path" "$data$newdata"
+        else
+            secret=$(_cat "$url$path" | jq -M -S ".data" | tr -t '\n' ' ' | tr -s ' ')
+            debug "replace: '$data' => '$newdata' on '$url'"
+            if [[ $secret == "$data" ]]; then
+                debug "replace: $secret = $data!"
+                _put "$url$path" "$newdata"
+                padecho "$url$path" "0" "" ""
+            else
+                debug "replace: $secret == $data"
+            fi
+        fi
+    done
+}
+
+# copy secret tree to another location
+function _cptree(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    local url
+    if [[ ! $1 =~ ^/ ]]; then
+        url="$current_pwd$1"
+    else
+        url=${1//\/\//\/}
+    fi
+    local first
+    local dest="$2"
+    local depth="$3"
+    local space="$4"
+    local echo_space="$5"
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    if [[ ! $dest ]]; then
+        echo "Error! Missing destination"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    # If no "$2" was passed then this iteration is the very first one, so depth=0
+    if [[ ! $depth ]]; then
+        depth=0
+        first="yes"
+        echo -n "Copying tree from '$url' to '$dest'"
+    # other wise we increment a depth as we go deeper in the structure
+    else
+        unset first
+        let depth++
+    fi
+    debug "${echo_space}cptree: '$url', depth: $depth, space: \"$space\""
+    # if $url is /
+    #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
+    paths=$(_ls "-_disable_colors_-" "$url" | sed -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
+
+    for path in $paths; do
+        debug "${echo_space}   depth: $depth => found: $paths"
+        space=${space/+/ }
+        if [[ $path =~ /$ ]]; then
+            local _path="$url/$path"
+            _path=${_path//\/\//\/}
+            _cptree "$_path" "$dest" "$depth" "$space+ " "$echo_space   " &
+        else
+            _mount -i "$dest" > /dev/null 2>&1
+            if [[ ! $url =~ /$ ]]; then
+                url+="/"
+            fi
+            if [[ ! $dest =~ /$ ]]; then
+                dest+="/"
+            fi
+            _cp "$url$path" "$dest$path"
+            echo -n "."
+        fi
+    done
+    wait
+    if [[ $first ]]; then
+        echo " done"
+    fi
+}
+
+# removes recursively a vault path
+function _rmtree(){
+    local funcname question
+    funcname="${FUNCNAME[0]}"
+    local url
+    local question="yes"
+    if [[ "$1" == -f ]]; then
+        unset question
+        shift
+    fi
+    if [[ ! $1 =~ ^/ ]]; then
+        url="$current_pwd$1/"
+    else
+        url=${1//\/\//\/}
+    fi
+    if [[ ! $url =~ /$ ]]; then
+        url+='/'
+    fi
+    local first
+    local depth="$2"
+    local space="$3"
+    local echo_space="$4"
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    # If no "$2" was passed then this iteration is the very first one, so depth=0
+    if [[ ! $depth ]]; then
+        depth=0
+        first="yes"
+        if [[ $question ]]; then
+            question="Do you want to remove $url? (yes/no): "
+            while read -p "$question" ANSWER </dev/tty; do
+                if [[ "$ANSWER" == "no" ]]; then
+                    return
+                elif [[ "$ANSWER" == "yes" ]]; then
+                    break
+                fi
+                question="Please type 'yes' or 'no': "
+            done
+        fi
+        echo -n "Removing recursively '$url'"
+    # other wise we increment a depth as we go deeper in the structure
+    else
+        let depth++
+    fi
+    debug "${echo_space}rmtree: '$url', depth: $depth, space: \"$space\""
+    # if $url is /
+    #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
+    paths=$(_ls "-_disable_colors_-" "$url" | sed -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
+
+    for path in $paths; do
+        debug "${echo_space}   depth: $depth => found: $paths"
+        space=${space/+/ }
+        if [[ $path =~ /$ ]]; then
+            local _path="$url/$path"
+            _path=${_path//\/\//\/}
+            _rmtree "$_path" "$depth" "$space+ " "$echo_space   " &
+        else
+            _rm "/$url$path"
+            echo -n "."
+        fi
+    done
+    wait
+    if [[ $first ]]; then
+        _umount -i "$url" > /dev/null 2>&1
+        echo " done"
+    fi
+}
+
+# backup vault
+function _backup(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    local url backupath
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd/$1"
+    else
+        url="$1"
+    fi
+    url=${url//\/\//\/}
+    backupath=${url//\//-}
+    backupath=${backupath#-}
+    backupath=${backupath%-}
+    if [[ $1 == "" ]]; then
+        url="/"
+    fi
+    local first
+    local dest="$2"
+    local depth="$3"
+    local space="$4"
+    local echo_space="$5"
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    # Check for $url existence
+    if [[ "$url" == ".." ]]; then
+        debug "${echo_space}Error! '$url' doesn't exist or contains no secrets. Relative references like '..' are not supported"
+        return
+    fi
+    if [[ ! $dest ]]; then
+        if [[ $url != "/" ]]; then
+            dest="$(mktemp -d -p "$TMP" -t backup_vault_"$backupath"."$(date +%d-%m-%Y@%H:%M:%S)".XXXX)"
+            destfile="$TMP/backup_vault_$backupath.$(date +%d-%m-%Y@%H:%M:%S).tgz"
+        else
+            dest="$(mktemp -d -p "$TMP" -t backup_vault."$(date +%d-%m-%Y@%H:%M:%S)".XXXX)"
+            destfile="$TMP/backup_vault.$(date +%d-%m-%Y@%H:%M:%S).tgz"
+        fi
+    fi
+    debug "backup url=$url"
+    local old_http_code=$http_code
+    _cat "$url" > /dev/null
+    if [[ $http_code == "200" ]]; then
+        first="yes"
+        debug "backup: $url is NOT a folder"
+        mkdir -p "$(dirname "$dest/$url")"
+        echo -n "Backing up Vault to '$destfile'"
+        _cat "$url" | jq '.data' > "$dest/$url"
+    else
+        http_code=$old_http_code
+        _ls "-_disable_colors_-" "$url" > /dev/null
+        if [[ $http_code != "200" ]]; then
+            echo "'$url' does not exist"
+            return
+        fi
+        debug "backup: $url is a folder"
+        debug "${echo_space}backup: '$url', depth: $depth, dest: $dest, space: \"$space\""
+        # If no depth was passed then this iteration is the very first one, so depth=0
+        if [[ ! $depth ]]; then
+            depth=0
+            first="yes"
+            echo -n "Backing up Vault to '$destfile'"
+            if [[ $url != "/" ]]; then
+                mkdir -p "$dest/$url"
+            fi
+        # other wise we increment a depth as we go deeper in the structure
+        else
+            unset first
+            let depth++
+        fi
+        # if $url is /
+        #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
+        paths=$(_ls "-_disable_colors_-" "$url" | sed -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
+        debug "${echo_space}   depth: $depth => found: $paths"
+        for path in $paths; do
+            space=${space/+/ }
+            if [[ $path =~ /$ ]]; then
+                _backup "$url$path" "$dest" "$depth" "$space+ " "$echo_space   " &
+            else
+                mkdir -p "$dest/$url"
+                debug "${echo_space}   backup: $url$path => $dest/$url/$path"
+                _cat "$url/$path" | jq '.data' > "$dest/$url/$path"
+                echo -n "."
+            fi
+        done
+    fi
+    wait
+    if [[ $first ]]; then
+        cd "$dest" || return
+        debug "backup: $url => $destfile"
+        tar cfz "$destfile" ./* > /dev/null
+        rm -fr "$dest"
+        echo " done"
+    fi
+}
+
+# restore vault backup
+function _restore(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    local backup folder mount _url
+    backup="$1"
+    if [[ ! -r $backup ]]; then
+        echo "Error! Missing backup file"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    local first
+    local folder="$2"
+    local _url="$3"
+    local depth="$4"
+    local space="$5"
+    local echo_space="$6"
+    # If no depth was passed then this iteration is the very first one, so depth=0
+    if [[ ! $depth ]]; then
+        depth=0
+        first="yes"
+        echo -n "Restoring Vault backup from '$backup'"
+        folder="$(mktemp -d -p "$TMP" -t backup_vault-"$(date +%d-%m-%Y@%H:%M:%S)".XXXX)"
+        cd "$folder"
+        if ! tar xfz "$backup" > /dev/null 2>&1; then
+            echo "Error while extracting backup '$backup'"
+            rm -fr "$folder"
+            return
+        fi
+    # other wise we increment a depth as we go deeper in the structure
+    else
+        unset first
+        let depth++
+        cd "$folder"
+    fi
+    debug "${echo_space}restore: '$backup', folder: $folder, _url: $_url depth: $depth, space: \"$space\""
+    paths=$(find . -maxdepth 1 -not -iname "." | tr -t '\n' ' ')
+
+    debug "${echo_space}   depth: $depth => found: $paths"
+    for path in $paths; do
+        path=${path/.\/}
+        space=${space/+/ }
+        if [[ -d $path ]]; then
+            mount=$(echo "$_url" | sed -e "s/^\(\/[^/]\+\).*$/\1/")
+            if [[ $mount ]]; then
+                debug "${echo_space}   mount: $mount"
+                _mount -i "$mount" > /dev/null 2>&1
+            fi
+            _restore "$backup" "$PWD/$path" "$_url/$path" "$depth" "$space+ " "$echo_space   " &
+        else
+            debug "${echo_space}   put $_url/$path $(tr -d '\n' < "$PWD/$path" | tr -s ' ')"
+            _put "$_url/$path" "$(tr -d '\n' < "$PWD/$path" | tr -s ' ')"
+            echo -n "."
+        fi
+    done
+    wait
+    if [[ $first ]]; then
+        echo " done"
+    else
+        cd ..
+    fi
+}
+
+# cat function
+function _cat(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    if [[ "$1" == "-i" ]]; then
+        local ignore_http_code="true"
+        shift
+    fi
+    if [[ "$1" == "-_disable_-f_-" ]]; then
+        disable_f="$1"
+        shift
+    fi
+    local url="$1"
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd$1"
+    fi
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    debug "cat:  url=$url"
+    local arg="$2"
+    if [[ $ignore_http_code ]]; then
+        _curl "$disable_f" -i "$url" "$arg"
+    else
+        _curl "$disable_f" "$url" "$arg"
+    fi
+}
+
+
+# addsecret function
+function _addsecret(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    local url="$1"
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd$url"
+    fi
+    local data="$2"
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    if [[ ! $data ]]; then
+        echo "Error! Missing secret data"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    secret=$(_cat "$url" | jq ".data" | tr -d '\n')
+    data="${secret/\}},${data/\{}"
+    debug "addsecret: url=$url $secret => $data"
+    _put "$url" "$data"
+}
+
+# delsecret function
+function _delsecret(){
+    funcname="${FUNCNAME[0]}"
+    local url="$1"
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd$url"
+    fi
+    local key="$2"
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    if [[ ! $key ]]; then
+        echo "Error! Missing key"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    secret=$(_cat "$url" | jq ".data|del(.\"$key\")" | tr -d '\n')
+    debug "delsecret: url=$url $key"
+    _put "$url" "$secret"
+}
+
+# cp function
+function _cp(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    local url="$1"
+    local dest="$2"
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd$url"
+    fi
+    if [[ ! $dest =~ ^/ ]]; then
+        dest="$current_pwd$dest"
+    fi
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    if [[ ! $dest ]]; then
+        echo "Error! Missing destination"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    debug "cp: url=$url dest=$dest"
+    secret=$(_cat "$url" | jq ".data" )
+    debug "$secret"
+    _put "$dest" "$secret"
+}
+
+# mv function
+function _mv(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    local url="$1"
+    local dest="$2"
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd$url"
+    fi
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    if [[ ! $dest =~ ^/ ]]; then
+        dest="$current_pwd$dest"
+    fi
+    if [[ ! $dest ]]; then
+        echo "Error! Missing destination"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    debug "mv: url=$url dest=$dest"
+    _cp "$url" "$dest" && _rm "$url"
+}
+
+# rm function
+function _rm(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    local url="$1"
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd$1"
+    fi
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    debug "rm: url=$url"
+    _curl "$url" "" "DELETE"
+}
+
+# put function
+function _put(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    local url="$1"
+    if [[ ! $url =~ ^/ ]]; then
+        url="$current_pwd$1"
+    fi
+    debug "put: url=$url"
+    debug "data: data=$2"
+    data=$(mktemp -p "$TMP" -t .put.XXXX)
+    if command -v envsubst >/dev/null 2>&1; then
+        printf '%s\n' "$2" | envsubst > "$data"
+    else
+        printf '%s\n' "$2" > "$data"
+    fi
+    if [[ ! $url ]]; then
+        echo "Error! Missing secret path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    if [[ ! $data ]]; then
+        echo "Error! Missing secret data"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    url="${url/\/\//\/}"
+    debug "$data"
+    debug "uploading '$data' to '$url'"
+    _curl "$url" "$data" "POST"
+}
+
+# validate and show principals and keytab info
+function _krbinfo(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    local url="$1"
+    local tmp tmp2 _keys
+    # Get principals and store them in ${princs[@]}
+    declare -A princs
+    if [[ ! $url ]]; then
+        echo "Error! Missing keytab path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    tmp=$(mktemp -p "$TMP" -t .krbinfo.XXXX)
+    _cat "$url" > "$tmp"
+    eval "$(jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" -r < "$tmp" | sed -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
+    backIFS=$IFS
+    IFS=$' '
+    _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
+    for _key in $_keys ; do
+        local value=${princs[$_key]}
+        _key="\"${_key}_keytab\""
+        tmp2=$(mktemp -p "$TMP" -t .krbinfo.XXXX)
+        jq ".data .${_key}" -r < "$tmp" | base64 -d > "$tmp2"
+        echo -en "\n${BOLD}principal$NONE: $CYAN${value//\"/}$NONE"
+        if ! klist -kt "$tmp2" | grep -v "Keytab name:" | grep -q "$value"; then
+            echo -e " ${RED}NOT FOUND${NONE} ${BOLD}in keytab!${NONE}"
+        else
+            echo
+        fi
+        klist -kte "$tmp2" | grep -v "Keytab name:"
+        rm -f "$tmp2"
+    done
+    rm -f "$tmp"
+    IFS=$backIFS
+}
+
+# download keytab to /tmp
+function _getkrb(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    local url="$1"
+    local tmp tmp2 _keys
+    # Get principals and store them in ${princs[@]}
+    declare -A princs
+    if [[ ! $url ]]; then
+        echo "Error! Missing keytab path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    tmp=$(mktemp -p "$TMP" -t .getkrb.XXXX)
+    _cat "$url" > "$tmp"
+    eval "$(jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" -r < "$tmp" | sed -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
+    backIFS=$IFS
+    IFS=$' '
+    _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
+    echo "Exporting keytabs..."
+    for _key in $_keys ; do
+        value=${princs[$_key]}
+        value=${value//\"/}
+        _key="\"${_key}_keytab\""
+        tmp2=$(mktemp -p "$TMP" -t .getkrb.XXXX)
+        jq ".data .${_key}" -r < "$tmp" | base64 -d > "$tmp2"
+        echo "  - ${value} exported to '$TMP/${value//\//_}.keytab'"
+        cp "$tmp2" "$TMP/${value//\//_}.keytab"
+        rm -f "$tmp2"
+    done
+    echo "done."
+    rm -f "$tmp"
+    IFS=$backIFS
+}
+
+# validate that crt and key match and show certificate info
+function _certinfo(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    local url="$1"
+    local _CRT _KEY
+    if [[ ! $url ]]; then
+        echo "Error! Missing cert path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    local _certs _cert shacrt _keys _key shakey
+    tmp=$(mktemp -p "$TMP" -t .certinfo.XXXX)
+    _cat "$url" > "$tmp"
+    backIFS=$IFS
+    IFS=$' '
+    _certs=( $(jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
+    _keys=( $(jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
+    for ((n=0;n<${#_certs[@]};n++)); do
+        _cert=${_certs[$n]}
+        _key=${_keys[$n]}
+        debug "jq .data .$_cert -r < $tmp"
+        _CRT=$(jq ".data .$_cert" -r < "$tmp" | \
+                      sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
+                          -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
+                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
+        debug "jq .data .$_key -r < $tmp"
+        _KEY=$(jq ".data .$_key" -r < "$tmp" | \
+                      sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
+                          -e 's/-----BEGIN PRIVATE KEY-----/-----BEGIN PRIVATE KEY-----\n/g' \
+                          -e 's/-----END PRIVATE KEY-----/\n-----END PRIVATE KEY-----/g' \
+                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
+        shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
+        shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
+        echo -en "\n${BOLD}certificate${NONE}: $CYAN${_cert//\"/}${NONE}"
+        if [[ "$shacrt" != "$shakey" ]]; then
+            echo -e " ${RED}DOESN'T MATCH${NONE} ${BOLD}${_key//\"/}${NONE}"
+        else
+            echo
+        fi
+        echo -e "$_CRT" | openssl x509 -text -noout
+    done
+    rm -f "$tmp"
+    IFS=$backIFS
+}
+
+# print principal of kerberos secret
+function _getprinc(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    local url="$1"
+    local tmp tmp2 _keys
+    # Get principals and store them in ${princs[@]}
+    declare -A princs
+    if [[ ! $url ]]; then
+        echo "Error! Missing keytab path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    tmp=$(mktemp -p "$TMP" -t .krbinfo.XXXX)
+    _cat "$url" > "$tmp"
+    eval "$(jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" -r < "$tmp" | sed -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
+    backIFS=$IFS
+    IFS=$' '
+    _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
+    for _key in $_keys ; do
+        local value=${princs[$_key]}
+        _key="\"${_key}_keytab\""
+        tmp2=$(mktemp -p "$TMP" -t .krbinfo.XXXX)
+        jq ".data .${_key}" -r < "$tmp" | base64 -d > "$tmp2"
+        echo -en "${value}"
+        if ! klist -kt "$tmp2" | grep -v "Keytab name:" | grep -q "$value"; then
+            echo -e " ${RED}NOT FOUND${NONE} ${BOLD}in keytab!${NONE}"
+        else
+            echo
+        fi
+        rm -f "$tmp2"
+    done | sort -u
+    rm -f "$tmp"
+    IFS=$backIFS
+}
+
+# print CN and SAN of certificate secret
+function _getsan(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    local url="$1"
+    local _CRT _KEY
+    if [[ ! $url ]]; then
+        echo "Error! Missing cert path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    local _certs _cert shacrt _keys _key shakey
+    tmp=$(mktemp -p "$TMP" -t .certinfo.XXXX)
+    _cat "$url" > "$tmp"
+    backIFS=$IFS
+    IFS=$' '
+    _certs=( $(jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
+    _keys=( $(jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
+    for ((n=0;n<${#_certs[@]};n++)); do
+        _cert=${_certs[$n]}
+        _key=${_keys[$n]}
+        debug "jq .data .$_cert -r < $tmp"
+        _CRT=$(jq ".data .$_cert" -r < "$tmp" | \
+                      sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
+                          -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
+                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
+        debug "jq .data .$_key -r < $tmp"
+        _KEY=$(jq ".data .$_key" -r < "$tmp" | \
+                      sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
+                          -e 's/-----BEGIN PRIVATE KEY-----/-----BEGIN PRIVATE KEY-----\n/g' \
+                          -e 's/-----END PRIVATE KEY-----/\n-----END PRIVATE KEY-----/g' \
+                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
+        shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
+        shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
+        echo -en "CN:"
+        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject:.*CN.*=[[:space:]]*" | sed -e "s/^.*CN.*=[[:space:]]*//" | tr -d '\n'
+        echo -en ", "
+        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject Alternative Name" -A1 | tail -1 | sed -e "s/^\s*//"
+    done
+    rm -f "$tmp"
+    IFS=$backIFS
+}
+
+# recover krb.list from certificates path
+ function _getkrblist(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    local url="$1"
+    local tmp tmp2 _keys _princ
+    # Get principals and store them in ${princs[@]}
+    declare -A princs
+    if [[ ! $url ]]; then
+        echo "Error! Missing keytab path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    tmp=$(mktemp -p "$TMP" -t .krbinfo.XXXX)
+    _cat "$url" > "$tmp"
+    eval "$(jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" -r < "$tmp" | sed -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
+    backIFS=$IFS
+    IFS=$' '
+    _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
+    for _key in $_keys ; do
+        local value=${princs[$_key]}
+        _key="\"${_key}_keytab\""
+        tmp2=$(mktemp -p "$TMP" -t .krbinfo.XXXX)
+        jq ".data .${_key}" -r < "$tmp" | base64 -d > "$tmp2"
+        value="${value//@*/}"
+        if [[ $value =~ / ]]; then
+            _princ="${value//\/*/}"
+            _domain="${value//*\//}"
+        else
+            _princ="${value//\/*/}"
+            _domain=""
+        fi
+        echo "$_princ | $_domain | $url"
+        rm -f "$tmp2"
+    done | sort -u
+    rm -f "$tmp"
+    IFS=$backIFS
+ }
+
+# recover certs.list from certificates path
+function _getcertlist(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    local url="$1"
+    local _CRT _KEY _client _server
+    if [[ ! $url ]]; then
+        echo "Error! Missing cert path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    local _certs _cert shacrt _keys _key shakey
+    tmp=$(mktemp -p "$TMP" -t .certinfo.XXXX)
+    _cat "$url" > "$tmp"
+    backIFS=$IFS
+    IFS=$' '
+    _certs=( $(jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
+    _keys=( $(jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
+    for ((n=0;n<${#_certs[@]};n++)); do
+        _cert=${_certs[$n]}
+        _key=${_keys[$n]}
+        debug "jq .data .$_cert -r < $tmp"
+        _CRT=$(jq ".data .$_cert" -r < "$tmp" | \
+                      sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
+                          -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
+                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
+        debug "jq .data .$_key -r < $tmp"
+        _KEY=$(jq ".data .$_key" -r < "$tmp" | \
+                      sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
+                          -e 's/-----BEGIN PRIVATE KEY-----/-----BEGIN PRIVATE KEY-----\n/g' \
+                          -e 's/-----END PRIVATE KEY-----/\n-----END PRIVATE KEY-----/g' \
+                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
+        shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
+        shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
+        if echo -e "$_CRT" | openssl x509 -text -noout | grep -q "TLS Web Client Authentication"; then
+            _client=yes
+        fi
+        if echo -e "$_CRT" | openssl x509 -text -noout | grep -q "TLS Web Server Authentication"; then
+            _server=yes
+        fi
+        _cert=${_cert//\"/}
+        echo -en "${_cert%%_crt}"
+        echo -en " | \""
+
+        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject Alternative Name" -A1 | tail -1 | sed -e "s/^\s*//" | tr -d ' ' | tr -d '\n' | tr -t ',' '\n' | sort -u | tr -t '\n' ',' | sed -e "s/,$//"
+        echo -en "\" | "
+        if [[ $_client ]] && [[ $_server ]]; then
+            echo -en "client-server"
+        elif [[ $_server ]]; then
+            echo -en "server"
+        elif [[ $_client ]]; then
+            echo -en "client"
+        fi
+        echo -e " | $url"
+        unset _client _server
+    done
+    rm -f "$tmp"
+    IFS=$backIFS
+}
+
+# returns expiration date for specified certificates secret
+function _getcertexpiration(){
+    local url funcname date expiration_date expiration_date_human warning_date critical_date diff omit_ok omit_warn omit_crit _CRT _KEY _client _server
+    funcname="${FUNCNAME[0]}"
+    # If -o specified ok certs are omitted
+    case $1 in
+        -oo)    omit_ok="yes"   ; shift ;;
+        -ow)    omit_warn="yes" ; shift ;;
+        -oc)    omit_crit="yes" ; shift ;;
+        -*)     shift                   ;;
+    esac
+    if [[ ! $1 =~ ^/ ]]; then
+        url="$current_pwd$1"
+    else
+        url=${1//\/\//\/}
+    fi
+    url=${url//\/\//\/}
+    if [[ ! $url ]]; then
+        echo "Error! Missing cert path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    shift
+    # If -o specified ok certs are omitted
+    case $1 in
+        -oo)    omit_ok="yes"   ;;
+        -ow)    omit_warn="yes" ;;
+        -oc)    omit_crit="yes" ;;
+        -*)     shift           ;;
+    esac
+
+    if [[ ! $url ]]; then
+        echo "Error! Missing cert path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    debug "${funcname//_/}: omit_ok: $omit_ok, omit_warn: $omit_warn, omit_crit: $omit_crit"
+    local _certs _cert shacrt _keys _key shakey
+    tmp=$(mktemp -p "$TMP" -t .certinfo.XXXX)
+    _cat "$url" > "$tmp"
+    backIFS=$IFS
+    IFS=$' '
+    _certs=( $(jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
+    _keys=( $(jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
+    for ((n=0;n<${#_certs[@]};n++)); do
+        _cert=${_certs[$n]}
+        _key=${_keys[$n]}
+        debug "jq .data .$_cert -r < $tmp"
+        _CRT=$(jq ".data .$_cert" -r < "$tmp" | \
+                      sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
+                          -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
+                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
+        debug "jq .data .$_key -r < $tmp"
+        _KEY=$(jq ".data .$_key" -r < "$tmp" | \
+                      sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
+                          -e 's/-----BEGIN PRIVATE KEY-----/-----BEGIN PRIVATE KEY-----\n/g' \
+                          -e 's/-----END PRIVATE KEY-----/\n-----END PRIVATE KEY-----/g' \
+                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
+        shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
+        shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
+
+        expiration_date_human=$(date -R -d "$(echo -e "$_CRT" | openssl x509 -noout -enddate | cut -d '=' -f2)")
+        _cert=${_cert//\"/}
+        _cert="${_cert%%_crt}:"
+        warning_date=$(date -d "$expiration_date_human -$cert_warning_threshold days" +%s)
+        critical_date=$(date -d "$expiration_date_human -$cert_critical_threshold days" +%s)
+        expiration_date=$(date -d"$expiration_date_human" +%s)
+        date=$(date +%s)
+        diff=$(echo "($expiration_date-$date)/(60*60*24)" | bc)
+        debug "${funcname//_/}: omit_ok: $omit_ok, omit_warn: $omit_warn, omit_crit: $omit_crit"
+        if [[ "$date" -ge "$critical_date" || "$diff" -lt 0 ]]; then
+            if [[ ! $omit_crit ]]; then
+                echo -e "$_cert ($url)\n   $RED$diff$NONE days to renew certificate ($expiration_date_human)"
+            fi
+        elif [[ "$date" -ge "$warning_date" ]]; then
+            if [[ ! $omit_warn ]]; then
+                echo -e "$_cert ($url)\n   $YELLOW$diff$NONE days to renew certificate ($expiration_date_human)"
+            fi
+        elif [[ ! $omit_ok ]]; then
+            echo -e "$_cert ($url)\n   $GREEN$diff$NONE days to renew certificate ($expiration_date_human)"
+        fi
+        unset _client _server date expiration_date expiration_date_human
+    done
+    rm -f "$tmp"
+    IFS=$backIFS
+
+}
+
+# recovers krb.list with all keytabs found under the specified folder
+function _getallkrblist(){
+    local funcname IFS backIFS
+    funcname="${FUNCNAME[0]}"
+    local url
+    if [[ ! $1 =~ ^/ ]]; then
+        url="$current_pwd$1"
+    else
+        url=${1//\/\//\/}
+    fi
+    if [[ ! $url ]]; then
+        echo "Error! Missing keytabs path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    local depth="$2"
+    local space="$3"
+    local echo_space="$4"
+    # If no "$2" was passed then this iteration is the very first one, so depth=0
+    if [[ ! $depth ]]; then
+        depth=0
+    # other wise we increment a depth as we go deeper in the structure
+    else
+        let depth++
+    fi
+    backIFS=$IFS
+    IFS=$' '
+    debug "${echo_space}_getallkrblist: '$url', depth: $depth, space: \"$space\""
+    # if $url is /
+    paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
+    debug "${echo_space}_getallkrblist: $paths"
+    for path in $paths; do
+        debug "${echo_space}   depth: $depth => found: $paths"
+        space=${space/+/ }
+        if [[ $path =~ /$ ]]; then
+            _getallkrblist "$url/$path" "$depth" "$space+ " "$echo_space   "
+        else
+            _getkrblist "$url/$path"
+        fi
+    done
+    IFS=$backIFS
+}
+
+# recovers cert.list with all certificates found under the specified folder
+function _getallcertlist(){
+    local funcname IFS backIFS
+    funcname="${FUNCNAME[0]}"
+    local url
+    if [[ ! $1 =~ ^/ ]]; then
+        url="$current_pwd$1"
+    else
+        url=${1//\/\//\/}
+    fi
+    if [[ $url =~ /$ ]]; then
+        url=${url: -${#url}:$((${#url}-1))}
+    fi
+    if [[ ! $url ]]; then
+        echo "Error! Missing certs path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    local depth="$2"
+    local space="$3"
+    local echo_space="$4"
+    # If no "$2" was passed then this iteration is the very first one, so depth=0
+    if [[ ! $depth ]]; then
+        depth=0
+    # other wise we increment a depth as we go deeper in the structure
+    else
+        let depth++
+    fi
+    backIFS=$IFS
+    IFS=$' '
+    debug "${echo_space}_getallcertlist: '$url', depth: $depth, space: \"$space\""
+    # if $url is /
+    paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
+    debug "${echo_space}_getallcertlist: $paths"
+    for path in $paths; do
+        debug "${echo_space}   depth: $depth => found: $paths"
+        space=${space/+/ }
+        if [[ $path =~ /$ ]]; then
+            _getallcertlist "$url/$path" "$depth" "$space+ " "$echo_space   "
+        else
+            _getcertlist "$url/$path"
+        fi
+    done
+    IFS=$backIFS
+}
+
+
+# shows all certificate's expiration dates
+function _getallcertexpiration(){
+    local url funcname arg IFS backIFS
+    funcname="${FUNCNAME[0]}"
+    if [[ $1 =~ ^-o[owc]+$ ]]; then
+        arg="$1"
+        shift
+    elif [[ $1 =~ ^- ]]; then
+        shift
+    elif [[ ! $1 ]]; then
+        shift
+    fi
+    if [[ ! $1 =~ ^/ ]]; then
+        url="$current_pwd$1"
+    else
+        url=${1//\/\//\/}
+    fi
+    url=${url//\/\//\/}
+    url=${url%%\/}
+    if [[ $2 =~ ^-o[owc]+$ ]]; then
+        arg="$2"
+        shift
+    fi
+    debug "${echo_space}$funcname: URL=$url, args=$arg"
+    if [[ ! $url ]]; then
+        echo "Error! Missing certs path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    local depth="$2"
+    local space="$3"
+    local echo_space="$4"
+    # If no "$2" was passed then this iteration is the very first one, so depth=0
+    if [[ ! $depth ]]; then
+        depth=0
+    # other wise we increment a depth as we go deeper in the structure
+    else
+        let depth++
+    fi
+    backIFS=$IFS
+    IFS=$' '
+    debug "${echo_space}_$: '$url', depth: $depth, space: \"$space\""
+    # if $url is /
+    paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
+    debug "${echo_space}$funcname: $paths"
+    for path in $paths; do
+        path=${path//\/\//\/}
+        debug "${echo_space}   depth: $depth => found: $paths"
+        space=${space/+/ }
+        if [[ $path =~ /$ ]]; then
+            debug "$funcname: _getallcertexpiration $arg $url/$path $depth"
+            _getallcertexpiration "$arg" "$url/$path" "$depth" "$space+ " "$echo_space   "
+        else
+            debug "$funcname: _getcertexpiration $url/$path $arg"
+            _getcertexpiration "$url/$path" "$arg"
+        fi
+    done
+    IFS=$backIFS
+}
+
+# download certificates crt and key
+function _getcert(){
+    local funcname
+    funcname="${FUNCNAME[0]}"
+    local url="$1"
+    local _CRT _KEY
+    if [[ ! $url ]]; then
+        echo "Error! Missing cert path"
+        commands_help "${funcname//_/}"
+        return
+    fi
+    local _certs _cert _keys _key
+    tmp=$(mktemp -p "$TMP" -t .getcert.XXXX)
+    _cat "$url" > "$tmp"
+    backIFS=$IFS
+    IFS=$' '
+    _certs=( $(jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
+    _keys=( $(jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
+    echo "Exporting certificates..."
+    for ((n=0;n<${#_certs[@]};n++)); do
+        _cert=${_certs[$n]}
+        _key=${_keys[$n]}
+        debug "jq .data .$_cert -r < $tmp"
+        _CRT=$(jq ".data .$_cert" -r < "$tmp" | \
+                      sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
+                          -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
+                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
+        debug "jq .data .$_key -r < $tmp"
+        _KEY=$(jq ".data .$_key" -r < "$tmp" | \
+                      sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
+                          -e 's/-----BEGIN PRIVATE KEY-----/-----BEGIN PRIVATE KEY-----\n/g' \
+                          -e 's/-----END PRIVATE KEY-----/\n-----END PRIVATE KEY-----/g' \
+                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
+        _cert=${_cert//\"/}
+        _key=${_key//\"/}
+        echo -e "  - ${_cert} exported to '$TMP/${_cert//_crt/}.crt'"
+        echo -e "$_CRT" > "$TMP/${_cert//_crt/}.crt"
+        echo -e "  - ${_key} exported to '$TMP/${_key//_key/}.key'"
+        echo -e "$_KEY" > "$TMP/${_key//_key/}.key"
+    done
+    IFS=$backIFS
+    rm -f "$tmp"
+    echo "done."
+}
+
+# main function
+function main(){
+    # First of all: check command dependencies
+    check_dependency "$DEPENDENCIES"
+    local msg info
+
+    # Return vcli version and quit
+    if [[ "$*" == "--version" ]]; then
+        msg="vcli v$VERSION"
+        if info=$(new_version 2>&1); then
+            msg+=" (update available)\n$info"
+        fi
+        echo -e "$msg"
+        exit
+    fi
+
+    local tmpmsg
+    protocol="https"
+    while getopts "v:p:t:hin" opt; do
+        case $opt in
+            v) vault_host=$OPTARG ;;       ### GLOBAL VARIABLES ###
+            p) vault_port=$OPTARG ;;       ### GLOBAL VARIABLES ###
+            t) vault_token=$OPTARG ;;      ### GLOBAL VARIABLES ###
+            n) disable_prompt=yes ;;
+            i) protocol="http";;
+            h) help; exit 0 ;;
+            *) help; exit 2 ;;
+        esac
+    done
+
+    # check for new versions
+    if new_version && [[ ! $disable_prompt ]]; then sleep 2 ; echo; fi
+
+    # VAULT_ADDR overrides VAULT_HOST / VAULT_PORT when configured.
+    if [[ -n ${VAULT_ADDR:-} ]]; then
+        local address="${VAULT_ADDR%/}"
+        if [[ $address =~ ^(https?)://(\[[^]]+\]|[^:/]+)(:([0-9]+))?$ ]]; then
+            protocol="${BASH_REMATCH[1]}"
+            vault_host="${BASH_REMATCH[2]}"
+            vault_port="${BASH_REMATCH[4]:-8200}"
+        else
+            echo "Invalid VAULT_ADDR: $VAULT_ADDR" >&2
+            exit 1
+        fi
+    fi
+    vault_port="${vault_port:-${VAULT_PORT:-8200}}"
+    vault_host="${vault_host:-${VAULT_HOST:-}}"
+    vault_token="${vault_token:-${VAULT_TOKEN:-}}"
+
+    # Check for correct arguments
+    check_arg "$vault_host" "Vault host"
+    check_arg "$vault_token" "Vault token"
+
+    # Check connectivity
+    check_connectivity
+
+    # BEGIN
+    # initialize variables
+    len=0
+    pos=1
+    history_index=-1
+
+    # Never write or delete a secret merely to start vcli.
+    # Vault permissions are checked when individual commands are executed.
+
+    # load vcli history
+    load_history
+
+    # Show vault's health
+    [[ ! $disable_prompt ]] && _cat "-_disable_-f_-" sys/health
+
+    # print prompt
+    prompt
+
+    # Disable Ctrl+c
+    trap : INT
+
+    # Begin iteration
+    IFS=
+    while true; do
+        lastkey=$_key
+        # read key and process
+        if ! read -r -sN1 _key; then clean_n_exit; fi
+        case $_key in
+            $'\x1b')
+                read -rsn1 -t 0.001 _key # flush read
+                if [[ $_key == "[" ]]; then # CURSORS & SPECIAL CHARS
+                    read -rsn1 -t 0.001 _key # flush read again
+                    case $_key in
+                        $'\x41') # up cursor: older history
+                            get_prev_cmd
+                        ;;
+                        $'\x42') # down cursor: newer history
+                            get_next_cmd
+                        ;;
+                        $'\x43') # right cursor
+                            if [[ $pos -lt $((len+1)) ]]; then # if anything was typed allow to move cursor left
+                                tput cuf 1 # move cursor right
+                                let pos+=1 # increment cursor position
+                                debug "pos: $pos right"
+                            fi
+                        ;;
+                        $'\x44') # left cursor
+                            if [[ $pos -gt 1 ]]; then # if anything was typed and position>0 allow to move cursor left
+                                tput cub 1 # move cursor left
+                                let pos-=1 # decrement cursor position
+                                debug "pos: $pos left"
+                            fi
+                        ;;
+                        $'\x46') # END
+                                debug "END pressed"
+                                [[ $len != 0 ]] && tput cuf $((len-pos+1)) # move cursor right to the end
+                                let pos=len+1
+                        ;;
+                        $'\x48') # HOME
+                                debug "HOME pressed"
+                                [[ $len != 0 ]] && tput cub $((pos-1)) # move cursor left to the beginning
+                                let pos=1
+                        ;;
+                    esac
+                fi
+                unset ENDHIST
+            ;;
+            $'\x0a') # ENTER
+                unset ENDHIST
+                is_command="true"
+                debug "current_pwd=$current_pwd"
+                [[ ! $disable_prompt ]] && echo
+                if [[ $cmd ]] && [[ ! "$cmd" =~ ^[[:space:]]+$ ]]; then
+                    cmd=$(echo "$cmd" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')
+                    run_cmd "$cmd"
+                fi
+            ;;
+            $'\x7f') # BACKSPACE
+                unset ENDHIST
+                if [[ $len != 0 ]] && [[ $pos -gt 1 ]]; then # if anything was typed and position>0 allow to delete
+                    echo -en "\b \b"
+                    let len-=1
+                    let pos-=1
+                    tmpmsg="${#cmd}: \"$cmd\""
+                    # remove $_key in $((pos-1))
+                    cmd="${cmd:0:$((pos-1))}${cmd:$((pos)):${#cmd}}"
+                    tput el # clean to the end of the line
+                    restcmd="${cmd:$((pos-1)):${#cmd}}"
+                    echo -n "$restcmd"
+                    # reposition cursor after backspace only if we moved chars
+                    if [[ ${#restcmd} != 0 ]]; then tput cub ${#restcmd} ; fi
+                    debug "$tmpmsg => ${#cmd}: \"$cmd\""
+                    debug "pos: $pos, len: $len"
+                fi
+            ;;
+            $'\x7e') # ERASE
+                unset ENDHIST
+                if [[ $len != 0 ]] && [[ $pos -lt $((len+1)) ]]; then # if anything was typed and position>0 allow to delete
+                    tput ech 1 # erase 1 character at $pos
+                    let len-=1
+                    tmpmsg="${#cmd}: \"$cmd\""
+                    cmd=${cmd:0:$((pos-1))}${cmd:${pos}:$((${#cmd}-1))}
+                    tput el # clean to the end of the line
+                    #cmd=${cmd::-1} # delete last character
+                    restcmd="${cmd:$((pos-1)):$((${#cmd}))}"
+                    echo -n "$restcmd"
+                    # reposition cursor after backspace only if we moved chars
+                    if [[ ${#restcmd} != 0 ]]; then tput cub ${#restcmd} ; fi
+                    debug "$tmpmsg => ${#cmd}: \"$cmd\""
+                    debug "pos: $pos, len: $len"
+                fi
+            ;;
+            $'\x09') # tab completions
+                completion "$cmd"
+                exit_status=$?
+
+                if [[ $exit_status == 0 ]]; then
+                    # move the cursor to the beginning to print the command selected
+                    [[ $pos != 1 ]] && tput cub $((pos-1)) # move cursor left to the beginning
+
+                    # print the command found in history
+                    len=0
+                    pos=1
+                    tput el # clean to the end of the line
+                    echo -n "$cmd"
+                    tput el # clean to the end of the line
+                    let len=${#cmd}
+                    let pos=len+1
+                else
+                    # print the command found in history
+                    len=0
+                    pos=1
+                    tput el # clean to the end of the line
+                    echo -n "$cmd"
+                    tput el # clean to the end of the line
+                    let len=${#cmd}
+                    let pos=len+1
+                fi
+            ;;
+            $'\x12') # Ctrl+r
+                if [[ ! $cmd ]]; then
+                    # clean line
+                    echo -e "\nvcli hint: hit Ctrl+r when typing command to search the vcli history"
+                    print_history
+                    is_command="true"
+                else
+                    rotate_found_cmds "$cmd"
+                    debug "search_cmd: $search_cmd, \$SEARCHIST: $SEARCHIST"
+
+
+                    # move the cursor to the beginning to print the command selected
+                    [[ $pos != 1 ]] && tput cub $((pos-1)) # move cursor left to the beginning
+
+                    # print the command found in history
+                    echo -n "$cmd"
+
+                    tput el # clean to the end of the line
+                    let pos=$((${#cmd}+1))
+                    let len=${#cmd}
+                fi
+            ;;
+            $'\x04') # Ctrl+d behaviour is exit
+                clean_n_exit
+            ;;
+            $'')
+                clean_n_exit
+            ;;
+            $'\x20'|*) # NORMAL CHARS
+                if [[ ! $disable_prompt ]]; then
+                    tput ich 1 # insert chars rather than overwriting them
+                    echo -n "$_key" #| hexdump -C
+                fi
+                let len+=1
+                let pos+=1
+                tmpmsg="${#cmd}: \"$cmd\""
+                # insert $_key in $pos within $cmd string
+                cmd="${cmd:0:$((pos-2))}$_key${cmd:$((pos-2)):${#cmd}}"
+                debug " => ${#cmd}: \"$cmd\""
+                debug "pos: $pos, len: $len"
+            ;;
+        esac
+        # Exit history search mode
+        if [[ "$_key" != "$lastkey" ]] && [[ "$_key" != $'\x12' ]]; then
+            debug "exiting history search mode"
+            unset SEARCHIST search_cmd tmp_history
+        fi
+        [[ $DEBUG_HEXDUMP == "yes" ]] && debug "\nhexdump: \n $(echo -n "$_key" | hexdump -C)"
+        # print prompt if commadn was run
+        if [[ $is_command ]]; then prompt ; unset is_command cmd pos len ; history_index=-1 ; pos=1; fi
+    done < /dev/stdin
+}
+
+main "$@"
