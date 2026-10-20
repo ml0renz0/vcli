@@ -762,13 +762,13 @@ function run_cmd(){
             showrole)               _showrole "$arg1" ;;
             lspol)                  _lspol ;;
             showpol)                _showpol "$arg1" ;;
-            tree)                   backIFS=$IFS; IFS=$' ' ; _tree "$arg1" ; IFS=$backIFS;;
-            find)                   backIFS=$IFS; IFS=$' ' ; _find "$arg1" "$arg2 $arg3" ; IFS=$backIFS;;
-            replace)                backIFS=$IFS; IFS=$' ' ; _replace "$arg1" "$arg2 $arg3" ; IFS=$backIFS;;
-            cptree)                 backIFS=$IFS; IFS=$' ' ; _cptree "$arg1" "$arg2" ; IFS=$backIFS;;
-            rmtree)                 backIFS=$IFS; IFS=$' ' ; _rmtree "$arg1" "$arg2"; IFS=$backIFS;;
-            backup)                 backIFS=$IFS; IFS=$' ' ; _backup "$arg1" ; IFS=$backIFS;;
-            restore)                backIFS=$IFS; IFS=$' ' ; _restore "$arg1" ; IFS=$backIFS;;
+            tree)                   backIFS=$IFS; IFS=$' ' ; _tree "$arg1"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
+            find)                   backIFS=$IFS; IFS=$' ' ; _find "$arg1" "$arg2 $arg3"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
+            replace)                backIFS=$IFS; IFS=$' ' ; _replace "$arg1" "$arg2 $arg3"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
+            cptree)                 backIFS=$IFS; IFS=$' ' ; _cptree "$arg1" "$arg2"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
+            rmtree)                 backIFS=$IFS; IFS=$' ' ; _rmtree "$arg1" "$arg2" || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
+            backup)                 backIFS=$IFS; IFS=$' ' ; _backup "$arg1"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
+            restore)                backIFS=$IFS; IFS=$' ' ; _restore "$arg1"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
             cat)                    _cat "$arg1" ;;
             put)                    _put "$arg1" "$arg2 $arg3" ;;
             addsecret)              _addsecret "$arg1" "$arg2 $arg3" ;;
@@ -841,6 +841,7 @@ function _mount(){
         else
             _curl "$url" "$data" "POST"
         fi
+        [[ ${http_code:-} == 2* ]] || return 1
         echo "mounted '$url'"
     fi
 }
