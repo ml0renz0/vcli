@@ -754,6 +754,7 @@ function run_cmd(){
             commands_help "$cmd"
             return 1
         fi
+        local command_status=0
         case $cmd in
             cd)                     _cd "$arg1" ;;
             ls)                     _ls "$arg1" ;;
@@ -806,9 +807,11 @@ function run_cmd(){
             \#*)                    return;; # ignore commented lines
             *)                      commands_help "$cmd" ; return 1 ;;
         esac
+        command_status=$?
         debug "run_cmd: $cmd $arg1 $arg2"
         debug "run_cmd: http_code=$http_code"
         add_cmd "$cmd $arg1 $arg2 $arg3"
+        if (( command_status != 0 )); then return "$command_status"; fi
     done< <(echo "$fullcmd")
 }
 
@@ -1190,12 +1193,26 @@ function _restore(){
             echo "Invalid archive path: $entry" >&2; return 1;
         }
     done <<< "$listing"
+    # Full preflight before any write: reject duplicate paths and non-object JSON.
+    local -A seen_entries=()
+    while IFS= read -r entry; do
+        [[ -n $entry ]] || continue
+        relative="${entry#./}"
+        [[ -n $relative && $relative != . && $relative != */ ]] || continue
+        if [[ -v seen_entries["$relative"] ]]; then
+            echo "Duplicate archive member: $relative" >&2; return 1
+        fi
+        seen_entries["$relative"]=1
+        payload=$(tar -xOzf "$archive" "$entry") || return 1
+        jq -e 'type == "object"' <<< "$payload" >/dev/null || {
+            echo "Invalid JSON object in archive: $relative" >&2; return 1;
+        }
+    done <<< "$listing"
     while IFS= read -r entry; do
         [[ -n $entry ]] || continue
         relative="${entry#./}"
         [[ -n $relative && $relative != . && $relative != */ ]] || continue
         payload=$(tar -xOzf "$archive" "$entry") || return 1
-        jq -e 'type == "object"' <<< "$payload" >/dev/null || return 1
         _put "/$relative" "$payload" || return 1
     done <<< "$listing"
     printf "Vault backup restored: %s\n" "$archive"
@@ -2092,7 +2109,7 @@ function main(){
                 [[ ! $disable_prompt ]] && echo
                 if [[ $cmd ]] && [[ ! "$cmd" =~ ^[[:space:]]+$ ]]; then
                     cmd=$(echo "$cmd" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')
-                    run_cmd "$cmd"
+                    if ! run_cmd "$cmd"; then exit_status=1; fi
                 fi
             ;;
             $'\x7f') # BACKSPACE
