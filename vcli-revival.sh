@@ -1099,6 +1099,39 @@ function _cptree(){
         echo "Destination must be outside source tree" >&2; return 1;
     }
     leaves=$(_vcli_leaves "$source") || return 1
+    # Preflight *every* destination first. In KV v2 metadata survives soft
+    # deletion, so checking /data alone could resurrect a deleted secret.
+    local target probe mount rest metadata_path
+    local -a kv_mounts=()
+    if [[ ${VAULT_KV_VERSION:-1} == 2 ]]; then
+        IFS=',' read -r -a kv_mounts <<< "${VAULT_KV_MOUNTS:-secret}"
+    fi
+    while IFS= read -r leaf; do
+        [[ -n $leaf ]] || continue
+        relative="${leaf#"$source"/}"
+        target="$dest/$relative"
+        metadata_path=""
+        for mount in "${kv_mounts[@]}"; do
+            mount="${mount#/}"; mount="${mount%/}"
+            if [[ $target == "/$mount/"* ]]; then
+                rest="${target#"/$mount/"}"
+                metadata_path="/$mount/metadata/$rest"
+                break
+            fi
+        done
+        if [[ -n $metadata_path ]]; then
+            probe="$metadata_path"
+        else
+            probe="$target"
+        fi
+        if _curl "$probe" >/dev/null; then
+            echo "Destination already exists: $target" >&2
+            return 1
+        elif [[ $http_code != 404 ]]; then
+            echo "Unable to verify destination: $target (HTTP $http_code)" >&2
+            return 1
+        fi
+    done <<< "$leaves"
     while IFS= read -r leaf; do
         [[ -n $leaf ]] || continue
         relative="${leaf#"$source"/}"
