@@ -1,6 +1,6 @@
 # Fase 0 — CI/CD de compatibilidad para VCLI original
 
-**Objetivo:** ningún parche entra en la rama estable porque "pasa `bash -n`" o porque
+**Objetivo:** ningún candidato Bash entra en la rama estable porque "pasa `bash -n`" o porque
 un stub de `curl` devuelve 200. Todo cambio debe superar pruebas de contrato con
 **HashiCorp Vault real** y demostrar que no rompe las operaciones heredadas.
 
@@ -120,35 +120,30 @@ Los casos de hostname erróneo, expiración de certificado y mTLS quedan pendien
 - La primera versión `0.7.0-rc1` debería generarse una vez implementados
   los bloques de regresión pendientes.
 
-## Uso tras desarchivar el repo
+## CLI-first: contrato antes de implementación
 
-Copiar estas rutas al repositorio `ml0renz0/vcli`:
+La especificación ejecutable está en `docs/CLI-CONTRACT.md`. Las pruebas deben
+verificar entradas, salidas, exit codes, cambios de estado mediante la API
+independiente de Vault, seguridad de datos y comportamiento de la TTY, **sin
+inspeccionar detalles de implementación de Bash para determinar el éxito**.
 
-```text
-.github/workflows/ci.yml
-docs/CI-CD.md
-tests/__init__.py
-tests/integration/__init__.py
-tests/integration/run.sh
-tests/integration/test_source_guards.py
-tests/integration/test_vault.py
-tests/integration/test_tls.py
-tests/integration/test_repl.py
-revive_vcli.py
-# y las pruebas aisladas que ya acompañan el paquete
-```
+- El CLI que ejecuta CI es siempre `vcli-revival.sh` (sin parcheadores).
+- `vcli` original permanece intacto como referencia histórica.
+- Cada nueva regresión necesita test que falle **antes** de cambiar el Bash.
+- Fixtures temporales generadas en cada ejecución, nunca credenciales reales.
+- Si la prueba implica KV v2, autenticar y consultar la API para verificar
+  datos y metadatos, no solo grep sobre stdout.
+- El gate global permanece obligatorio y no se silencia con `continue-on-error`.
 
-Luego abrir una PR en rama `revival/ci-vault`, configurar la protección de
-rama y ejecutar el workflow. Los tests de integración requieren **Docker**:
+### Ejecución local
 
 ```bash
-python3 revive_vcli.py ./vcli   # solo si aún es v0.6.2 original
-bash -n ./vcli
+python3 -m unittest -v tests.cli.test_cli_contract
+bash -n vcli-revival.sh
+# Requiere Docker y runtime Bash:
 VCLI_TEST_VAULT_TAG=2.1.1 bash tests/integration/run.sh
 ```
 
-**Estado de validación:** se han preparado scripts y pipeline. El primer run de GitHub Actions sí ejecutó Vault real y detectó fallos de
-arranque vacío, AppRole y salida PTY. La siguiente ejecución comprobará los
-cambios a HTTPS real. Solo el resultado del workflow establece si están resueltos.
-En particular, el pipeline puede descubrir fallos auténticos en VCLI que aún
-no hemos corregido; hasta entonces el job rojo es un resultado válido.
+La primera ejecución de CI detectó errores de exit code, AppRole y REPL.
+Esta PR debe corregirlos sobre `vcli-revival.sh`, después de que las
+pruebas que documentan el error hayan sido definidas.

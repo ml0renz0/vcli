@@ -33,25 +33,14 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq jq curl shellcheck gettext-base
-      - name: Apply revival patch (if repository still contains original)
-        run: |
-          if grep -Fq 'declare VERSION="0.6.2"' vcli; then
-            python3 revive_vcli.py ./vcli
-          else
-            grep -Fq '0.6.3-revival' vcli || { echo 'Unknown VCLI source version' >&2; exit 1; }
-          fi
+      - name: CLI contract (no Vault required)
+        run: python3 -m unittest -v tests.cli.test_cli_contract
       - name: Bash syntax and ShellCheck
         run: |
-          bash -n ./vcli
-          shellcheck --severity=error ./vcli
+          bash -n ./vcli-revival.sh
+          shellcheck --severity=error ./vcli-revival.sh
       - name: Security invariants
-        run: |
-          python3 tests/integration/test_source_guards.py ./vcli
-      - name: Existing transport and patcher regression tests
-        run: |
-          python3 test_patcher.py
-          bash test_transport.sh
-          python3 test_http_transport.py
+        run: python3 tests/integration/test_source_guards.py ./vcli-revival.sh
 
   integration:
     name: Vault ${{ matrix.vault }} integration
@@ -69,12 +58,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq jq curl gettext-base openssl
-      - name: Prepare patched VCLI
-        run: |
-          if grep -Fq 'declare VERSION="0.6.2"' vcli; then
-            python3 revive_vcli.py ./vcli
-          fi
-          bash -n ./vcli
+      - name: Validate production candidate
+        run: bash -n ./vcli-revival.sh
       - name: Test against real Vault
         env:
           VCLI_TEST_VAULT_TAG: ${{ matrix.vault }}
@@ -105,16 +90,13 @@ jobs:
     steps:
       - name: Checkout tag
         uses: actions/checkout@v4
-      - name: Ensure patched script and its Bash syntax
-        run: |
-          if grep -Fq 'declare VERSION="0.6.2"' vcli; then
-            python3 revive_vcli.py ./vcli
-          fi
-          bash -n ./vcli
+      - name: Verify release candidate
+        run: bash -n ./vcli-revival.sh
       - name: Build checksum-verified artifact
         run: |
           mkdir -p dist/vcli
-          cp vcli README.md LICENSE dist/vcli/
+          cp vcli-revival.sh README.md LICENSE dist/vcli/
+          mv dist/vcli/vcli-revival.sh dist/vcli/vcli
           tar -C dist -czf "vcli-${GITHUB_REF_NAME}.tar.gz" vcli
           sha256sum "vcli-${GITHUB_REF_NAME}.tar.gz" > "vcli-${GITHUB_REF_NAME}.tar.gz.sha256"
       - name: Upload manual-release artifact

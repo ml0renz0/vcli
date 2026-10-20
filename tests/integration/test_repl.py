@@ -13,7 +13,7 @@ import tempfile
 import time
 import unittest
 
-VCLI = Path(__file__).resolve().parents[2] / "vcli"
+VCLI = Path(__file__).resolve().parents[2] / "vcli-revival.sh"
 
 
 def read_until(fd, marker: bytes, timeout=8) -> bytes:
