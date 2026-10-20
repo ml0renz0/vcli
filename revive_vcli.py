@@ -33,6 +33,13 @@ def revive(s: str) -> str:
         raise RuntimeError("Expected original vcli 0.6.2; no changes applied")
     s = must_replace(s, 'declare VERSION="0.6.2"', 'declare VERSION="0.6.3-revival"')
     s = must_replace(s, 'declare DEPENDENCIES="curl jq openssl klist bc"', 'declare DEPENDENCIES="curl jq mktemp timeout"')
+    # No command was executed: batch exit must succeed without HTTP mutations.
+    s = must_replace(s,
+        'if [[ ! $http_code =~ ^2 ]]; then exit_status=1 ; fi',
+        'if [[ -n $http_code && ! $http_code =~ ^2 ]]; then exit_status=1 ; fi')
+    # Vault AppRole nowadays exposes token_policies; old policies is a fallback.
+    s = must_replace(s, 'jq ".data .policies[]" -r < "$tmp"',
+                     "jq -r '(.data.token_policies // .data.policies // [])[]' < \"$tmp\"")
     s = must_replace(s, 'declare DEBUGFILE="/tmp/vcli.debug"',
                      'declare DEBUGFILE="${VCLI_DEBUGFILE:-$HOME/.vcli.debug}"')
     s = must_replace(s, '    : > "$VCLISTORY"',

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import ssl
 from pathlib import Path
 import subprocess
 import tempfile
@@ -16,7 +17,7 @@ from urllib import error, request
 from uuid import uuid4
 
 VCLI = Path(__file__).resolve().parents[2] / "vcli"
-VAULT = "http://127.0.0.1:8200"
+VAULT = os.environ.get("VAULT_ADDR", "https://127.0.0.1:8200")
 ROOT_TOKEN = "local-ci-root-only"  # Intentionally ephemeral and CI-only.
 
 
@@ -28,7 +29,11 @@ def api(method: str, path: str, data=None, token=ROOT_TOKEN):
         method=method,
         headers={"X-Vault-Token": token, "Content-Type": "application/json"},
     )
-    with request.urlopen(req, timeout=5) as response:
+    cafile = os.environ.get("VAULT_CACERT")
+    if not VAULT.startswith("https://") or not cafile:
+        raise RuntimeError("Vault E2E suite must use HTTPS with a trusted private CA")
+    ctx = ssl.create_default_context(cafile=cafile)
+    with request.urlopen(req, timeout=5, context=ctx) as response:
         contents = response.read()
         return json.loads(contents) if contents else {}
 
@@ -49,6 +54,7 @@ def invoke(command: str, *, version=1, mounts="kv2,team/config", token=ROOT_TOKE
             "VAULT_TOKEN": token,
             "VAULT_KV_VERSION": str(version),
             "VAULT_KV_MOUNTS": mounts,
+            "VAULT_CACERT": os.environ["VAULT_CACERT"],
         })
         if env_extra:
             env.update(env_extra)

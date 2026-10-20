@@ -9,7 +9,7 @@ Este diseño pertenece a **VCLI original (0.7)**, no al futuro Forge/VCLI 2.0.
 ## Flujo de validación
 
 ```text
-push / PR / manual / cron semanal
+PR / merge a master / manual / cron semanal
                │
      ┌─────────▼──────────┐
      │ Static              │
@@ -24,7 +24,7 @@ push / PR / manual / cron semanal
      │ 4 jobs paralelos, Docker efímero, versión fija   │
      │ KV v1 + KV v2 + montaje anidado y ACL/AppRole    │
      │ suites de contrato contra API Vault              │
-     │ TLS válido/CA desconocida/inseguro explícito      │
+     │ Vault nativo HTTPS: CA válida/incorrecta/desconocida      │
      └─────────┬─────────────────────────────────────────┘
                │
      ┌─────────▼──────────┐
@@ -36,6 +36,10 @@ push / PR / manual / cron semanal
 ```
 
 El modo dev de Vault **no es producción**: usa memoria y token raíz efímero.
+La CI levanta el propio Vault con `-dev-tls`: el listener de Vault sirve
+HTTPS con su CA efímera, sin proxy TLS; `VAULT_CACERT` confía en esa CA.
+Se prueban CA ausente, CA incorrecta y opt-in explícito `VAULT_SKIP_VERIFY`.
+Nunca se versiona material criptográfico.
 Los tokens de test nunca proceden de GitHub Secrets ni de un Vault externo.
 
 ## Pruebas que ya se preparan en el paquete
@@ -51,7 +55,7 @@ Los tokens de test nunca proceden de GitHub Secrets ni de un Vault externo.
 | CRUD compuesto | `addsecret`, `delsecret`, `cp`, `mv` (al menos KV v1) | PR obligatorio |
 | ACL/Auth | `lspol`, `showpol`, `lsrole`, `showrole` con AppRole real | PR obligatorio |
 | Seguridad | token sin permisos de escritura, token inválido, salida sin filtración | PR obligatorio |
-| TLS | CA desconocida debe fallar; CA correcta funciona; `skip-verify` solo explícito | PR obligatorio |
+| TLS real | Listener Vault HTTPS, CA ausente/incorrecta, CA correcta, `skip-verify` explícito | PR obligatorio |
 | Privacidad | el payload secreto no debe guardarse en `.vclistory` | PR obligatorio |
 | REPL PTY smoke | abrir consola, ejecutar `help`, salir con `Ctrl+D` | PR obligatorio |
 
@@ -84,7 +88,23 @@ no se debe fingir cobertura por el mero hecho de lanzar un Vault real.
    reproducible, subir artefacto verificable (SHA-256), firmado/procedencia, y
    publicar release manualmente **solo** si todos los gates están verdes.
 
-## Branch protection y política de releases
+## Trunk-based development (TBD), protección y releases
+
+- Una sola trunk: `master`, sin `develop` ni ramas de release de larga duración.
+- Ramas cortas y PR con squash merge; checks obligatorios en PR.
+- Sin duplicar CI en cada push a feature; CI en PR, y validación post-merge en `master`.
+- Conventional Commits para semver/changelog y posterior autobump desde `master`
+  una vez verde el gate completo; no publicar automáticamente en esta fase.
+- Settings > Rulesets: proteger `master` y requerir **Required CI gate**.
+  El archivo de workflow por sí solo no activa la protección.
+
+### Verificación real de TLS
+
+`run.sh` ejecuta `vault server -dev -dev-tls` con certificado y CA generados
+por el propio Vault. El job copia solo la CA pública al runner y obliga a
+`curl`, la CLI oficial y VCLI a verificarla. No hay terminador TLS externo ni
+`curl -k` fuera del caso negativo `VAULT_SKIP_VERIFY` explícito.
+Los casos de hostname erróneo, expiración de certificado y mTLS quedan pendientes.
 
 - `master`: branch protegida, bloquear merges directos, require checks **Required CI gate**.
 - CI de PR (matriz fija) + nightly/cron semanal para localizar regresiones del
@@ -127,7 +147,8 @@ bash -n ./vcli
 VCLI_TEST_VAULT_TAG=2.1.1 bash tests/integration/run.sh
 ```
 
-**Estado de validación:** se han preparado scripts y pipeline. Todavía **no**
-se ha ejecutado la matriz con un servidor Vault real en este entorno.
+**Estado de validación:** se han preparado scripts y pipeline. El primer run de GitHub Actions sí ejecutó Vault real y detectó fallos de
+arranque vacío, AppRole y salida PTY. La siguiente ejecución comprobará los
+cambios a HTTPS real. Solo el resultado del workflow establece si están resueltos.
 En particular, el pipeline puede descubrir fallos auténticos en VCLI que aún
 no hemos corregido; hasta entonces el job rojo es un resultado válido.

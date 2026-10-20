@@ -43,7 +43,8 @@ class InteractiveShellTests(unittest.TestCase):
                 "HOME": home,
                 "TERM": "xterm",
                 "TMPDIR": home,
-                "VAULT_ADDR": "http://127.0.0.1:8200",
+                "VAULT_ADDR": os.environ["VAULT_ADDR"],
+                "VAULT_CACERT": os.environ["VAULT_CACERT"],
                 "VAULT_TOKEN": os.environ.get("VCLI_TEST_READONLY_TOKEN", ""),
             })
             master, slave = pty.openpty()
@@ -56,6 +57,8 @@ class InteractiveShellTests(unittest.TestCase):
                     os.write(master, bytes([key]))
                     time.sleep(0.015)
                 read_until(master, b"Available commands:")
+                # Wait for the REPL to finish rendering help before Ctrl+D.
+                time.sleep(0.5)
                 os.write(master, b"\x04")  # Ctrl+D
                 self.assertEqual(child.wait(timeout=8), 0)
             finally:
