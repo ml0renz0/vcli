@@ -51,7 +51,7 @@ class ExtendedVaultContracts(unittest.TestCase):
             self.command(f"umount {mount}")
             with self.assertRaises(error.HTTPError) as ctx:
                 api("GET", f"sys/mounts/{mount}")
-            self.assertEqual(ctx.exception.code, 400 if ctx.exception.code == 400 else 404)
+            self.assertIn(ctx.exception.code, (400, 404))
         finally:
             # Do not leak a mount if a test assertion fails.
             try:

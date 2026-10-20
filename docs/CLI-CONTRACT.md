@@ -47,3 +47,24 @@ Los tests no comprueban el nombre de una función interna ni si se usó
 
 Los tests Python en `tests/cli` son **test harness**, no transformación
 del código de producción: VCLI sigue siendo Bash.
+
+
+## Regresiones nuevas detectadas — PR #25
+
+La batería `tests/integration/test_operations.py` se añadió antes de corregir
+los comandos Bash. El primer run real encontró:
+
+- `replace`: no modifica todos los secretos coincidentes.
+- `cptree`: no recrea la estructura de destino dentro del mismo KV mount.
+- `rmtree`: no elimina todos los secretos del subárbol.
+- `backup`: el TAR no contiene todos los secretos previstos.
+
+Los tests se mantienen como gate obligatorio. No usar `skip`, `xfail`,
+`continue-on-error` ni relajar las aserciones. Corregir exclusivamente
+`vcli-revival.sh` y volver a comprobar las cuatro versiones reales de Vault.
+El contrato de `rmtree` exige además conservar un secreto centinela fuera
+del subárbol solicitado.
+
+El test `restore` forma parte del roundtrip de backup y no llegará a
+validar la restauración completa mientras falle antes la comprobación
+de contenido del archivo. Esto no debe contarse como cobertura verde.
