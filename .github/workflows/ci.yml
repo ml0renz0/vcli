@@ -1,0 +1,126 @@
+name: VCLI legacy compatibility
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+    tags: ['v0.7.*']
+  workflow_dispatch:
+  schedule:
+    - cron: '23 5 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vcli-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  static:
+    name: Syntax, source invariants and isolated tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install quality tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq curl shellcheck gettext-base
+      - name: Apply revival patch (if repository still contains original)
+        run: |
+          if grep -Fq 'declare VERSION="0.6.2"' vcli; then
+            python3 revive_vcli.py ./vcli
+          else
+            grep -Fq '0.6.3-revival' vcli || { echo 'Unknown VCLI source version' >&2; exit 1; }
+          fi
+      - name: Bash syntax and ShellCheck
+        run: |
+          bash -n ./vcli
+          shellcheck --severity=error ./vcli
+      - name: Security invariants
+        run: |
+          python3 tests/integration/test_source_guards.py ./vcli
+      - name: Existing transport and patcher regression tests
+        run: |
+          python3 test_patcher.py
+          bash test_transport.sh
+          python3 test_http_transport.py
+
+  integration:
+    name: Vault ${{ matrix.vault }} integration
+    needs: static
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        vault: ['1.20.4', '1.21.4', '2.0.4', '2.1.1']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install runtime dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq jq curl gettext-base openssl
+      - name: Prepare patched VCLI
+        run: |
+          if grep -Fq 'declare VERSION="0.6.2"' vcli; then
+            python3 revive_vcli.py ./vcli
+          fi
+          bash -n ./vcli
+      - name: Test against real Vault
+        env:
+          VCLI_TEST_VAULT_TAG: ${{ matrix.vault }}
+        run: bash tests/integration/run.sh
+
+  gate:
+    name: Required CI gate
+    needs: [static, integration]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail unless all mandatory jobs succeeded
+        env:
+          STATIC_RESULT: ${{ needs.static.result }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
+        run: |
+          test "$STATIC_RESULT" = success
+          test "$INTEGRATION_RESULT" = success
+
+  package_candidate:
+    name: Produce release candidate artifact
+    if: startsWith(github.ref, 'refs/tags/v0.7.')
+    needs: gate
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+      - name: Ensure patched script and its Bash syntax
+        run: |
+          if grep -Fq 'declare VERSION="0.6.2"' vcli; then
+            python3 revive_vcli.py ./vcli
+          fi
+          bash -n ./vcli
+      - name: Build checksum-verified artifact
+        run: |
+          mkdir -p dist/vcli
+          cp vcli README.md LICENSE dist/vcli/
+          tar -C dist -czf "vcli-${GITHUB_REF_NAME}.tar.gz" vcli
+          sha256sum "vcli-${GITHUB_REF_NAME}.tar.gz" > "vcli-${GITHUB_REF_NAME}.tar.gz.sha256"
+      - name: Upload manual-release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vcli-${{ github.ref_name }}
+          path: |
+            vcli-${{ github.ref_name }}.tar.gz
+            vcli-${{ github.ref_name }}.tar.gz.sha256
+          if-no-files-found: error
