@@ -201,6 +201,99 @@ class CASContracts(unittest.TestCase):
         self.assertEqual(self.metadata(name)["current_version"], 1)
         self.assertEqual(len([e for e in events if e[0] == "POST" and e[1] == target]), 1)
 
+    def test_05_put_respects_required_cas_on_existing_version(self):
+        name = "put-required/value"
+        self.write(name, {"old": True})
+        api("POST", f"kv2/metadata/{self.p}/{name}", {"cas_required": True})
+        out, _ = invoke(f'put {self.secret(name)} {{"new":true}}', version=2)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertEqual(self.read(name)["data"], {"new": True})
+        self.assertEqual(self.metadata(name)["current_version"], 2)
+
+    def test_06_put_race_rejects_stale_version(self):
+        name = "put-race/value"
+        self.write(name, {"original": True})
+        target = f"/v1/kv2/data/{self.p}/{name}"
+        with self.proxy(takeover_path=target, takeover_value=(name, {"racer": True})) as (url, events):
+            out, _ = invoke(f'put {self.secret(name)} {{"mine":true}}',
+                            version=2, addr=url,
+                            env_extra={"VAULT_CACERT": str(self.cert)})
+        self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertEqual(self.read(name)["data"], {"racer": True})
+        self.assertEqual(self.metadata(name)["current_version"], 2)
+        self.assertEqual(len([e for e in events if e[0] == "POST" and e[1] == target]), 1)
+
+    def test_07_cp_refuses_existing_destination_without_mutating_it(self):
+        src, dest = "cp-collision/source", "cp-collision/dest"
+        self.write(src, {"source": True})
+        self.write(dest, {"existing": True})
+        out, _ = invoke(f"cp {self.secret(src)} {self.secret(dest)}", version=2)
+        self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertEqual(self.read(src)["data"], {"source": True})
+        self.assertEqual(self.read(dest)["data"], {"existing": True})
+        self.assertEqual(self.metadata(dest)["current_version"], 1)
+
+    def test_08_cp_race_rejects_concurrent_destination_creation(self):
+        src, dest = "cp-race/source", "cp-race/dest"
+        self.write(src, {"source": True})
+        target = f"/v1/kv2/data/{self.p}/{dest}"
+        with self.proxy(takeover_path=target, takeover_value=(dest, {"racer": True})) as (url, events):
+            out, _ = invoke(f"cp {self.secret(src)} {self.secret(dest)}",
+                            addr=url, version=2,
+                            env_extra={"VAULT_CACERT": str(self.cert)})
+        self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertEqual(self.read(dest)["data"], {"racer": True})
+        self.assertEqual(self.metadata(dest)["current_version"], 1)
+        self.assertEqual(self.read(src)["data"], {"source": True})
+        self.assertEqual(len([e for e in events if e[0] == "POST" and e[1] == target]), 1)
+
+    def test_09_replace_race_rejects_concurrent_modification(self):
+        name = "replace-race/tree/a"
+        self.write(name, {"v": "old"})
+        target = f"/v1/kv2/data/{self.p}/{name}"
+        with self.proxy(takeover_path=target, takeover_value=(name, {"v": "racer"})) as (url, events):
+            out, _ = invoke(
+                f'replace {self.secret("replace-race/tree")} {{"v":"old"}} {{"v":"new"}}',
+                version=2, addr=url, env_extra={"VAULT_CACERT": str(self.cert)}
+            )
+        self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertEqual(self.read(name)["data"], {"v": "racer"})
+        self.assertEqual(self.metadata(name)["current_version"], 2)
+        self.assertEqual(len([e for e in events if e[0] == "POST" and e[1] == target]), 1)
+
+    def test_10_restore_race_does_not_overwrite_concurrent_change(self):
+        import io
+        import tarfile
+        name = "restore-race/value"
+        self.write(name, {"before": True})
+        target = f"/v1/kv2/data/{self.p}/{name}"
+        with tempfile.TemporaryDirectory(prefix="vcli-cas-restore-") as root:
+            archive = Path(root) / "sample.tgz"
+            content = b'{"restored":true}'
+            with tarfile.open(archive, "w:gz") as tar:
+                member = tarfile.TarInfo(self.secret(name))
+                member.size = len(content)
+                tar.addfile(member, io.BytesIO(content))
+            with self.proxy(takeover_path=target, takeover_value=(name, {"racer": True})) as (url, events):
+                out, _ = invoke(f"restore {archive}", version=2, addr=url,
+                                env_extra={"VAULT_CACERT": str(self.cert)})
+        self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertEqual(self.read(name)["data"], {"racer": True})
+        self.assertEqual(self.metadata(name)["current_version"], 2)
+        self.assertEqual(len([e for e in events if e[0] == "POST" and e[1] == target]), 1)
+
+    def test_11_mv_collision_never_deletes_source(self):
+        src, dest = "move-collision/source", "move-collision/dest"
+        self.write(src, {"must": "survive"})
+        self.write(dest, {"existing": True})
+        out, _ = invoke(f"mv {self.secret(src)} {self.secret(dest)}", version=2)
+        self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertEqual(self.read(src)["data"], {"must": "survive"})
+        self.assertEqual(self.read(dest)["data"], {"existing": True})
+        self.assertEqual(self.metadata(src)["current_version"], 1)
+
+
+
 
 if __name__ == "__main__":
     unittest.main()
