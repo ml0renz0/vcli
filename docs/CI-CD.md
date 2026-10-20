@@ -15,7 +15,7 @@ PR / merge a master / manual / cron semanal
      │ Static              │
      │ bash -n             │
      │ ShellCheck (errors) │
-     │ regressions/mock    │
+     │ contratos CLI       │
      │ invariantes de seg. │
      └─────────┬──────────┘
                │
@@ -24,7 +24,7 @@ PR / merge a master / manual / cron semanal
      │ 4 jobs paralelos, Docker efímero, versión fija   │
      │ KV v1 + KV v2 + montaje anidado y ACL/AppRole    │
      │ suites de contrato contra API Vault              │
-     │ Vault nativo HTTPS: CA válida/incorrecta/desconocida      │
+     │ TLS nativo: CA válida/incorrecta/desconocida     │
      └─────────┬─────────────────────────────────────────┘
                │
      ┌─────────▼──────────┐
@@ -42,13 +42,13 @@ Se prueban CA ausente, CA incorrecta y opt-in explícito `VAULT_SKIP_VERIFY`.
 Nunca se versiona material criptográfico.
 Los tokens de test nunca proceden de GitHub Secrets ni de un Vault externo.
 
-## Pruebas que ya se preparan en el paquete
+## Pruebas ejecutadas actualmente por la CI
 
 | Grupo | Invariante o comportamiento | Nivel |
 |---|---|---|
 | Syntax/quality | `bash -n`, ShellCheck severidad error | PR obligatorio |
 | Source guard | No `eval` en transporte, no `curl -k` fijo, sin secretos de prueba al arrancar | PR obligatorio |
-| Transporte | `curl` real frente a mock HTTP, rutas /data vs /metadata y query string | PR obligatorio |
+| Contratos CLI | Ayuda, versión, flags inválidos, errores de configuración y salida sin credenciales | PR obligatorio |
 | E2E KV v1 | `put`, `cat`, `ls`, `rm`, verificación por API | PR obligatorio |
 | E2E KV v2 | escritura/lectura/listado/borrado lógico, comprobación metadatos | PR obligatorio |
 | Montajes | KV v2 anidado `team/config`, rutas mixtas | PR obligatorio |
@@ -144,6 +144,8 @@ bash -n vcli-revival.sh
 VCLI_TEST_VAULT_TAG=2.1.1 bash tests/integration/run.sh
 ```
 
-La primera ejecución de CI detectó errores de exit code, AppRole y REPL.
-Esta PR debe corregirlos sobre `vcli-revival.sh`, después de que las
-pruebas que documentan el error hayan sido definidas.
+Los primeros runs de la PR detectaron errores de exit code, AppRole y REPL.
+Tras corregir el candidato Bash y la fixture Docker, la matriz real pasó
+contra Vault 1.20.4, 1.21.4, 2.0.4 y 2.1.1. Es un baseline funcional;
+la suite NO cubre aún todos los comandos heredados. El merge no equivale
+a declarar estable VCLI 0.7.
