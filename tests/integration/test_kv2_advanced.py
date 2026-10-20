@@ -88,6 +88,42 @@ class KV2AdvancedTests(unittest.TestCase):
         self.assertEqual(self.get("cross/dest/a",mount="team/config"),{"x":1})
         self.assertEqual(self.get("cross/dest/deep/b",mount="team/config"),{"x":2})
 
+    def test_08_backup_restore_creates_new_versions_after_soft_delete(self):
+        import os
+        from pathlib import Path
+        import subprocess
+        import tarfile
+        import tempfile
+        from .test_vault import VCLI, VAULT, ROOT_TOKEN
+        self.put("snapshot/a", {"before":"a"})
+        self.put("snapshot/deep/b", {"before":"b"})
+        with tempfile.TemporaryDirectory(prefix="vcli-kv2-backup-") as temp:
+            env = os.environ.copy()
+            env.update({"HOME":temp, "TMPDIR":temp, "TERM":"dumb",
+                        "VAULT_ADDR":VAULT, "VAULT_TOKEN":ROOT_TOKEN,
+                        "VAULT_CACERT":os.environ["VAULT_CACERT"],
+                        "VAULT_KV_VERSION":"2", "VAULT_KV_MOUNTS":"kv2,team/config"})
+            def cli_cmd(cmd):
+                p=subprocess.run([str(VCLI),"-n"],input=cmd+"\\n",text=True,
+                                 capture_output=True,env=env,timeout=20)
+                self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+            cli_cmd(f"backup kv2/{self.p}/snapshot")
+            archives=list(Path(temp).glob("backup_vault*.tgz"))
+            self.assertEqual(len(archives),1)
+            with tarfile.open(archives[0],"r:gz") as tar:
+                entries={m.name.removeprefix("./") for m in tar if m.isfile()}
+            self.assertEqual(entries,{f"kv2/{self.p}/snapshot/a",
+                                      f"kv2/{self.p}/snapshot/deep/b"})
+            for leaf in ("snapshot/a","snapshot/deep/b"):
+                api("DELETE",f"kv2/data/{self.p}/{leaf}")
+                with self.assertRaises(error.HTTPError):
+                    self.get(leaf)
+            cli_cmd(f"restore {archives[0]}")
+        self.assertEqual(self.get("snapshot/a"),{"before":"a"})
+        self.assertEqual(self.get("snapshot/deep/b"),{"before":"b"})
+        self.assertEqual(self.meta("snapshot/a")["current_version"],2)
+        self.assertEqual(self.meta("snapshot/deep/b")["current_version"],2)
+
     def test_07_field_updates_increment_versions(self):
         self.put("edit/item",{"x":1,"keep":True})
         self.cli(f'addsecret kv2/{self.p}/edit/item {{"y":2}}')
