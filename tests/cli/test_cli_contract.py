@@ -26,7 +26,7 @@ class CliContract(unittest.TestCase):
     def test_version_works_without_connection_and_credentials(self):
         result = run_cli("--version")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertRegex(result.stdout, r"vcli v[0-9]+\\.[0-9]+")
+        self.assertRegex(result.stdout, r"vcli v[0-9]+\.[0-9]+")
         self.assertNotIn("Vault token", result.stderr)
 
     def test_help_is_success_without_connection(self):
