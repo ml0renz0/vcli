@@ -619,6 +619,19 @@ function vcli_encode_endpoint(){
     printf '%s' "$result"
 }
 
+# Report partial application without pretending multi-request Vault changes are atomic.
+function _vcli_partial_failure(){
+    local operation="$1" completed="$2" total="$3" current="$4"
+    if (( completed > 0 )); then
+        printf 'vcli: PARTIAL %s completed=%d total=%d failed=%s; no rollback performed\n' \
+            "$operation" "$completed" "$total" "$current" >&2
+    else
+        printf 'vcli: FAILED %s completed=0 total=%d failed=%s\n' \
+            "$operation" "$total" "$current" >&2
+    fi
+    return 1
+}
+
 # Common read-only recursion for KV mounts; failures propagate to callers.
 function _vcli_absolute_path(){
     local path="$1"
@@ -1148,12 +1161,21 @@ function _cptree(){
             return 1
         fi
     done <<< "$leaves"
+    local completed=0 total=0
+    while IFS= read -r leaf; do [[ -n $leaf ]] && (( total+=1 )); done <<< "$leaves"
     while IFS= read -r leaf; do
         [[ -n $leaf ]] || continue
         relative="${leaf#"$source"/}"
-        response=$(_cat "$leaf") || return 1
-        payload=$(jq -ce '.data | select(type == "object")' <<< "$response") || return 1
-        _put "$dest/$relative" "$payload" || return 1
+        response=$(_cat "$leaf") || {
+            _vcli_partial_failure cptree "$completed" "$total" "$leaf"; return 1;
+        }
+        payload=$(jq -ce '.data | select(type == "object")' <<< "$response") || {
+            _vcli_partial_failure cptree "$completed" "$total" "$leaf"; return 1;
+        }
+        _put "$dest/$relative" "$payload" || {
+            _vcli_partial_failure cptree "$completed" "$total" "$dest/$relative"; return 1;
+        }
+        (( completed+=1 ))
     done <<< "$leaves"
     printf "Copied tree from '%s' to '%s'\n" "$source" "$dest"
 }
@@ -1174,9 +1196,14 @@ function _rmtree(){
         read -r -p "Remove secrets beneath '$root'? (yes/no): " answer </dev/tty || return 1
         [[ $answer == yes ]] || return 1
     fi
+    local completed=0 total=0
+    while IFS= read -r leaf; do [[ -n $leaf ]] && (( total+=1 )); done <<< "$leaves"
     while IFS= read -r leaf; do
         [[ -n $leaf ]] || continue
-        _rm "$leaf" || return 1
+        _rm "$leaf" || {
+            _vcli_partial_failure rmtree "$completed" "$total" "$leaf"; return 1;
+        }
+        (( completed+=1 ))
     done <<< "$leaves"
     printf "Removed secrets beneath '%s'\n" "$root"
 }
@@ -1258,12 +1285,22 @@ function _restore(){
             echo "Invalid JSON object in archive: $relative" >&2; return 1;
         }
     done <<< "$listing"
+    local completed=0 total=0
+    while IFS= read -r entry; do
+        relative="${entry#./}"
+        [[ -n $relative && $relative != . && $relative != */ ]] && (( total+=1 ))
+    done <<< "$listing"
     while IFS= read -r entry; do
         [[ -n $entry ]] || continue
         relative="${entry#./}"
         [[ -n $relative && $relative != . && $relative != */ ]] || continue
-        payload=$(tar -xOzf "$archive" "$entry") || return 1
-        _put "/$relative" "$payload" || return 1
+        payload=$(tar -xOzf "$archive" "$entry") || {
+            _vcli_partial_failure restore "$completed" "$total" "$relative"; return 1;
+        }
+        _put "/$relative" "$payload" || {
+            _vcli_partial_failure restore "$completed" "$total" "$relative"; return 1;
+        }
+        (( completed+=1 ))
     done <<< "$listing"
     printf "Vault backup restored: %s\n" "$archive"
 }
