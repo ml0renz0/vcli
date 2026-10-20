@@ -619,6 +619,36 @@ function vcli_encode_endpoint(){
     printf '%s' "$result"
 }
 
+# Common read-only recursion for KV mounts; failures propagate to callers.
+function _vcli_absolute_path(){
+    local path="$1"
+    [[ -n $path ]] || return 1
+    [[ $path == /* ]] || path="${current_pwd%/}/$path"
+    path="/${path#/}"
+    while [[ $path == *'//'* ]]; do path="${path//\/\//\/}"; done
+    path="${path%/}"
+    [[ $path != *'/../'* && $path != *'/./'* && $path != */.. && $path != */. ]] || return 1
+    printf '%s\n' "$path"
+}
+function _vcli_children(){
+    local response
+    response=$(_curl "${1%/}/" "" LIST) || return 1
+    jq -e '(.data.keys | type) == "array"' <<< "$response" >/dev/null || return 1
+    jq -r '.data.keys[]' <<< "$response"
+}
+function _vcli_leaves(){
+    local root="$1" entries child
+    entries=$(_vcli_children "$root") || return 1
+    while IFS= read -r child; do
+        [[ -n $child ]] || continue
+        if [[ $child == */ ]]; then
+            _vcli_leaves "${root%/}/${child%/}" || return 1
+        else
+            printf '%s\n' "${root%/}/$child"
+        fi
+    done <<< "$entries"
+}
+
 # simplified curl function
 function _curl(){
     local ignore_http_code=no disable_fail=no
@@ -1040,340 +1070,135 @@ function _find(){
 
 # find in $1 and replace secret $2 with new secret $3
 function _replace(){
-    local url
-    if [[ ! $1 =~ ^/ ]]; then
-        url="$current_pwd$1"
-    else
-        url=${1//\/\//\/}
-    fi
-    shift
-    if [[ ! $url =~ /$ ]]; then
-        url+="/"
-    fi
-    debug "replace2: url=$url"
-    debug "replace3: rest=\"$*\""
-    local data
-    data="$(echo "${@%\{*}" | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
-    local newdata
-    newdata="$(echo "${@#*\}}" | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
-    debug "replaceX: data=${*%\{*}"
-    debug "replaceX: newdata=${*#*\}}"
-    # if $url is /
-    paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
-
-    debug "replace1: url=$url, data=\"$data\", newdata=\"$newdata\""
-    for path in $paths; do
-        if [[ $path =~ /$ ]]; then
-            _replace "$url/$path" "$data$newdata"
-        else
-            secret=$(_cat "$url$path" | jq -M -S ".data" | tr -t '\n' ' ' | tr -s ' ')
-            debug "replace: '$data' => '$newdata' on '$url'"
-            if [[ $secret == "$data" ]]; then
-                debug "replace: $secret = $data!"
-                _put "$url$path" "$newdata"
-                padecho "$url$path" "0" "" ""
-            else
-                debug "replace: $secret == $data"
-            fi
+    local root pairs expected replacement leaves leaf response
+    root=$(_vcli_absolute_path "$1") || { echo "Invalid replace path" >&2; return 1; }
+    pairs=$(printf '%s\n' "$2" | jq -sc 'if length == 2 and all(.[]; type == "object") then . else error("expected two objects") end') || return 1
+    expected=$(jq -c '.[0]' <<< "$pairs") || return 1
+    replacement=$(jq -c '.[1]' <<< "$pairs") || return 1
+    leaves=$(_vcli_leaves "$root") || return 1
+    while IFS= read -r leaf; do
+        [[ -n $leaf ]] || continue
+        response=$(_cat "$leaf") || return 1
+        if jq -e --argjson expected "$expected" '.data == $expected' <<< "$response" >/dev/null; then
+            _put "$leaf" "$replacement" || return 1
+            printf '%s\n' "$leaf"
         fi
-    done
+    done <<< "$leaves"
 }
 
 # copy secret tree to another location
 function _cptree(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url
-    if [[ ! $1 =~ ^/ ]]; then
-        url="$current_pwd$1"
-    else
-        url=${1//\/\//\/}
-    fi
-    local first
-    local dest="$2"
-    local depth="$3"
-    local space="$4"
-    local echo_space="$5"
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    if [[ ! $dest ]]; then
-        echo "Error! Missing destination"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    # If no "$2" was passed then this iteration is the very first one, so depth=0
-    if [[ ! $depth ]]; then
-        depth=0
-        first="yes"
-        echo -n "Copying tree from '$url' to '$dest'"
-    # other wise we increment a depth as we go deeper in the structure
-    else
-        unset first
-        let depth++
-    fi
-    debug "${echo_space}cptree: '$url', depth: $depth, space: \"$space\""
-    # if $url is /
-    #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
-    paths=$(_ls "-_disable_colors_-" "$url" | sed -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-
-    for path in $paths; do
-        debug "${echo_space}   depth: $depth => found: $paths"
-        space=${space/+/ }
-        if [[ $path =~ /$ ]]; then
-            local _path="$url/$path"
-            _path=${_path//\/\//\/}
-            _cptree "$_path" "$dest" "$depth" "$space+ " "$echo_space   " &
-        else
-            _mount -i "$dest" > /dev/null 2>&1
-            if [[ ! $url =~ /$ ]]; then
-                url+="/"
-            fi
-            if [[ ! $dest =~ /$ ]]; then
-                dest+="/"
-            fi
-            _cp "$url$path" "$dest$path"
-            echo -n "."
-        fi
-    done
-    wait
-    if [[ $first ]]; then
-        echo " done"
-    fi
+    local source dest leaves leaf relative response payload
+    source=$(_vcli_absolute_path "$1") || { echo "Invalid source" >&2; return 1; }
+    dest=$(_vcli_absolute_path "$2") || { echo "Invalid destination" >&2; return 1; }
+    [[ $source != "$dest" && $dest != "$source/"* ]] || {
+        echo "Destination must be outside source tree" >&2; return 1;
+    }
+    leaves=$(_vcli_leaves "$source") || return 1
+    while IFS= read -r leaf; do
+        [[ -n $leaf ]] || continue
+        relative="${leaf#"$source"/}"
+        response=$(_cat "$leaf") || return 1
+        payload=$(jq -ce '.data | select(type == "object")' <<< "$response") || return 1
+        _put "$dest/$relative" "$payload" || return 1
+    done <<< "$leaves"
+    printf "Copied tree from '%s' to '%s'\n" "$source" "$dest"
 }
 
 # removes recursively a vault path
 function _rmtree(){
-    local funcname question
-    funcname="${FUNCNAME[0]}"
-    local url
-    local question="yes"
-    if [[ "$1" == -f ]]; then
-        unset question
-        shift
+    local forced=no root leaves leaf answer
+    if [[ ${1:-} == -f ]]; then forced=yes; shift; fi
+    root=$(_vcli_absolute_path "${1:-}") || { echo "Missing or invalid tree path" >&2; return 1; }
+    case "$root" in
+        /|/sys|/sys/*|/auth|/auth/*|/identity|/identity/*|/cubbyhole|/cubbyhole/*)
+            echo "Refusing to delete a reserved Vault path" >&2; return 1;;
+    esac
+    [[ ${root#/} == */* ]] || { echo "Refusing to delete a whole mount" >&2; return 1; }
+    leaves=$(_vcli_leaves "$root") || return 1
+    if [[ $forced != yes ]]; then
+        [[ -r /dev/tty ]] || { echo "Use rmtree -f for batch mode" >&2; return 1; }
+        read -r -p "Remove secrets beneath '$root'? (yes/no): " answer </dev/tty || return 1
+        [[ $answer == yes ]] || return 1
     fi
-    if [[ ! $1 =~ ^/ ]]; then
-        url="$current_pwd$1/"
-    else
-        url=${1//\/\//\/}
-    fi
-    if [[ ! $url =~ /$ ]]; then
-        url+='/'
-    fi
-    local first
-    local depth="$2"
-    local space="$3"
-    local echo_space="$4"
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    # If no "$2" was passed then this iteration is the very first one, so depth=0
-    if [[ ! $depth ]]; then
-        depth=0
-        first="yes"
-        if [[ $question ]]; then
-            question="Do you want to remove $url? (yes/no): "
-            while read -p "$question" ANSWER </dev/tty; do
-                if [[ "$ANSWER" == "no" ]]; then
-                    return
-                elif [[ "$ANSWER" == "yes" ]]; then
-                    break
-                fi
-                question="Please type 'yes' or 'no': "
-            done
-        fi
-        echo -n "Removing recursively '$url'"
-    # other wise we increment a depth as we go deeper in the structure
-    else
-        let depth++
-    fi
-    debug "${echo_space}rmtree: '$url', depth: $depth, space: \"$space\""
-    # if $url is /
-    #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
-    paths=$(_ls "-_disable_colors_-" "$url" | sed -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-
-    for path in $paths; do
-        debug "${echo_space}   depth: $depth => found: $paths"
-        space=${space/+/ }
-        if [[ $path =~ /$ ]]; then
-            local _path="$url/$path"
-            _path=${_path//\/\//\/}
-            _rmtree "$_path" "$depth" "$space+ " "$echo_space   " &
-        else
-            _rm "/$url$path"
-            echo -n "."
-        fi
-    done
-    wait
-    if [[ $first ]]; then
-        _umount -i "$url" > /dev/null 2>&1
-        echo " done"
-    fi
+    while IFS= read -r leaf; do
+        [[ -n $leaf ]] || continue
+        _rm "$leaf" || return 1
+    done <<< "$leaves"
+    printf "Removed secrets beneath '%s'\n" "$root"
 }
 
 # backup vault
 function _backup(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url backupath
-    if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd/$1"
+    local root leaves leaf response payload dir archive relative
+    root=$(_vcli_absolute_path "${1:-}") || { echo "Missing backup path" >&2; return 1; }
+    [[ $root != / && ${root#/} == */* ]] || {
+        echo "Backup requires a path within a secrets mount" >&2; return 1;
+    }
+    dir=$(mktemp -d -p "$TMP" .vcli-backup.XXXXXX) || return 1
+    archive="$TMP/backup_vault_${root//\//-}.$(date +%s).tgz"
+    if response=$(_cat "$root" 2>/dev/null); then
+        leaves="$root"
     else
-        url="$1"
+        leaves=$(_vcli_leaves "$root") || { rm -rf -- "$dir"; return 1; }
     fi
-    url=${url//\/\//\/}
-    backupath=${url//\//-}
-    backupath=${backupath#-}
-    backupath=${backupath%-}
-    if [[ $1 == "" ]]; then
-        url="/"
+    while IFS= read -r leaf; do
+        [[ -n $leaf ]] || continue
+        response=$(_cat "$leaf") || { rm -rf -- "$dir"; return 1; }
+        payload=$(jq -ce '.data | select(type == "object")' <<< "$response") || {
+            rm -rf -- "$dir"; return 1;
+        }
+        relative="${leaf#/}"
+        mkdir -p -- "$dir/$(dirname "$relative")" || { rm -rf -- "$dir"; return 1; }
+        printf '%s\n' "$payload" > "$dir/$relative" || { rm -rf -- "$dir"; return 1; }
+    done <<< "$leaves"
+    if ! tar -czf "$archive" -C "$dir" .; then
+        rm -f -- "$archive"
+        rm -rf -- "$dir"
+        return 1
     fi
-    local first
-    local dest="$2"
-    local depth="$3"
-    local space="$4"
-    local echo_space="$5"
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    # Check for $url existence
-    if [[ "$url" == ".." ]]; then
-        debug "${echo_space}Error! '$url' doesn't exist or contains no secrets. Relative references like '..' are not supported"
-        return
-    fi
-    if [[ ! $dest ]]; then
-        if [[ $url != "/" ]]; then
-            dest="$(mktemp -d -p "$TMP" -t backup_vault_"$backupath"."$(date +%d-%m-%Y@%H:%M:%S)".XXXX)"
-            destfile="$TMP/backup_vault_$backupath.$(date +%d-%m-%Y@%H:%M:%S).tgz"
-        else
-            dest="$(mktemp -d -p "$TMP" -t backup_vault."$(date +%d-%m-%Y@%H:%M:%S)".XXXX)"
-            destfile="$TMP/backup_vault.$(date +%d-%m-%Y@%H:%M:%S).tgz"
-        fi
-    fi
-    debug "backup url=$url"
-    local old_http_code=$http_code
-    _cat "$url" > /dev/null
-    if [[ $http_code == "200" ]]; then
-        first="yes"
-        debug "backup: $url is NOT a folder"
-        mkdir -p "$(dirname "$dest/$url")"
-        echo -n "Backing up Vault to '$destfile'"
-        _cat "$url" | jq '.data' > "$dest/$url"
-    else
-        http_code=$old_http_code
-        _ls "-_disable_colors_-" "$url" > /dev/null
-        if [[ $http_code != "200" ]]; then
-            echo "'$url' does not exist"
-            return
-        fi
-        debug "backup: $url is a folder"
-        debug "${echo_space}backup: '$url', depth: $depth, dest: $dest, space: \"$space\""
-        # If no depth was passed then this iteration is the very first one, so depth=0
-        if [[ ! $depth ]]; then
-            depth=0
-            first="yes"
-            echo -n "Backing up Vault to '$destfile'"
-            if [[ $url != "/" ]]; then
-                mkdir -p "$dest/$url"
-            fi
-        # other wise we increment a depth as we go deeper in the structure
-        else
-            unset first
-            let depth++
-        fi
-        # if $url is /
-        #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
-        paths=$(_ls "-_disable_colors_-" "$url" | sed -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-        debug "${echo_space}   depth: $depth => found: $paths"
-        for path in $paths; do
-            space=${space/+/ }
-            if [[ $path =~ /$ ]]; then
-                _backup "$url$path" "$dest" "$depth" "$space+ " "$echo_space   " &
-            else
-                mkdir -p "$dest/$url"
-                debug "${echo_space}   backup: $url$path => $dest/$url/$path"
-                _cat "$url/$path" | jq '.data' > "$dest/$url/$path"
-                echo -n "."
-            fi
-        done
-    fi
-    wait
-    if [[ $first ]]; then
-        cd "$dest" || return
-        debug "backup: $url => $destfile"
-        tar cfz "$destfile" ./* > /dev/null
-        rm -fr "$dest"
-        echo " done"
-    fi
+    rm -rf -- "$dir"
+    printf "Vault backup created: %s\n" "$archive"
 }
 
 # restore vault backup
 function _restore(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local backup folder mount _url
-    backup="$1"
-    if [[ ! -r $backup ]]; then
-        echo "Error! Missing backup file"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    local first
-    local folder="$2"
-    local _url="$3"
-    local depth="$4"
-    local space="$5"
-    local echo_space="$6"
-    # If no depth was passed then this iteration is the very first one, so depth=0
-    if [[ ! $depth ]]; then
-        depth=0
-        first="yes"
-        echo -n "Restoring Vault backup from '$backup'"
-        folder="$(mktemp -d -p "$TMP" -t backup_vault-"$(date +%d-%m-%Y@%H:%M:%S)".XXXX)"
-        cd "$folder"
-        if ! tar xfz "$backup" > /dev/null 2>&1; then
-            echo "Error while extracting backup '$backup'"
-            rm -fr "$folder"
-            return
-        fi
-    # other wise we increment a depth as we go deeper in the structure
-    else
-        unset first
-        let depth++
-        cd "$folder"
-    fi
-    debug "${echo_space}restore: '$backup', folder: $folder, _url: $_url depth: $depth, space: \"$space\""
-    paths=$(find . -maxdepth 1 -not -iname "." | tr -t '\n' ' ')
-
-    debug "${echo_space}   depth: $depth => found: $paths"
-    for path in $paths; do
-        path=${path/.\/}
-        space=${space/+/ }
-        if [[ -d $path ]]; then
-            mount=$(echo "$_url" | sed -e "s/^\(\/[^/]\+\).*$/\1/")
-            if [[ $mount ]]; then
-                debug "${echo_space}   mount: $mount"
-                _mount -i "$mount" > /dev/null 2>&1
-            fi
-            _restore "$backup" "$PWD/$path" "$_url/$path" "$depth" "$space+ " "$echo_space   " &
-        else
-            debug "${echo_space}   put $_url/$path $(tr -d '\n' < "$PWD/$path" | tr -s ' ')"
-            _put "$_url/$path" "$(tr -d '\n' < "$PWD/$path" | tr -s ' ')"
-            echo -n "."
-        fi
-    done
-    wait
-    if [[ $first ]]; then
-        echo " done"
-    else
-        cd ..
-    fi
+    local archive="${1:-}" listing entry relative payload types entry_type
+    [[ -f $archive && -r $archive ]] || { echo "Missing backup file" >&2; return 1; }
+    listing=$(tar -tzf "$archive") || return 1
+    types=$(tar -tvzf "$archive") || return 1
+    while IFS= read -r entry_type; do
+        [[ -n $entry_type ]] || continue
+        case "${entry_type:0:1}" in -|d) :;; *)
+            echo "Unsupported archive member type" >&2; return 1;;
+        esac
+    done <<< "$types"
+    # Validate every entry before writing anything; never extract to the local disk.
+    while IFS= read -r entry; do
+        [[ -n $entry ]] || continue
+        relative="${entry#./}"
+        case "$relative" in
+            ""|.|*/) continue ;;
+            /*|..|../*|*/../*|*/..|./*|*/./*|*/.)
+                echo "Unsafe archive path: $entry" >&2; return 1;;
+        esac
+        case "$relative" in
+            sys/*|auth/*|identity/*|cubbyhole/*)
+                echo "Refusing administrative path" >&2; return 1;;
+        esac
+        [[ $relative == */* && $relative != *'//'* ]] || {
+            echo "Invalid archive path: $entry" >&2; return 1;
+        }
+    done <<< "$listing"
+    while IFS= read -r entry; do
+        [[ -n $entry ]] || continue
+        relative="${entry#./}"
+        [[ -n $relative && $relative != . && $relative != */ ]] || continue
+        payload=$(tar -xOzf "$archive" "$entry") || return 1
+        jq -e 'type == "object"' <<< "$payload" >/dev/null || return 1
+        _put "/$relative" "$payload" || return 1
+    done <<< "$listing"
+    printf "Vault backup restored: %s\n" "$archive"
 }
 
 # cat function
