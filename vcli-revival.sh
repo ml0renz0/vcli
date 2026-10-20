@@ -723,13 +723,29 @@ function _curl(){
     fi
     if [[ $ignore_http_code == no ]]; then
         http_code="$status"
+        # A successful HTTP status is not sufficient for a read. A truncated,
+        # empty or non-object response must fail closed, not fall back to cat.
+        if [[ $status == 2* && ( $method == GET || $method == LIST ) ]]; then
+            if [[ ! -s $response_file ]] ||
+               ! jq -e 'type == "object"' "$response_file" >/dev/null 2>&1; then
+                echo "vcli: invalid or empty JSON from Vault" >&2
+                rm -f "$response_file"
+                return 1
+            fi
+        fi
         if [[ $data == '-_list_root_-' ]]; then
-            jq -r '.data | keys[]' "$response_file" 2>/dev/null || true
+            jq -r '.data | keys[]' "$response_file" || {
+                rm -f "$response_file"; return 1;
+            }
         elif [[ -s $response_file ]]; then
             if [[ $kv2 == yes && $method == GET && $status == 2* ]]; then
-                jq 'if (.data.data | type) == "object" then .data = .data.data else . end' "$response_file"
+                jq 'if (.data.data | type) == "object" then .data = .data.data else . end' "$response_file" || {
+                    rm -f "$response_file"; return 1;
+                }
             else
-                jq '.' "$response_file" 2>/dev/null || cat "$response_file"
+                jq '.' "$response_file" || {
+                    rm -f "$response_file"; return 1;
+                }
             fi
         fi
     fi
