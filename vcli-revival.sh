@@ -1519,16 +1519,22 @@ function _put(){
     debug "$data"
     debug "uploading '$data' to '$url'"
     if [[ -z $cas ]] && vcli_is_kv2_path "$url"; then
-        local metadata version_response
+        local metadata metadata_file
         metadata=$(vcli_kv2_metadata_path "$url") || return 1
-        if version_response=$(_curl "$metadata"); then
-            cas=$(jq -er '.data.current_version | select(type=="number")' <<< "$version_response") || return 1
+        metadata_file=$(mktemp -p "$TMP" .vcli.metadata.XXXXXX) || return 1
+        # Preserve _curl's HTTP status in this shell (not a subshell).
+        if _curl "$metadata" > "$metadata_file"; then
+            cas=$(jq -er '.data.current_version | select(type=="number")' "$metadata_file") || {
+                rm -f "$metadata_file"; return 1;
+            }
         elif [[ $http_code == 404 ]]; then
             cas=0
         else
+            rm -f "$metadata_file"
             echo "vcli: unable to read KV v2 metadata before write" >&2
             return 1
         fi
+        rm -f "$metadata_file"
     fi
     _curl "$url" "$data" "POST" "$cas"
 }
