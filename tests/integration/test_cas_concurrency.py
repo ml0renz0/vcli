@@ -60,7 +60,8 @@ class CASContracts(unittest.TestCase):
         return api("GET", f"kv2/metadata/{self.p}/{name}")["data"]
 
     @contextmanager
-    def proxy(self, *, barrier_path=None, takeover_path=None, takeover_value=None):
+    def proxy(self, *, barrier_path=None, takeover_path=None, takeover_value=None,
+              takeover_after_post=None, takeover_before_delete=None):
         events = []
         state = {"claimed": False}
         barrier = Barrier(2) if barrier_path else None
@@ -80,11 +81,16 @@ class CASContracts(unittest.TestCase):
                 length = int(self.headers.get("Content-Length", "0"))
                 body = self.rfile.read(length) if length else None
 
-                # Inject a racing writer exactly between cptree preflight
-                # and the client's POST to the destination.
+                # Inject a competing writer before a destination write or
+                # immediately before the version-specific source delete.
                 if self.command == "POST" and self.path == takeover_path and not state["claimed"]:
                     state["claimed"] = True
                     test.write(takeover_value[0], takeover_value[1])
+                if (self.command == "POST" and takeover_before_delete is not None
+                        and self.path == takeover_before_delete[0]
+                        and not state["claimed"]):
+                    state["claimed"] = True
+                    test.write(takeover_before_delete[1], takeover_before_delete[2])
 
                 req = request.Request(
                     VAULT + self.path,
@@ -98,6 +104,12 @@ class CASContracts(unittest.TestCase):
                         status, payload = r.status, r.read()
                 except error.HTTPError as exc:
                     status, payload = exc.code, exc.read()
+
+                if (self.command == "POST" and takeover_after_post is not None
+                        and self.path == takeover_after_post[0] and 200 <= status < 300
+                        and not state["claimed"]):
+                    state["claimed"] = True
+                    test.write(takeover_after_post[1], takeover_after_post[2])
 
                 if self.command == "GET" and self.path == barrier_path:
                     try:
@@ -293,6 +305,69 @@ class CASContracts(unittest.TestCase):
         self.assertEqual(self.metadata(src)["current_version"], 1)
 
 
+
+    def test_12_mv_kv2_soft_deletes_exact_source_version(self):
+        src, dest = "move-version/src", "move-version/dest"
+        self.write(src, {"original": "v1"})
+        result, _ = invoke(f"mv {self.secret(src)} {self.secret(dest)}", version=2)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.read(dest)["data"], {"original": "v1"})
+        with self.assertRaises(error.HTTPError) as caught:
+            self.read(src)
+        self.assertEqual(caught.exception.code, 404)
+        meta = self.metadata(src)
+        self.assertEqual(meta["current_version"], 1)
+        self.assertTrue(meta["versions"]["1"]["deletion_time"])
+
+    def test_13_mv_detects_source_change_after_copy_and_preserves_latest(self):
+        src, dest = "move-after-copy/src", "move-after-copy/dest"
+        self.write(src, {"before": "move"})
+        destination_post = f"/v1/kv2/data/{self.p}/{dest}"
+        with self.proxy(takeover_after_post=(destination_post, src, {"newer": "writer"})) as (url, events):
+            out, _ = invoke(f"mv {self.secret(src)} {self.secret(dest)}",
+                            version=2, addr=url,
+                            env_extra={"VAULT_CACERT": str(self.cert)})
+        self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("PARTIAL mv", out.stderr)
+        self.assertIn("completed=1", out.stderr)
+        self.assertEqual(self.read(src)["data"], {"newer": "writer"})
+        self.assertEqual(self.metadata(src)["current_version"], 2)
+        self.assertEqual(self.read(dest)["data"], {"before": "move"})
+        self.assertFalse(any(m == "DELETE" and "/data/" in p for m, p, _ in events))
+        self.assertFalse(any(m == "POST" and "/delete/" in p for m, p, _ in events))
+
+    def test_14_mv_uses_version_specific_delete_to_preserve_late_writer(self):
+        src, dest = "move-delete-race/src", "move-delete-race/dest"
+        self.write(src, {"old": 1})
+        delete_target = f"/v1/kv2/delete/{self.p}/{src}"
+        with self.proxy(takeover_before_delete=(delete_target, src, {"newer": 2})) as (url, events):
+            out, _ = invoke(f"mv {self.secret(src)} {self.secret(dest)}",
+                            version=2, addr=url,
+                            env_extra={"VAULT_CACERT": str(self.cert)})
+        self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("PARTIAL mv", out.stderr)
+        self.assertEqual(self.read(src)["data"], {"newer": 2})
+        self.assertEqual(self.read(dest)["data"], {"old": 1})
+        self.assertEqual(self.metadata(src)["current_version"], 2)
+        self.assertFalse(any(m == "DELETE" and "/data/" in p for m, p, _ in events))
+        self.assertEqual(len([e for e in events if e[0] == "POST" and e[1] == delete_target]), 1)
+
+    def test_15_mv_supports_nested_kv2_mount(self):
+        src, dest = "nested-move/src", "nested-move/dest"
+        api("POST", f"team/config/data/{self.p}/{src}", {"data": {"nested": True}})
+        out, _ = invoke(
+            f"mv team/config/{self.p}/{src} team/config/{self.p}/{dest}",
+            version=2,
+        )
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        copy = api("GET", f"team/config/data/{self.p}/{dest}")
+        self.assertEqual(copy["data"]["data"], {"nested": True})
+        with self.assertRaises(error.HTTPError) as caught:
+            api("GET", f"team/config/data/{self.p}/{src}")
+        self.assertEqual(caught.exception.code, 404)
+        meta = api("GET", f"team/config/metadata/{self.p}/{src}")["data"]
+        self.assertEqual(meta["current_version"], 1)
+        self.assertTrue(meta["versions"]["1"]["deletion_time"])
 
 
 if __name__ == "__main__":
