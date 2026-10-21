@@ -1447,28 +1447,71 @@ function _cp(){
 
 # mv function
 function _mv(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    local dest="$2"
-    if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd$url"
+    local source destination snapshot source_version payload dest_result latest latest_version
+    source=$(_vcli_absolute_path "${1:-}") || return 1
+    destination=$(_vcli_absolute_path "${2:-}") || return 1
+    [[ $source != "$destination" ]] || { echo "Cannot move to same path" >&2; return 1; }
+
+    # KV v1 has no version-specific delete; retain historical behavior.
+    if ! vcli_is_kv2_path "$source"; then
+        _cp "$source" "$destination" && _rm "$source"
+        return $?
     fi
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "${funcname//_/}"
-        return
+
+    # Snapshot the exact version to be copied, including nested KV2 mounts.
+    snapshot=$(_curl "$source" "" GET raw) || return 1
+    source_version=$(jq -er '.data.metadata.version | select(type=="number")' <<< "$snapshot") || return 1
+    payload=$(jq -ce '.data.data | select(type=="object")' <<< "$snapshot") || return 1
+
+    # Moving between engines is permitted; KV2 destination uses create-only CAS.
+    if vcli_is_kv2_path "$destination"; then
+        _put "$destination" "$payload" 0 || return 1
+    else
+        _put "$destination" "$payload" || return 1
     fi
-    if [[ ! $dest =~ ^/ ]]; then
-        dest="$current_pwd$dest"
+
+    # After the copy, re-read the origin to detect an intervening writer.
+    latest=$(_curl "$source" "" GET raw) || {
+        _vcli_partial_failure mv 1 2 "$source"; return 1;
+    }
+    latest_version=$(jq -er '.data.metadata.version | select(type=="number")' <<< "$latest") || {
+        _vcli_partial_failure mv 1 2 "$source"; return 1;
+    }
+    if [[ $latest_version != "$source_version" ]]; then
+        echo "vcli: source changed during move; destination contains copied version" >&2
+        _vcli_partial_failure mv 1 2 "$source"
+        return 1
     fi
-    if [[ ! $dest ]]; then
-        echo "Error! Missing destination"
-        commands_help "${funcname//_/}"
-        return
+
+    # KV2 /delete only marks the given version, NEVER a later current version.
+    # This cannot be made atomic with the destination write.
+    local mount metadata path_file delete_path
+    metadata=$(vcli_kv2_metadata_path "$source") || {
+        _vcli_partial_failure mv 1 2 "$source"; return 1;
+    }
+    delete_path="${metadata/\/metadata\//\/delete\/}"
+    path_file=$(mktemp -p "$TMP" .vcli-delete.XXXXXX) || {
+        _vcli_partial_failure mv 1 2 "$source"; return 1;
+    }
+    printf '{"versions":[%s]}\n' "$source_version" > "$path_file"
+    _curl "$delete_path" "$path_file" POST || {
+        _vcli_partial_failure mv 1 2 "$source"; return 1;
+    }
+    # A newer version may have been created immediately before the deletion.
+    # Detect it; never claim the whole move was successful in that case.
+    local after after_version
+    after=$(_curl "$metadata") || {
+        _vcli_partial_failure mv 1 2 "$source"; return 1;
+    }
+    after_version=$(jq -er '.data.current_version | select(type=="number")' <<< "$after") || {
+        _vcli_partial_failure mv 1 2 "$source"; return 1;
+    }
+    if [[ $after_version != "$source_version" ]]; then
+        echo "vcli: source advanced during version-specific deletion" >&2
+        _vcli_partial_failure mv 1 2 "$source"
+        return 1
     fi
-    debug "mv: url=$url dest=$dest"
-    _cp "$url" "$dest" && _rm "$url"
+    printf "Moved version %s from '%s' to '%s'\n" "$source_version" "$source" "$destination"
 }
 
 # rm function
