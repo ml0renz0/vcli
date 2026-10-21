@@ -610,7 +610,7 @@ function vcli_kv_path(){
         if [[ -z $mount || $path != "$mount/"* ]]; then continue; fi
         rest="${path#"$mount/"}"
         case "$rest" in
-            data/*|metadata/*) printf '%s' "$path"; return;;
+            data/*|metadata/*|delete/*) printf '%s' "$path"; return;;
         esac
         case "$method" in
             LIST) printf '%s/metadata/%s' "$mount" "$rest" ;;
@@ -708,7 +708,7 @@ function _curl(){
             mount="${mount#/}"; mount="${mount%/}"
             [[ -z $mount || $path != "$mount/"* ]] && continue
             rest="${path#"$mount/"}"
-            [[ $rest == data/* || $rest == metadata/* ]] && break
+            [[ $rest == data/* || $rest == metadata/* || $rest == delete/* ]] && break
             case "$method" in GET|POST|PUT|PATCH|DELETE|LIST)
                 kv2=yes; path=$(vcli_kv_path "$path" "$method");;
             esac
