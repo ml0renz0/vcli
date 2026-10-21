@@ -68,3 +68,23 @@ del subárbol solicitado.
 El test `restore` forma parte del roundtrip de backup y no llegará a
 validar la restauración completa mientras falle antes la comprobación
 de contenido del archivo. Esto no debe contarse como cobertura verde.
+
+## KV v2 safe moves
+
+El comando `mv` conserva la semántica de copiar + borrar (no es atómico).
+En KV v2 captura la versión exacta del origen con una lectura de datos y
+metadatos, crea el destino con `cas=0`, comprueba la versión original y
+después usa `POST <mount>/delete/<path>` con `{"versions":[N]}` para
+borrar **solo esa versión**, nunca la versión actual que haya creado otro
+proceso mientras tanto.
+
+Se valida una segunda vez `current_version` después del borrado para
+avisar del resultado parcial si se detecta un escritor concurrente.
+Una carrera puede seguir ocurrir después de esa comprobación, y una pérdida
+de respuesta puede hacer ambiguo el resultado: no se promete aislamiento
+transaccional ni rollback.
+
+Los tests `test_12` a `test_15` de
+`tests/integration/test_cas_concurrency.py` ejercitan borrado versionado,
+modificación justo después de copiar, cambio concurrente durante el borrado
+y montajes KV v2 anidados.
