@@ -1516,19 +1516,26 @@ function _mv(){
 
 # rm function
 function _rm(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd$1"
+    local path snapshot version metadata delete_path payload after after_version
+    path=$(_vcli_absolute_path "${1:-}") || return 1
+    if ! vcli_is_kv2_path "$path"; then
+        _curl "$path" "" DELETE
+        return $?
     fi
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "${funcname//_/}"
-        return
+    # Read the live version, not the whole metadata history.
+    snapshot=$(_curl "$path" "" GET raw) || return 1
+    version=$(jq -er '.data.metadata.version | select(type=="number")' <<< "$snapshot") || return 1
+    metadata=$(vcli_kv2_metadata_path "$path") || return 1
+    delete_path="${metadata/\/metadata\//\/delete\/}"
+    payload=$(mktemp -p "$TMP" .vcli-delete.XXXXXX) || return 1
+    printf '{"versions":[%s]}\n' "$version" > "$payload"
+    _curl "$delete_path" "$payload" POST || return 1
+    after=$(_curl "$metadata") || return 1
+    after_version=$(jq -er '.data.current_version | select(type=="number")' <<< "$after") || return 1
+    if [[ $after_version != "$version" ]]; then
+        printf 'vcli: source advanced during version-specific delete: %s\n' "$path" >&2
+        return 1
     fi
-    debug "rm: url=$url"
-    _curl "$url" "" "DELETE"
 }
 
 # put function
