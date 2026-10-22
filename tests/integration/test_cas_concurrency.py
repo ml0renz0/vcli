@@ -370,5 +370,108 @@ class CASContracts(unittest.TestCase):
         self.assertTrue(meta["versions"]["1"]["deletion_time"])
 
 
+    def test_16_rm_kv2_only_soft_deletes_captured_version(self):
+        name = "delete-version/item"
+        self.write(name, {"first": True})
+        self.write(name, {"second": True})
+        result, _ = invoke(f"rm {self.secret(name)}", version=2)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        with self.assertRaises(error.HTTPError) as caught:
+            self.read(name)
+        self.assertEqual(caught.exception.code, 404)
+        versions = self.metadata(name)["versions"]
+        self.assertEqual(self.metadata(name)["current_version"], 2)
+        self.assertFalse(versions["1"]["deletion_time"])
+        self.assertTrue(versions["2"]["deletion_time"])
+        self.assertFalse(versions["2"]["destroyed"])
+        # Historical data must remain restorable after a logical deletion.
+        recovered = api("GET", f"kv2/data/{self.p}/{name}?version=1")
+        self.assertEqual(recovered["data"]["data"], {"first": True})
+
+    def test_17_rm_does_not_delete_concurrent_new_version(self):
+        name = "delete-race/item"
+        self.write(name, {"before": 1})
+        target = f"/v1/kv2/delete/{self.p}/{name}"
+        with self.proxy(takeover_before_delete=(target, name, {"newer": 2})) as (url, events):
+            out, history = invoke(f"rm {self.secret(name)}", version=2, addr=url,
+                                  env_extra={"VAULT_CACERT": str(self.cert)})
+        self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("source advanced", out.stderr.lower())
+        self.assertEqual(self.read(name)["data"], {"newer": 2})
+        versions = self.metadata(name)["versions"]
+        self.assertEqual(self.metadata(name)["current_version"], 2)
+        self.assertTrue(versions["1"]["deletion_time"])
+        self.assertFalse(versions["2"]["deletion_time"])
+        self.assertEqual(len([e for e in events if e[0] == "POST" and e[1] == target]), 1)
+        self.assertFalse(any(m == "DELETE" and "/data/" in p for m, p, _ in events))
+
+    def test_18_rmtree_works_with_read_list_and_version_delete_only(self):
+        name = "leastpriv/tree"
+        self.write(f"{name}/a", {"id": "a"})
+        self.write(f"{name}/sub/b", {"id": "b"})
+        self.write("leastpriv/sentinel", {"keep": True})
+        policy = f"vcli-least-delete-{uuid4().hex[:12]}"
+        rules = (
+            f'path "kv2/data/{self.p}/*" {{ capabilities = ["read"] }}\n'
+            f'path "kv2/metadata/{self.p}/*" {{ capabilities = ["list"] }}\n'
+            f'path "kv2/delete/{self.p}/*" {{ capabilities = ["update"] }}\n'
+        )
+        api("PUT", f"sys/policies/acl/{policy}", {"policy": rules})
+        limited = api("POST", "auth/token/create", {
+            "policies": [policy], "no_default_policy": True, "ttl": "10m"
+        })["auth"]["client_token"]
+        try:
+            out, history = invoke(f"rmtree -f {self.secret(name)}", version=2,
+                                  token=limited)
+            self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertNotIn(limited, out.stdout + out.stderr + history)
+            for leaf in (f"{name}/a", f"{name}/sub/b"):
+                with self.subTest(leaf=leaf):
+                    with self.assertRaises(error.HTTPError) as caught:
+                        self.read(leaf)
+                    self.assertEqual(caught.exception.code, 404)
+                    info = self.metadata(leaf)["versions"]["1"]
+                    self.assertTrue(info["deletion_time"])
+                    self.assertFalse(info["destroyed"])
+            self.assertEqual(self.read("leastpriv/sentinel")["data"], {"keep": True})
+            # The token cannot destroy versions or metadata.
+            with self.assertRaises(error.HTTPError) as caught:
+                api("POST", f"kv2/destroy/{self.p}/{name}/a",
+                    {"versions": [1]}, token=limited)
+            self.assertEqual(caught.exception.code, 403)
+        finally:
+            api("POST", "auth/token/revoke", {"token": limited})
+
+    def test_19_rm_does_not_mutate_when_version_delete_permission_missing(self):
+        name = "deny-version-delete/item"
+        self.write(name, {"retain": True})
+        policy = f"vcli-no-version-delete-{uuid4().hex[:12]}"
+        rules = f'path "kv2/data/{self.p}/*" {{ capabilities = ["read"] }}\n'
+        api("PUT", f"sys/policies/acl/{policy}", {"policy": rules})
+        limited = api("POST", "auth/token/create", {
+            "policies": [policy], "no_default_policy": True, "ttl": "10m"
+        })["auth"]["client_token"]
+        try:
+            out, _ = invoke(f"rm {self.secret(name)}", version=2, token=limited)
+            self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertEqual(self.read(name)["data"], {"retain": True})
+            info = self.metadata(name)["versions"]["1"]
+            self.assertFalse(info["deletion_time"])
+            self.assertFalse(info["destroyed"])
+        finally:
+            api("POST", "auth/token/revoke", {"token": limited})
+
+    def test_20_rm_rejects_deleted_source_without_history_destruction(self):
+        name = "already-soft-deleted/item"
+        self.write(name, {"original": True})
+        api("DELETE", f"kv2/data/{self.p}/{name}")
+        out, _ = invoke(f"rm {self.secret(name)}", version=2)
+        self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+        meta = self.metadata(name)
+        self.assertEqual(meta["current_version"], 1)
+        self.assertTrue(meta["versions"]["1"]["deletion_time"])
+        self.assertFalse(meta["versions"]["1"]["destroyed"])
+
+
 if __name__ == "__main__":
     unittest.main()
