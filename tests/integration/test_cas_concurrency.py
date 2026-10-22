@@ -413,7 +413,7 @@ class CASContracts(unittest.TestCase):
         policy = f"vcli-least-delete-{uuid4().hex[:12]}"
         rules = (
             f'path "kv2/data/{self.p}/*" {{ capabilities = ["read"] }}\n'
-            f'path "kv2/metadata/{self.p}/*" {{ capabilities = ["list"] }}\n'
+            f'path "kv2/metadata/{self.p}/*" {{ capabilities = ["read", "list"] }}\n'
             f'path "kv2/delete/{self.p}/*" {{ capabilities = ["update"] }}\n'
         )
         api("PUT", f"sys/policies/acl/{policy}", {"policy": rules})
