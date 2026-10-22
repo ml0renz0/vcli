@@ -106,6 +106,7 @@ declare -A vcli_commands=(
                       [ls]=arg
                       [lsrole]=noarg
                       [showrole]=arg
+                      [renew-token]=arg
                       [lspol]=noarg
                       [showpol]=arg
                       [tree]=arg
@@ -151,6 +152,7 @@ declare -A vcli_commands_help=(
         [ls]="ls path/to/secret \n  lists paths and secrets on $current_pwd/path/to/secret"
         [lsrole]="lsrole \n  lists Vault roles"
         [showrole]="showrole myrole \n  shows Vault role named myrole"
+        [renew-token]="renew-token [increment] \n  renews current Vault token (e.g. 45s, 5m)"
         [lspol]="lspol \n  lists Vault policies"
         [showpol]="showpol mypolicy \n  shows Vault policy named mypolicy"
         [tree]="tree path/to/secret \n  prints vault's secrets tree with $current_pwd/path/to/secret as its root"
@@ -687,6 +689,63 @@ function _vcli_leaves(){
     done <<< "$entries"
 }
 
+# AppRole login uses the same TLS verification as ordinary Vault calls.
+# Never print role_id, secret_id or the resulting client token.
+function _vcli_login_approle(){
+    local role_id="${VAULT_ROLE_ID:-}" secret_id="${VAULT_SECRET_ID:-}" response_file payload_file code status
+    [[ -n $role_id && -n $secret_id ]] || {
+        echo "vcli: incomplete AppRole credentials" >&2; return 1;
+    }
+    response_file=$(mktemp -p "$TMP" .vcli.auth.XXXXXX) || return 1
+    payload_file=$(mktemp -p "$TMP" .vcli.auth-data.XXXXXX) || {
+        rm -f "$response_file"; return 1;
+    }
+    jq -cn --arg rid "$role_id" --arg sid "$secret_id"         '{role_id:$rid,secret_id:$sid}' > "$payload_file" || {
+        rm -f "$response_file" "$payload_file"; return 1;
+    }
+    local -a args=(--silent --show-error --connect-timeout "${VCLI_CONNECT_TIMEOUT:-2}"
+        --max-time "${VCLI_HTTP_TIMEOUT:-30}" --request POST
+        --header "Content-Type: application/json" --data-binary "@$payload_file"
+        --output "$response_file" --write-out '%{http_code}')
+    case "${VAULT_SKIP_VERIFY:-false}" in 1|true|TRUE|yes|YES) args+=(--insecure);; esac
+    [[ -n ${VAULT_CACERT:-} ]] && args+=(--cacert "$VAULT_CACERT")
+    [[ -n ${VAULT_CAPATH:-} ]] && args+=(--capath "$VAULT_CAPATH")
+    [[ -n ${VAULT_NAMESPACE:-} ]] && args+=(--header "X-Vault-Namespace: $VAULT_NAMESPACE")
+    status=$(curl "${args[@]}" "$protocol://$vault_host:$vault_port/v1/auth/approle/login")
+    code=$?
+    rm -f "$payload_file"
+    if (( code != 0 )) || [[ $status != 2* ]]; then
+        rm -f "$response_file"
+        echo "vcli: AppRole login failed" >&2
+        return 1
+    fi
+    vault_token=$(jq -er '.auth.client_token | select(type=="string" and length>0)' "$response_file") || {
+        rm -f "$response_file"
+        echo "vcli: invalid AppRole response" >&2
+        return 1
+    }
+    rm -f "$response_file"
+}
+function _renew_token(){
+    local increment="${1:-}" payload response
+    if [[ -n $increment && ! $increment =~ ^[0-9]+(s|m|h)?$ ]]; then
+        echo "vcli: invalid renewal increment" >&2; return 1;
+    fi
+    payload=$(mktemp -p "$TMP" .vcli.renew.XXXXXX) || return 1
+    if [[ -n $increment ]]; then
+        jq -cn --arg value "$increment" '{increment:$value}' > "$payload"
+    else
+        printf '{}\n' > "$payload"
+    fi
+    response=$(_curl "/auth/token/renew-self" "$payload" POST) || {
+        echo "vcli: token renewal failed" >&2; return 1;
+    }
+    jq -e '.auth.renewable == true' <<< "$response" >/dev/null || {
+        echo "vcli: token is not renewable" >&2; return 1;
+    }
+    echo "Vault token renewed"
+}
+
 # simplified curl function
 function _curl(){
     local ignore_http_code=no disable_fail=no
@@ -819,6 +878,7 @@ function run_cmd(){
             ls)                     _ls "$arg1" ;;
             lsrole)                 _lsrole ;;
             showrole)               _showrole "$arg1" ;;
+            renew-token)            _renew_token "$arg1" ;;
             lspol)                  _lspol ;;
             showpol)                _showpol "$arg1" ;;
             tree)                   backIFS=$IFS; IFS=$' ' ; _tree "$arg1"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
@@ -2219,6 +2279,9 @@ function main(){
 
     # Check for correct arguments
     check_arg "$vault_host" "Vault host"
+    if [[ -z $vault_token ]]; then
+        _vcli_login_approle || exit 1
+    fi
     check_arg "$vault_token" "Vault token"
 
     # Check connectivity
