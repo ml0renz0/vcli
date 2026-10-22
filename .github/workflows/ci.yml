@@ -29,10 +29,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Install quality tools
+      - name: Ensure quality tools
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq jq curl shellcheck gettext-base
+          missing=()
+          for cmd in jq curl shellcheck; do
+            command -v "$cmd" >/dev/null || missing+=("$cmd")
+          done
+          if (( ${#missing[@]} )); then
+            sudo apt-get update -qq -o Acquire::Retries=2 -o Acquire::http::Timeout=10
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
+          fi
+          for cmd in jq curl shellcheck; do command -v "$cmd"; done
       - name: CLI contract (no Vault required)
         run: python3 -m unittest -v tests.cli.test_cli_contract
       - name: Bash syntax and ShellCheck
@@ -54,10 +61,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Install runtime dependencies
+      - name: Ensure runtime dependencies
         run: |
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq jq curl gettext-base openssl
+          missing=()
+          for cmd in jq curl openssl; do
+            command -v "$cmd" >/dev/null || missing+=("$cmd")
+          done
+          if (( ${#missing[@]} )); then
+            sudo apt-get update -qq -o Acquire::Retries=2 -o Acquire::http::Timeout=10
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
+          fi
+          for cmd in jq curl openssl; do command -v "$cmd"; done
       - name: Validate production candidate
         run: bash -n ./vcli-revival.sh
       - name: Test against real Vault
