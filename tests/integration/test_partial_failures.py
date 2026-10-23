@@ -259,9 +259,15 @@ class InterruptedOperations(unittest.TestCase):
             )
         writes = [(method, status) for method, path, status in observed
                   if method == "POST" and path.startswith(target)]
-        self.assertEqual(len(writes), 2, writes)
+        # Revocation blocks reading the next source secret, preventing
+        # another destination write entirely.
+        self.assertEqual(len(writes), 1, writes)
         self.assertIn(writes[0][1], (200, 204))
-        self.assertEqual(writes[1][1], 403)
+        self.assertEqual(
+            len([status for method, path, status in observed
+                 if method == "GET" and path.endswith("/revoked-copy/source/z")
+                 and status == 403]), 1, observed
+        )
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("PARTIAL cptree", out.stderr)
         self.assertIn("completed=1", out.stderr)
