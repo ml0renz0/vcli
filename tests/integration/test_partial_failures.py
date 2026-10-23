@@ -63,7 +63,7 @@ class InterruptedOperations(unittest.TestCase):
         self.assertEqual(caught.exception.code, 404)
 
     @contextmanager
-    def proxy(self, *, fail_method, fail_prefix, fail_index=2):
+    def proxy(self, *, fail_method, fail_prefix, fail_index=2, revoke_token=None):
         """Terminate test TLS locally, then forward over *verified* TLS to Vault."""
         observations = []
         state = {"matched": 0}
@@ -86,7 +86,7 @@ class InterruptedOperations(unittest.TestCase):
                 inject = self.command == fail_method and self.path.startswith(fail_prefix)
                 if inject:
                     state["matched"] += 1
-                    if state["matched"] == fail_index:
+                    if revoke_token is None and state["matched"] == fail_index:
                         payload = b'{"errors":["injected failure after prior success"]}'
                         observations.append((self.command, self.path, 503))
                         self.respond(503, payload)
@@ -105,6 +105,12 @@ class InterruptedOperations(unittest.TestCase):
                     status = exc.code
                     payload = exc.read()
                 observations.append((self.command, self.path, status))
+                # The first Vault mutation really succeeded. Revoke the
+                # restricted token using our independent root API before
+                # responding, so the next request sees a genuine Vault 403.
+                if (revoke_token is not None and inject and
+                        state["matched"] == 1 and 200 <= status < 300):
+                    api("POST", "auth/token/revoke", {"token": revoke_token})
                 self.respond(status, payload)
 
             def respond(self, status, payload):
@@ -217,6 +223,100 @@ class InterruptedOperations(unittest.TestCase):
             self.assertEqual(len([s for m, p, s in observed if m == "GET" and p.startswith(target)]), 2)
         self.assertEqual(self.stored("backup/a"), {"id": "a"})
         self.assertEqual(self.stored("backup/z"), {"id": "z"})
+
+
+    def create_limited_token(self):
+        policy = "vcli-revoke-" + uuid4().hex[:12]
+        api("PUT", f"sys/policies/acl/{policy}", {
+            "policy": (
+                f'path "kv1/{self.unique}/*" '
+                '{ capabilities = ["create","read","update","delete","list"] }'
+            ),
+        })
+        return api("POST", "auth/token/create", {
+            "policies": [policy], "no_default_policy": True, "ttl": "2m",
+        })["auth"]["client_token"]
+
+    def restricted_cli(self, command, address, token):
+        out, history = invoke(
+            command, token=token, addr=address,
+            env_extra={"VAULT_CACERT": str(self.cert)},
+        )
+        self.assertNotIn(token, out.stdout + out.stderr + history)
+        self.assertNotIn(ROOT_TOKEN, out.stdout + out.stderr + history)
+        return out
+
+    def test_05_cptree_stops_after_real_token_revocation(self):
+        self.store("revoked-copy/source/a", {"id": "a"})
+        self.store("revoked-copy/source/z", {"id": "z"})
+        token = self.create_limited_token()
+        target = f"/v1/{self.path('revoked-copy/dest')}/"
+        with self.proxy(fail_method="POST", fail_prefix=target,
+                        revoke_token=token) as (address, observed):
+            out = self.restricted_cli(
+                f"cptree {self.path('revoked-copy/source')} "
+                f"{self.path('revoked-copy/dest')}", address, token
+            )
+        writes = [(method, status) for method, path, status in observed
+                  if method == "POST" and path.startswith(target)]
+        self.assertEqual(len(writes), 2, writes)
+        self.assertIn(writes[0][1], (200, 204))
+        self.assertEqual(writes[1][1], 403)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("PARTIAL cptree", out.stderr)
+        self.assertIn("completed=1", out.stderr)
+        self.assertEqual(self.stored("revoked-copy/dest/a"), {"id": "a"})
+        self.absent("revoked-copy/dest/z")
+        self.assertEqual(self.stored("revoked-copy/source/z"), {"id": "z"})
+
+    def test_06_rmtree_stops_after_real_token_revocation(self):
+        self.store("revoked-delete/a", {"id": "a"})
+        self.store("revoked-delete/z", {"id": "z"})
+        self.store("revoked-delete-safe/sentinel", {"safe": True})
+        token = self.create_limited_token()
+        target = f"/v1/{self.path('revoked-delete')}/"
+        with self.proxy(fail_method="DELETE", fail_prefix=target,
+                        revoke_token=token) as (address, observed):
+            out = self.restricted_cli(
+                f"rmtree -f {self.path('revoked-delete')}", address, token
+            )
+        deletes = [(method, status) for method, path, status in observed
+                   if method == "DELETE" and path.startswith(target)]
+        self.assertEqual(len(deletes), 2, deletes)
+        self.assertIn(deletes[0][1], (200, 204))
+        self.assertEqual(deletes[1][1], 403)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("PARTIAL rmtree", out.stderr)
+        self.assertIn("completed=1", out.stderr)
+        self.absent("revoked-delete/a")
+        self.assertEqual(self.stored("revoked-delete/z"), {"id": "z"})
+        self.assertEqual(self.stored("revoked-delete-safe/sentinel"), {"safe": True})
+
+    def test_07_restore_stops_after_real_token_revocation(self):
+        token = self.create_limited_token()
+        target = f"/v1/{self.path('revoked-restore')}/"
+        with tempfile.TemporaryDirectory(prefix="vcli-revocation-tar-") as tmp:
+            archive = Path(tmp) / "revocation.tgz"
+            with tarfile.open(archive, "w:gz") as tar:
+                for leaf in ("a", "z"):
+                    data = ('{"id":"' + leaf + '"}').encode()
+                    member = tarfile.TarInfo(self.path("revoked-restore/" + leaf))
+                    member.size = len(data)
+                    tar.addfile(member, io.BytesIO(data))
+            with self.proxy(fail_method="POST", fail_prefix=target,
+                            revoke_token=token) as (address, observed):
+                out = self.restricted_cli(f"restore {archive}", address, token)
+        writes = [(method, status) for method, path, status in observed
+                  if method == "POST" and path.startswith(target)]
+        self.assertEqual(len(writes), 2, writes)
+        self.assertIn(writes[0][1], (200, 204))
+        self.assertEqual(writes[1][1], 403)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("PARTIAL restore", out.stderr)
+        self.assertIn("completed=1", out.stderr)
+        self.assertEqual(self.stored("revoked-restore/a"), {"id": "a"})
+        self.absent("revoked-restore/z")
+
 
 
 if __name__ == "__main__":
