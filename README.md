@@ -65,3 +65,16 @@ Now it has become a useful tool here at [Stratio](http://www.stratio.com)
 * Ángel Prada ([angelprada](https://github.com/angelprada))
 * Viktor Jacynycz ([vjacynycz-stratio](https://github.com/vjacynycz-stratio))
 
+
+## Revival work in progress (0.7)
+
+The original Bash CLI (`vcli`) is retained as a historical reference.
+The **tested modernization candidate** is [`vcli-revival.sh`](vcli-revival.sh).
+
+- [CLI behavior contract](docs/CLI-CONTRACT.md) describes user-visible behavior.
+- [CI and real-Vault test matrix](docs/CI-CD.md) explains test coverage and blockers.
+- [Revival notes](docs/REVIVAL.md) document the temporary naming and rollout.
+
+The CI starts ephemeral real HashiCorp Vault servers with native TLS and
+verifies read/write behavior independently through the Vault HTTP API.
+The candidate is not yet declared production-stable.
