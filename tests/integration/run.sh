@@ -82,3 +82,27 @@ HCL
 # This token has no write/delete/create privileges.
 export VCLI_TEST_READONLY_TOKEN="$(v token create -policy=vcli-ci-ro -orphan -field=token)"
 python3 -m unittest -v tests.integration.test_vault tests.integration.test_operations tests.integration.test_kv2_advanced tests.integration.test_security tests.integration.test_fault_injection tests.integration.test_partial_failures tests.integration.test_cas_concurrency tests.integration.test_auth_lifecycle tests.integration.test_tls tests.integration.test_repl
+
+# Destructive last-stage test: seal the actual ephemeral Vault only after all
+# normal integration cases have completed successfully.
+v operator seal
+sealed_status=$(curl --silent --show-error --cacert "$VAULT_CACERT" \
+  --output /dev/null --write-out '%{http_code}' "$VAULT_ADDR/v1/sys/health")
+[[ $sealed_status == 503 ]] || {
+  echo "Expected sealed Vault HTTP 503, got $sealed_status" >&2
+  exit 1
+}
+# Neither reading nor writing can produce a successful CLI exit once sealed.
+if printf 'cat kv1/sealed-smoke\n' | ./vcli-revival.sh -n >/dev/null 2>"$tls_dir/sealed-read.err"; then
+  echo 'VCLI falsely reports successful read against sealed Vault' >&2
+  exit 1
+fi
+if printf 'put kv1/sealed-smoke {"x":1}\n' | ./vcli-revival.sh -n >/dev/null 2>"$tls_dir/sealed-write.err"; then
+  echo 'VCLI falsely reports successful write against sealed Vault' >&2
+  exit 1
+fi
+if grep -Fq "$root_token" "$tls_dir/sealed-read.err" ||
+   grep -Fq "$root_token" "$tls_dir/sealed-write.err"; then
+  echo 'VCLI leaked credentials while Vault was sealed' >&2
+  exit 1
+fi
