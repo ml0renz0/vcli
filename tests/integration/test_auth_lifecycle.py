@@ -6,6 +6,9 @@ creates short-lived roles/tokens in the throwaway TLS Vault fixture.
 from __future__ import annotations
 
 import os
+from pathlib import Path
+import subprocess
+import tempfile
 import time
 import unittest
 from urllib import error
@@ -133,6 +136,105 @@ class AuthLifecycleContracts(unittest.TestCase):
             self.assertNotIn(created, result.stdout + result.stderr + history)
             info = api("POST", "auth/token/lookup", {"token": created})["data"]
             self.assertFalse(info["renewable"])
+        finally:
+            api("POST", "auth/token/revoke", {"token": created})
+
+
+    def run_timed_session(self, first, second, token, *, pause=5.5):
+        """Keep ONE Bash process alive past a short original token TTL.
+
+        The first command is flushed to stdin while the process is running.
+        After the pause the same process executes the second command. This
+        catches a CLI that quietly restarts/re-authenticates for each command.
+        """
+        with tempfile.TemporaryDirectory(prefix="vcli-session-auth-") as home:
+            env = os.environ.copy()
+            env.update({
+                "HOME": home, "TMPDIR": home, "TERM": "dumb",
+                "VAULT_ADDR": VAULT, "VAULT_TOKEN": token,
+                "VAULT_CACERT": os.environ["VAULT_CACERT"],
+                "VAULT_KV_VERSION": "1",
+                "VAULT_ROLE_ID": "", "VAULT_SECRET_ID": "",
+            })
+            proc = subprocess.Popen(
+                [str(Path(__file__).resolve().parents[2] / "vcli-revival.sh"), "-n"],
+                env=env, text=True, stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            try:
+                proc.stdin.write(first + "\n")
+                proc.stdin.flush()
+                time.sleep(pause)
+                proc.stdin.write(second + "\n")
+                proc.stdin.close()
+                proc.stdin = None
+                stdout, stderr = proc.communicate(timeout=20)
+                history_path = Path(home) / ".vclistory"
+                history = history_path.read_text() if history_path.exists() else ""
+                self.assertNotIn(token, stdout + stderr + history)
+                return proc.returncode, stdout, stderr, history
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.communicate(timeout=5)
+
+    def test_10_renewed_token_survives_original_ttl_in_same_session(self):
+        created = api("POST", "auth/token/create", {
+            "ttl": "4s", "explicit_max_ttl": "45s", "renewable": True,
+            "policies": [self.policy], "no_default_policy": True,
+        })["auth"]["client_token"]
+        try:
+            status, stdout, stderr, _ = self.run_timed_session(
+                "renew-token 25s", f"cat {self.leaf}", created
+            )
+            self.assertEqual(status, 0, stdout + stderr)
+            self.assertIn("Vault token renewed", stdout)
+            self.assertIn('"can"', stdout)
+            lookup = api("POST", "auth/token/lookup", {"token": created})["data"]
+            self.assertGreater(lookup["ttl"], 4)
+            self.assertIn(self.policy, lookup["policies"])
+        finally:
+            api("POST", "auth/token/revoke", {"token": created})
+
+    def test_11_unrenewed_token_expires_between_commands_in_same_session(self):
+        created = api("POST", "auth/token/create", {
+            "ttl": "4s", "explicit_max_ttl": "4s",
+            "policies": [self.policy], "no_default_policy": True,
+        })["auth"]["client_token"]
+        code, stdout, stderr, _ = self.run_timed_session(
+            f"cat {self.leaf}", f"cat {self.leaf}", created
+        )
+        self.assertNotEqual(code, 0, stdout + stderr)
+        self.assertEqual(stdout.count('"can"'), 1, stdout + stderr)
+        with self.assertRaises(error.HTTPError) as caught:
+            api("POST", "auth/token/lookup", {"token": created})
+        self.assertIn(caught.exception.code, (400, 403, 404))
+
+    def test_12_failed_renewal_does_not_interrupt_later_read(self):
+        created = api("POST", "auth/token/create", {
+            "ttl": "2m", "renewable": False,
+            "policies": [self.policy], "no_default_policy": True,
+        })["auth"]["client_token"]
+        try:
+            out, history = invoke(f"renew-token 30s\ncat {self.leaf}", token=created)
+            self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertIn('"can"', out.stdout)
+            self.assertNotIn("Vault token renewed", out.stdout)
+            self.assertNotIn(created, out.stdout + out.stderr + history)
+        finally:
+            api("POST", "auth/token/revoke", {"token": created})
+
+    def test_13_invalid_renew_increment_fails_without_ending_session(self):
+        created = api("POST", "auth/token/create", {
+            "ttl": "2m", "renewable": True,
+            "policies": [self.policy], "no_default_policy": True,
+        })["auth"]["client_token"]
+        try:
+            out, history = invoke(f"renew-token invalid\ncat {self.leaf}", token=created)
+            self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertIn("invalid renewal increment", out.stderr)
+            self.assertIn('"can"', out.stdout)
+            self.assertNotIn(created, out.stdout + out.stderr + history)
         finally:
             api("POST", "auth/token/revoke", {"token": created})
 
