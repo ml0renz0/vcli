@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import os
+import socket
+import time
 from pathlib import Path
 import ssl
 import subprocess
@@ -63,7 +65,8 @@ class InterruptedOperations(unittest.TestCase):
         self.assertEqual(caught.exception.code, 404)
 
     @contextmanager
-    def proxy(self, *, fail_method, fail_prefix, fail_index=2, revoke_token=None):
+    def proxy(self, *, fail_method, fail_prefix, fail_index=2, revoke_token=None,
+              drop_success_index=None, pause_after_first_success=0):
         """Terminate test TLS locally, then forward over *verified* TLS to Vault."""
         observations = []
         state = {"matched": 0}
@@ -111,6 +114,16 @@ class InterruptedOperations(unittest.TestCase):
                 if (revoke_token is not None and inject and
                         state["matched"] == 1 and 200 <= status < 300):
                     api("POST", "auth/token/revoke", {"token": revoke_token})
+                if (inject and state["matched"] == 1 and
+                        200 <= status < 300 and pause_after_first_success):
+                    time.sleep(pause_after_first_success)
+                if (inject and drop_success_index == state["matched"] and
+                        200 <= status < 300):
+                    # Vault accepted the mutation, but the TLS connection
+                    # dies before a status line can reach the CLI.
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                    self.close_connection = True
+                    return
                 self.respond(status, payload)
 
             def respond(self, status, payload):
@@ -323,6 +336,61 @@ class InterruptedOperations(unittest.TestCase):
         self.assertEqual(self.stored("revoked-restore/a"), {"id": "a"})
         self.absent("revoked-restore/z")
 
+
+
+    def test_08_restore_reports_ambiguous_write_after_vault_commits(self):
+        target = f"/v1/{self.path('ambiguous-restore')}/"
+        with tempfile.TemporaryDirectory(prefix="vcli-ambiguous-response-") as tmp:
+            archive = Path(tmp) / "ambiguous.tgz"
+            with tarfile.open(archive, "w:gz") as tar:
+                for leaf in ("a", "b", "z"):
+                    payload = ('{"id":"' + leaf + '"}').encode()
+                    member = tarfile.TarInfo(self.path("ambiguous-restore/" + leaf))
+                    member.size = len(payload)
+                    tar.addfile(member, io.BytesIO(payload))
+            with self.proxy(fail_method="POST", fail_prefix=target,
+                            drop_success_index=2) as (addr, observed):
+                out = self.cli(f"restore {archive}", addr)
+        posts = [(p, status) for method, p, status in observed
+                 if method == "POST" and p.startswith(target)]
+        self.assertEqual(len(posts), 2, posts)
+        self.assertTrue(all(status in (200, 204) for _, status in posts), posts)
+        self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("OUTCOME_UNKNOWN", out.stderr)
+        self.assertIn("PARTIAL restore", out.stderr)
+        self.assertIn("completed=1", out.stderr)
+        self.assertEqual(self.stored("ambiguous-restore/a"), {"id": "a"})
+        self.assertEqual(self.stored("ambiguous-restore/b"), {"id": "b"})
+        self.absent("ambiguous-restore/z")
+
+    def test_09_expiration_during_restore_preserves_unprocessed_secrets(self):
+        target = f"/v1/{self.path('expired-restore')}/"
+        # TTL is long enough for first write; its response is held until the
+        # token expires, so the second write receives a real Vault 403.
+        token = api("POST", "auth/token/create", {
+            "ttl": "6s", "explicit_max_ttl": "6s",
+        })["auth"]["client_token"]
+        with tempfile.TemporaryDirectory(prefix="vcli-expired-mid-restore-") as tmp:
+            archive = Path(tmp) / "expiry.tgz"
+            with tarfile.open(archive, "w:gz") as tar:
+                for leaf in ("a", "z"):
+                    payload = ('{"id":"' + leaf + '"}').encode()
+                    member = tarfile.TarInfo(self.path("expired-restore/" + leaf))
+                    member.size = len(payload)
+                    tar.addfile(member, io.BytesIO(payload))
+            with self.proxy(fail_method="POST", fail_prefix=target,
+                            pause_after_first_success=7.0) as (addr, observed):
+                out = self.restricted_cli(f"restore {archive}", addr, token)
+        posts = [(p, status) for method, p, status in observed
+                 if method == "POST" and p.startswith(target)]
+        self.assertEqual(len(posts), 2, posts)
+        self.assertIn(posts[0][1], (200, 204))
+        self.assertEqual(posts[1][1], 403)
+        self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("PARTIAL restore", out.stderr)
+        self.assertIn("completed=1", out.stderr)
+        self.assertEqual(self.stored("expired-restore/a"), {"id": "a"})
+        self.absent("expired-restore/z")
 
 
 if __name__ == "__main__":
