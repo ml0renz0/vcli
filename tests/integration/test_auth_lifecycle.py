@@ -173,7 +173,10 @@ class AuthLifecycleContracts(unittest.TestCase):
                 if not ready:
                     raise AssertionError("First session command produced no output")
                 first_output = _os.read(fd, 65536).decode()
-                self.assertIn("Vault token renewed", first_output)
+                if first.startswith("renew-token"):
+                    self.assertIn("Vault token renewed", first_output)
+                else:
+                    self.assertIn('"can"', first_output)
                 time.sleep(pause)
                 proc.stdin.write(second + "\n")
                 proc.stdin.close()
