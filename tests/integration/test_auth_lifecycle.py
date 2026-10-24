@@ -193,9 +193,16 @@ class AuthLifecycleContracts(unittest.TestCase):
                     proc.communicate(timeout=5)
 
     def test_10_renewed_token_survives_original_ttl_in_same_session(self):
+        renew_policy = "vcli-session-renew-" + uuid4().hex[:12]
+        api("PUT", f"sys/policies/acl/{renew_policy}", {
+            "policy": (
+                f'path "{self.leaf}" {{ capabilities = ["read"] }}\n'
+                'path "auth/token/renew-self" { capabilities = ["update"] }\n'
+            )
+        })
         created = api("POST", "auth/token/create", {
             "ttl": "8s", "explicit_max_ttl": "45s", "renewable": True,
-            "policies": [self.policy], "no_default_policy": True,
+            "policies": [renew_policy], "no_default_policy": True,
         })["auth"]["client_token"]
         try:
             status, stdout, stderr, _ = self.run_timed_session(
@@ -206,7 +213,7 @@ class AuthLifecycleContracts(unittest.TestCase):
             self.assertIn('"can"', stdout)
             lookup = api("POST", "auth/token/lookup", {"token": created})["data"]
             self.assertGreater(lookup["ttl"], 4)
-            self.assertIn(self.policy, lookup["policies"])
+            self.assertIn(renew_policy, lookup["policies"])
         finally:
             api("POST", "auth/token/revoke", {"token": created})
 
