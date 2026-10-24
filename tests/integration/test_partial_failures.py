@@ -349,7 +349,7 @@ class InterruptedOperations(unittest.TestCase):
                     member.size = len(payload)
                     tar.addfile(member, io.BytesIO(payload))
             with self.proxy(fail_method="POST", fail_prefix=target,
-                            drop_success_index=2) as (addr, observed):
+                            fail_index=999, drop_success_index=2) as (addr, observed):
                 out = self.cli(f"restore {archive}", addr)
         posts = [(p, status) for method, p, status in observed
                  if method == "POST" and p.startswith(target)]
@@ -379,7 +379,7 @@ class InterruptedOperations(unittest.TestCase):
                     member.size = len(payload)
                     tar.addfile(member, io.BytesIO(payload))
             with self.proxy(fail_method="POST", fail_prefix=target,
-                            pause_after_first_success=7.0) as (addr, observed):
+                            fail_index=999, pause_after_first_success=7.0) as (addr, observed):
                 out = self.restricted_cli(f"restore {archive}", addr, token)
         posts = [(p, status) for method, p, status in observed
                  if method == "POST" and p.startswith(target)]
