@@ -819,6 +819,11 @@ function _curl(){
     [[ -n $data && $data != '-_list_root_-' && -f $data ]] && rm -f "$data"
     if (( curl_status != 0 )); then
         http_code="000"
+        # A write may have committed before its HTTP response was lost.
+        # Never blindly retry non-idempotent operations on transport errors.
+        if [[ $method == POST || $method == PUT || $method == PATCH || $method == DELETE ]]; then
+            printf 'vcli: OUTCOME_UNKNOWN method=%s path=/%s; verify Vault state before retrying\n' "$method" "$path" >&2
+        fi
         [[ $ignore_http_code == no ]] && cat "$response_file" >&2
         rm -f "$response_file"
         return 1
