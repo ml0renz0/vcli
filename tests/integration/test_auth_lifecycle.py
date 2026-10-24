@@ -164,11 +164,22 @@ class AuthLifecycleContracts(unittest.TestCase):
             try:
                 proc.stdin.write(first + "\n")
                 proc.stdin.flush()
+                # Wait for completion of the first command before measuring
+                # the post-renewal lifetime; runner startup speed is variable.
+                import select
+                import os as _os
+                fd = proc.stdout.fileno()
+                ready, _, _ = select.select([fd], [], [], 8)
+                if not ready:
+                    raise AssertionError("First session command produced no output")
+                first_output = _os.read(fd, 65536).decode()
+                self.assertIn("Vault token renewed", first_output)
                 time.sleep(pause)
                 proc.stdin.write(second + "\n")
                 proc.stdin.close()
                 proc.stdin = None
                 stdout, stderr = proc.communicate(timeout=20)
+                stdout = first_output + stdout
                 history_path = Path(home) / ".vclistory"
                 history = history_path.read_text() if history_path.exists() else ""
                 self.assertNotIn(token, stdout + stderr + history)
@@ -180,12 +191,12 @@ class AuthLifecycleContracts(unittest.TestCase):
 
     def test_10_renewed_token_survives_original_ttl_in_same_session(self):
         created = api("POST", "auth/token/create", {
-            "ttl": "4s", "explicit_max_ttl": "45s", "renewable": True,
+            "ttl": "8s", "explicit_max_ttl": "45s", "renewable": True,
             "policies": [self.policy], "no_default_policy": True,
         })["auth"]["client_token"]
         try:
             status, stdout, stderr, _ = self.run_timed_session(
-                "renew-token 25s", f"cat {self.leaf}", created
+                "renew-token 25s", f"cat {self.leaf}", created, pause=9.5
             )
             self.assertEqual(status, 0, stdout + stderr)
             self.assertIn("Vault token renewed", stdout)
