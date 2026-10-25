@@ -83,7 +83,7 @@ class InteractiveShellTests(unittest.TestCase):
         child = subprocess.Popen([str(VCLI)], stdin=slave, stdout=slave,
                                  stderr=slave, env=env, start_new_session=True)
         os.close(slave)
-        read_until(master, b" > ", timeout=12)
+        read_until(master, b" >", timeout=12)
         return home, master, child
 
     def send(self, fd, data, pace=0.012):
