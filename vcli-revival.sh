@@ -2013,7 +2013,13 @@ function main(){
     while true; do
         lastkey=$_key
         # read key and process
-        if ! read -r -sN1 _key; then clean_n_exit; fi
+        if ! read -r -sN1 _key; then
+            # An interrupted read is recoverable; EOF should exit.
+            if [[ -t 0 ]]; then
+                continue
+            fi
+            clean_n_exit
+        fi
         case $_key in
             $'\x1b')
                 read -rsn1 -t 0.001 _key # flush read
