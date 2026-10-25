@@ -710,6 +710,16 @@ function _vcli_login_approle(){
     case "${VAULT_SKIP_VERIFY:-false}" in 1|true|TRUE|yes|YES) args+=(--insecure);; esac
     [[ -n ${VAULT_CACERT:-} ]] && args+=(--cacert "$VAULT_CACERT")
     [[ -n ${VAULT_CAPATH:-} ]] && args+=(--capath "$VAULT_CAPATH")
+    # Mutual TLS is opt-in; a half-configured pair must never silently
+    # fall back to an unauthenticated client certificate handshake.
+    if [[ -n ${VAULT_CLIENT_CERT:-} || -n ${VAULT_CLIENT_KEY:-} ]]; then
+        if [[ -z ${VAULT_CLIENT_CERT:-} || -z ${VAULT_CLIENT_KEY:-} ]]; then
+            echo "vcli: both VAULT_CLIENT_CERT and VAULT_CLIENT_KEY are required" >&2
+            rm -f "$response_file"
+            return 1
+        fi
+        args+=(--cert "$VAULT_CLIENT_CERT" --key "$VAULT_CLIENT_KEY")
+    fi
     [[ -n ${VAULT_NAMESPACE:-} ]] && args+=(--header "X-Vault-Namespace: $VAULT_NAMESPACE")
     status=$(curl "${args[@]}" "$protocol://$vault_host:$vault_port/v1/auth/approle/login")
     code=$?
@@ -786,6 +796,16 @@ function _curl(){
     case "${VAULT_SKIP_VERIFY:-false}" in 1|true|TRUE|yes|YES) args+=(--insecure);; esac
     [[ -n ${VAULT_CACERT:-} ]] && args+=(--cacert "$VAULT_CACERT")
     [[ -n ${VAULT_CAPATH:-} ]] && args+=(--capath "$VAULT_CAPATH")
+    # Mutual TLS is opt-in; a half-configured pair must never silently
+    # fall back to an unauthenticated client certificate handshake.
+    if [[ -n ${VAULT_CLIENT_CERT:-} || -n ${VAULT_CLIENT_KEY:-} ]]; then
+        if [[ -z ${VAULT_CLIENT_CERT:-} || -z ${VAULT_CLIENT_KEY:-} ]]; then
+            echo "vcli: both VAULT_CLIENT_CERT and VAULT_CLIENT_KEY are required" >&2
+            rm -f "$response_file"
+            return 1
+        fi
+        args+=(--cert "$VAULT_CLIENT_CERT" --key "$VAULT_CLIENT_KEY")
+    fi
     [[ -n ${VAULT_NAMESPACE:-} ]] && args+=(--header "X-Vault-Namespace: $VAULT_NAMESPACE")
 
     if [[ -n $data && $data != '-_list_root_-' ]]; then
