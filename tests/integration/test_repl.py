@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import pty
+import signal
 import select
 import subprocess
 import tempfile
@@ -66,6 +67,94 @@ class InteractiveShellTests(unittest.TestCase):
                     child.kill()
                     child.wait(timeout=5)
                 os.close(master)
+
+
+    def session(self):
+        """Return PTY process with its own HOME and real Vault TLS credentials."""
+        home = tempfile.TemporaryDirectory(prefix="vcli-repl-matrix-")
+        env = os.environ.copy()
+        env.update({
+            "HOME": home.name, "TMPDIR": home.name, "TERM": "xterm",
+            "VAULT_ADDR": os.environ["VAULT_ADDR"],
+            "VAULT_CACERT": os.environ["VAULT_CACERT"],
+            "VAULT_TOKEN": os.environ.get("VCLI_TEST_READONLY_TOKEN", ""),
+        })
+        master, slave = pty.openpty()
+        child = subprocess.Popen([str(VCLI)], stdin=slave, stdout=slave,
+                                 stderr=slave, env=env, start_new_session=True)
+        os.close(slave)
+        read_until(master, b" > ", timeout=12)
+        return home, master, child
+
+    def send(self, fd, data, pace=0.012):
+        for b in data:
+            os.write(fd, bytes([b]))
+            if pace:
+                time.sleep(pace)
+
+    def end(self, home, fd, child):
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=5)
+        os.close(fd)
+        home.cleanup()
+
+    def test_02_tab_completes_unique_command(self):
+        home, fd, child = self.session()
+        try:
+            self.send(fd, b"hel\t\n")
+            result = read_until(fd, b"Available commands:", timeout=8)
+            self.assertIn(b"Available commands:", result)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
+    def test_03_up_arrow_replays_history_command(self):
+        home, fd, child = self.session()
+        try:
+            self.send(fd, b"help\n")
+            read_until(fd, b"Available commands:", timeout=8)
+            time.sleep(0.35)
+            self.send(fd, b"\x1b[A\n", pace=0.04)
+            again = read_until(fd, b"Available commands:", timeout=8)
+            self.assertIn(b"Available commands:", again)
+        finally:
+            self.end(home, fd, child)
+
+    def test_04_cursor_home_right_and_insert(self):
+        home, fd, child = self.session()
+        try:
+            # "hlp" + Home + Right + "e" -> "help"
+            self.send(fd, b"hlp\x1b[H\x1b[Ce\n", pace=0.045)
+            out = read_until(fd, b"Available commands:", timeout=8)
+            self.assertIn(b"Available commands:", out)
+        finally:
+            self.end(home, fd, child)
+
+    def test_05_ctrl_c_discards_partial_input_and_keeps_session(self):
+        home, fd, child = self.session()
+        try:
+            self.send(fd, b"not-a-valid-command")
+            os.kill(child.pid, signal.SIGINT)
+            time.sleep(0.2)
+            self.assertIsNone(child.poll(), "Ctrl+C must not terminate the session")
+            self.send(fd, b"help\n")
+            out = read_until(fd, b"Available commands:", timeout=8)
+            self.assertIn(b"Available commands:", out)
+        finally:
+            self.end(home, fd, child)
+
+    def test_06_ctrl_r_no_match_does_not_kill_repl(self):
+        home, fd, child = self.session()
+        try:
+            self.send(fd, b"zzzz-no-match\x12\x12", pace=0.03)
+            time.sleep(0.25)
+            self.assertIsNone(child.poll(), "Empty reverse-search must not terminate REPL")
+            self.send(fd, b"\x15help\n")
+            out = read_until(fd, b"Available commands:", timeout=8)
+            self.assertIn(b"Available commands:", out)
+        finally:
+            self.end(home, fd, child)
 
 
 if __name__ == "__main__":
