@@ -489,7 +489,7 @@ function rotate_found_cmds(){
         # print first command found
         # if another Ctrl+r is hit next item will be printed
         debug "\${#tmp_history}=${#tmp_history[@]}"
-        debug "\${tmp_history[$SEARCHIST]}=\"${tmp_history[$SEARCHIST]}"\"
+        debug "history search entry selected"
         cmd="${tmp_history[$SEARCHIST]}"
     else
         let SEARCHIST++
@@ -499,7 +499,7 @@ function rotate_found_cmds(){
         fi
         SEARCHIST=$((SEARCHIST%(${#tmp_history[@]})))
         debug "\${#tmp_history}=${#tmp_history[@]}"
-        debug "\${tmp_history[$SEARCHIST]}=\"${tmp_history[$SEARCHIST]}"\"
+        debug "history search entry selected"
         cmd="${tmp_history[$SEARCHIST]}"
     fi
 }
