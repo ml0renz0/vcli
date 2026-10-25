@@ -1827,6 +1827,9 @@ function _getallkrblist(){
     leaves=$(_vcli_leaves "$root") || return 1
     while IFS= read -r path; do
         [[ -n $path ]] || continue
+        local data
+        data=$(_vcli_pki_json "$path") || return 1
+        jq -e 'any(keys[]; endswith("_principal"))' <<< "$data" >/dev/null || continue
         _getkrblist "$path" || return 1
     done <<< "$leaves"
 }
@@ -1838,6 +1841,9 @@ function _getallcertlist(){
     leaves=$(_vcli_leaves "$root") || return 1
     while IFS= read -r path; do
         [[ -n $path ]] || continue
+        local data
+        data=$(_vcli_pki_json "$path") || return 1
+        jq -e 'any(keys[]; endswith("_crt"))' <<< "$data" >/dev/null || continue
         _getcertlist "$path" || return 1
     done <<< "$leaves"
 }
@@ -1852,6 +1858,9 @@ function _getallcertexpiration(){
     leaves=$(_vcli_leaves "$root") || return 1
     while IFS= read -r path; do
         [[ -n $path ]] || continue
+        local data
+        data=$(_vcli_pki_json "$path") || return 1
+        jq -e 'any(keys[]; endswith("_crt"))' <<< "$data" >/dev/null || continue
         _getcertexpiration "$path" "$option" || return 1
     done <<< "$leaves"
 }
