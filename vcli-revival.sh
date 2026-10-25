@@ -489,6 +489,10 @@ function rotate_found_cmds(){
         cmd="${tmp_history[$SEARCHIST]}"
     else
         let SEARCHIST++
+        if (( ${#tmp_history[@]} == 0 )); then
+            unset SEARCHIST search_cmd tmp_history
+            return 1
+        fi
         SEARCHIST=$((SEARCHIST%(${#tmp_history[@]})))
         debug "\${#tmp_history}=${#tmp_history[@]}"
         debug "\${tmp_history[$SEARCHIST]}=\"${tmp_history[$SEARCHIST]}"\"
@@ -2001,8 +2005,8 @@ function main(){
         exit "$batch_result"
     fi
 
-    # Disable Ctrl+c
-    trap : INT
+    # Ctrl+C clears the editing buffer without terminating the session.
+    trap 'cmd=""; len=0; pos=1; history_index=-1; printf "\\n"; prompt' INT
 
     # Begin iteration
     IFS=
@@ -2144,7 +2148,79 @@ function main(){
                     let len=${#cmd}
                 fi
             ;;
-            $'\x04') # Ctrl+d behaviour is exit
+            
+                clean_n_exit
+            ;;
+            $'')
+                clean_n_exit
+            ;;
+            $'\x20'|*) # NORMAL CHARS
+                if [[ ! $disable_prompt ]]; then
+                    tput ich 1 # insert chars rather than overwriting them
+                    echo -n "$_key" #| hexdump -C
+                fi
+                let len+=1
+                let pos+=1
+                tmpmsg="${#cmd}: \"$cmd\""
+                # insert $_key in $pos within $cmd string
+                cmd="${cmd:0:$((pos-2))}$_key${cmd:$((pos-2)):${#cmd}}"
+                debug " => ${#cmd}: \"$cmd\""
+                debug "pos: $pos, len: $len"
+            ;;
+        esac
+        # Exit history search mode
+        if [[ "$_key" != "$lastkey" ]] && [[ "$_key" != $'\x12' ]]; then
+            debug "exiting history search mode"
+            unset SEARCHIST search_cmd tmp_history
+        fi
+        [[ $DEBUG_HEXDUMP == "yes" ]] && debug "\nhexdump: \n $(echo -n "$_key" | hexdump -C)"
+        # print prompt if commadn was run
+        if [[ $is_command ]]; then prompt ; unset is_command cmd pos len ; history_index=-1 ; pos=1; fi
+    done < /dev/stdin
+}
+
+main "$@"
+\x15') # Ctrl+U: clear current editing line
+                cmd=""
+                len=0
+                pos=1
+                printf '\r'
+                prompt
+                tput el
+            ;;
+            
+                clean_n_exit
+            ;;
+            $'')
+                clean_n_exit
+            ;;
+            $'\x20'|*) # NORMAL CHARS
+                if [[ ! $disable_prompt ]]; then
+                    tput ich 1 # insert chars rather than overwriting them
+                    echo -n "$_key" #| hexdump -C
+                fi
+                let len+=1
+                let pos+=1
+                tmpmsg="${#cmd}: \"$cmd\""
+                # insert $_key in $pos within $cmd string
+                cmd="${cmd:0:$((pos-2))}$_key${cmd:$((pos-2)):${#cmd}}"
+                debug " => ${#cmd}: \"$cmd\""
+                debug "pos: $pos, len: $len"
+            ;;
+        esac
+        # Exit history search mode
+        if [[ "$_key" != "$lastkey" ]] && [[ "$_key" != $'\x12' ]]; then
+            debug "exiting history search mode"
+            unset SEARCHIST search_cmd tmp_history
+        fi
+        [[ $DEBUG_HEXDUMP == "yes" ]] && debug "\nhexdump: \n $(echo -n "$_key" | hexdump -C)"
+        # print prompt if commadn was run
+        if [[ $is_command ]]; then prompt ; unset is_command cmd pos len ; history_index=-1 ; pos=1; fi
+    done < /dev/stdin
+}
+
+main "$@"
+\x04') # Ctrl+d behaviour is exit
                 clean_n_exit
             ;;
             $'')
