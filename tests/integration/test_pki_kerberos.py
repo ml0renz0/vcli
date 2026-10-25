@@ -202,6 +202,108 @@ class PkiKerberosContracts(unittest.TestCase):
             self.assertFalse(list(Path(root).glob("*.key")))
             self.assertFalse(list(Path(root).glob("*.crt")))
 
+    def test_13_getcert_refuses_symlink_destination(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-cert-symlink-") as root:
+            marker = Path(root) / "untouched.txt"
+            marker.write_text("DO NOT OVERWRITE")
+            (Path(root) / "web.key").symlink_to(marker)
+            out = self.cli(root, f"getcert {self.cert_path}")
+            self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertEqual(marker.read_text(), "DO NOT OVERWRITE")
+            self.assertFalse((Path(root) / "web.crt").exists())
+
+    def test_14_getcert_refuses_existing_regular_file(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-cert-existing-") as root:
+            existing = Path(root) / "web.crt"
+            existing.write_text("KEEP ORIGINAL")
+            out = self.cli(root, f"getcert {self.cert_path}")
+            self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertEqual(existing.read_text(), "KEEP ORIGINAL")
+            self.assertFalse((Path(root) / "web.key").exists())
+
+    def test_15_getkrb_refuses_symlink_destination(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-krb-symlink-") as root:
+            marker = Path(root) / "untouched.txt"
+            marker.write_text("DO NOT OVERWRITE")
+            (Path(root) / "HTTP_service.example.test@EXAMPLE.TEST.keytab").symlink_to(marker)
+            out = self.cli(root, f"getkrb {self.krb_path}")
+            self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertEqual(marker.read_text(), "DO NOT OVERWRITE")
+
+    def test_16_getkrb_refuses_existing_regular_file(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-krb-existing-") as root:
+            destination = Path(root) / "HTTP_service.example.test@EXAMPLE.TEST.keytab"
+            destination.write_bytes(b"KEEP")
+            out = self.cli(root, f"getkrb {self.krb_path}")
+            self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertEqual(destination.read_bytes(), b"KEEP")
+
+    def test_17_getcertlist_reports_certificate_and_san(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-certlist-") as root:
+            out = self.cli(root, f"getcertlist {self.cert_path}")
+            self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertIn("web", out.stdout)
+            self.assertIn("cert.example.test", out.stdout)
+            self.assertNotIn(self.key, out.stdout + out.stderr)
+
+    def test_18_getcertexpiration_validates_and_reports_days(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-expiry-") as root:
+            good = self.cli(root, f"getcertexpiration {self.cert_path}")
+            self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+            self.assertIn("web", good.stdout)
+            self.assertIn("days", good.stdout.lower())
+            wrong = self.cli(root, f"getcertexpiration {self.malformed_path}")
+            self.assertNotEqual(wrong.returncode, 0, wrong.stdout + wrong.stderr)
+
+    def test_19_krbinfo_validates_and_reports_keytab(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-krbinfo-") as root:
+            good = self.cli(root, f"krbinfo {self.krb_path}")
+            self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+            self.assertIn(self.principal, good.stdout)
+            invalid = self.cli(root, f"krbinfo {self.invalid_krb_path}")
+            self.assertNotEqual(invalid.returncode, 0, invalid.stdout + invalid.stderr)
+
+    def test_20_getkrblist_reports_principal_without_eval(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-krblist-") as root:
+            good = self.cli(root, f"getkrblist {self.krb_path}")
+            self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+            self.assertIn("HTTP", good.stdout)
+            self.assertIn("service.example.test", good.stdout)
+            injected = self.cli(root, f"getkrblist {self.inject_path}")
+            self.assertNotEqual(injected.returncode, 0, injected.stdout + injected.stderr)
+            self.assertFalse(Path("/tmp/SHOULD-NOT-EXIST").exists())
+
+    def test_21_recursive_cert_list_includes_nested_secret(self):
+        deeper = f"kv1/{self.prefix}/nested/deeper/cert"
+        api("POST", deeper, {"web_crt": self.crt, "web_key": self.key})
+        with tempfile.TemporaryDirectory(prefix="vcli-allcertlist-") as root:
+            out = self.cli(root, f"getallcertlist kv1/{self.prefix}/nested")
+            self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertIn("web", out.stdout)
+            self.assertIn("deeper/cert", out.stdout)
+
+    def test_22_recursive_krb_list_includes_nested_secret(self):
+        deeper = f"kv1/{self.prefix}/nested/deeper/keytab"
+        api("POST", deeper, {
+            "http_principal": self.principal,
+            "http_keytab": base64.b64encode(self.kt).decode("ascii"),
+        })
+        with tempfile.TemporaryDirectory(prefix="vcli-allkrblist-") as root:
+            out = self.cli(root, f"getallkrblist kv1/{self.prefix}/nested/deeper")
+            self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertIn("HTTP", out.stdout)
+            self.assertIn("deeper/keytab", out.stdout)
+
+    def test_23_recursive_expiration_includes_nested_secret(self):
+        deeper = f"kv1/{self.prefix}/nested/deeper/expiry"
+        api("POST", deeper, {"web_crt": self.crt, "web_key": self.key})
+        with tempfile.TemporaryDirectory(prefix="vcli-allcert-expiry-") as root:
+            out = self.cli(root, f"getallcertexpiration kv1/{self.prefix}/nested/deeper")
+            self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertIn("expiry", out.stdout)
+            self.assertIn("days", out.stdout.lower())
+
+
 
 if __name__ == "__main__":
     unittest.main()
