@@ -482,6 +482,10 @@ function rotate_found_cmds(){
             fi
             [[ ! $SEARCHIST ]] && SEARCHIST="0"
         done
+        if (( ${#tmp_history[@]} == 0 )); then
+            unset SEARCHIST search_cmd tmp_history
+            return 1
+        fi
         # print first command found
         # if another Ctrl+r is hit next item will be printed
         debug "\${#tmp_history}=${#tmp_history[@]}"
