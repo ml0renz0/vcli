@@ -81,7 +81,7 @@ HCL
 
 # This token has no write/delete/create privileges.
 export VCLI_TEST_READONLY_TOKEN="$(v token create -policy=vcli-ci-ro -orphan -field=token)"
-python3 -m unittest -v tests.integration.test_vault tests.integration.test_operations tests.integration.test_kv2_advanced tests.integration.test_security tests.integration.test_fault_injection tests.integration.test_partial_failures tests.integration.test_cas_concurrency tests.integration.test_auth_lifecycle tests.integration.test_tls tests.integration.test_tls_advanced tests.integration.test_repl
+python3 -m unittest -v tests.integration.test_vault tests.integration.test_operations tests.integration.test_kv2_advanced tests.integration.test_security tests.integration.test_fault_injection tests.integration.test_partial_failures tests.integration.test_cas_concurrency tests.integration.test_auth_lifecycle tests.integration.test_tls tests.integration.test_tls_advanced tests.integration.test_pki_kerberos tests.integration.test_repl
 
 # Destructive last-stage test: seal the actual ephemeral Vault only after all
 # normal integration cases have completed successfully.
