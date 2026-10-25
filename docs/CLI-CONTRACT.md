@@ -88,3 +88,25 @@ Los tests `test_12` a `test_15` de
 `tests/integration/test_cas_concurrency.py` ejercitan borrado versionado,
 modificación justo después de copiar, cambio concurrente durante el borrado
 y montajes KV v2 anidados.
+
+## PKI / Kerberos revival (E2E sobre Vault TLS real)
+
+Los comandos de exportación `getcert` y `getkrb` ahora validan **todas**
+las parejas antes de exportar. `getcert` comprueba PEM X.509, clave
+privada coincidente y nombres seguros. `getkrb` descodifica base64,
+valida el keytab con `klist`, comprueba el principal y evita que valores
+de Vault se evalúen como código shell. `getsan`, `certinfo` y
+`getprinc` reutilizan validaciones de datos, sin exportar secretos.
+Los archivos exportados tienen permisos 0600 por `umask 077`.
+
+`tests/integration/test_pki_kerberos.py` contiene 12 contratos que
+ejercitan los comandos reales con certificados generados por OpenSSL,
+un keytab v2 de MIT Kerberos, datos inválidos, parejas no coincidentes,
+ausencia de datos y nombres potencialmente peligrosos. El CI instala
+`klist` (paquete `krb5-user`) solo cuando falta.
+
+**Limitaciones:** todavía se deben auditar los comandos históricos
+de listados, expedición y caducidad (por ejemplo `getcertlist`,
+`getallcertlist`, `getcertexpiration`, `krbinfo`) y sus dependencias,
+así como los permisos/symlinks preexistentes en el directorio destino.
+La exportación múltiple no es transaccional frente a fallos de disco.
