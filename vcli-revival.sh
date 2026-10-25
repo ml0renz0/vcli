@@ -2159,38 +2159,7 @@ function main(){
                 fi
             ;;
             
-                clean_n_exit
-            ;;
-            $'')
-                clean_n_exit
-            ;;
-            $'\x20'|*) # NORMAL CHARS
-                if [[ ! $disable_prompt ]]; then
-                    tput ich 1 # insert chars rather than overwriting them
-                    echo -n "$_key" #| hexdump -C
-                fi
-                let len+=1
-                let pos+=1
-                tmpmsg="${#cmd}: \"$cmd\""
-                # insert $_key in $pos within $cmd string
-                cmd="${cmd:0:$((pos-2))}$_key${cmd:$((pos-2)):${#cmd}}"
-                debug " => ${#cmd}: \"$cmd\""
-                debug "pos: $pos, len: $len"
-            ;;
-        esac
-        # Exit history search mode
-        if [[ "$_key" != "$lastkey" ]] && [[ "$_key" != $'\x12' ]]; then
-            debug "exiting history search mode"
-            unset SEARCHIST search_cmd tmp_history
-        fi
-        [[ $DEBUG_HEXDUMP == "yes" ]] && debug "\nhexdump: \n $(echo -n "$_key" | hexdump -C)"
-        # print prompt if commadn was run
-        if [[ $is_command ]]; then prompt ; unset is_command cmd pos len ; history_index=-1 ; pos=1; fi
-    done < /dev/stdin
-}
-
-main "$@"
-\x15') # Ctrl+U: clear current editing line
+            $'\x15') # Ctrl+U
                 cmd=""
                 len=0
                 pos=1
@@ -2198,7 +2167,7 @@ main "$@"
                 prompt
                 tput el
             ;;
-            
+            $'\x04') # Ctrl+D
                 clean_n_exit
             ;;
             $'')
@@ -2229,36 +2198,4 @@ main "$@"
     done < /dev/stdin
 }
 
-main "$@"
-\x04') # Ctrl+d behaviour is exit
-                clean_n_exit
-            ;;
-            $'')
-                clean_n_exit
-            ;;
-            $'\x20'|*) # NORMAL CHARS
-                if [[ ! $disable_prompt ]]; then
-                    tput ich 1 # insert chars rather than overwriting them
-                    echo -n "$_key" #| hexdump -C
-                fi
-                let len+=1
-                let pos+=1
-                tmpmsg="${#cmd}: \"$cmd\""
-                # insert $_key in $pos within $cmd string
-                cmd="${cmd:0:$((pos-2))}$_key${cmd:$((pos-2)):${#cmd}}"
-                debug " => ${#cmd}: \"$cmd\""
-                debug "pos: $pos, len: $len"
-            ;;
-        esac
-        # Exit history search mode
-        if [[ "$_key" != "$lastkey" ]] && [[ "$_key" != $'\x12' ]]; then
-            debug "exiting history search mode"
-            unset SEARCHIST search_cmd tmp_history
-        fi
-        [[ $DEBUG_HEXDUMP == "yes" ]] && debug "\nhexdump: \n $(echo -n "$_key" | hexdump -C)"
-        # print prompt if commadn was run
-        if [[ $is_command ]]; then prompt ; unset is_command cmd pos len ; history_index=-1 ; pos=1; fi
-    done < /dev/stdin
-}
-
-main "$@"
+main "$@
