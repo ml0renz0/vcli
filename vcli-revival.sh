@@ -2198,4 +2198,4 @@ function main(){
     done < /dev/stdin
 }
 
-main "$@
+main "$@"
