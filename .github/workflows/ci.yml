@@ -64,14 +64,17 @@ jobs:
       - name: Ensure runtime dependencies
         run: |
           missing=()
-          for cmd in jq curl openssl; do
+          for cmd in jq curl openssl klist; do
             command -v "$cmd" >/dev/null || missing+=("$cmd")
           done
           if (( ${#missing[@]} )); then
+            for i in "${!missing[@]}"; do
+              [[ ${missing[i]} == klist ]] && missing[i]=krb5-user
+            done
             sudo apt-get update -qq -o Acquire::Retries=2 -o Acquire::http::Timeout=10
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
           fi
-          for cmd in jq curl openssl; do command -v "$cmd"; done
+          for cmd in jq curl openssl klist; do command -v "$cmd"; done
       - name: Validate production candidate
         run: bash -n ./vcli-revival.sh
       - name: Test against real Vault
