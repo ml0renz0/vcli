@@ -1712,163 +1712,79 @@ function _krbinfo(){
 }
 
 # download keytab to /tmp
-function _getkrb(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    local tmp tmp2 _keys
-    # Get principals and store them in ${princs[@]}
-    declare -A princs
-    if [[ ! $url ]]; then
-        echo "Error! Missing keytab path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    tmp=$(mktemp -p "$TMP" -t .getkrb.XXXX)
-    _cat "$url" > "$tmp"
-    eval "$(jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" -r < "$tmp" | sed -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
-    backIFS=$IFS
-    IFS=$' '
-    _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
-    echo "Exporting keytabs..."
-    for _key in $_keys ; do
-        value=${princs[$_key]}
-        value=${value//\"/}
-        _key="\"${_key}_keytab\""
-        tmp2=$(mktemp -p "$TMP" -t .getkrb.XXXX)
-        jq ".data .${_key}" -r < "$tmp" | base64 -d > "$tmp2"
-        echo "  - ${value} exported to '$TMP/${value//\//_}.keytab'"
-        cp "$tmp2" "$TMP/${value//\//_}.keytab"
-        rm -f "$tmp2"
+function _vcli_krb_pairs(){
+    local data="$1" stem principal encoded file
+    local -a stems
+    mapfile -t stems < <(jq -r 'keys[] | select(endswith("_principal")) | .[:-10]' <<< "$data")
+    (( ${#stems[@]} )) || return 1
+    for stem in "${stems[@]}"; do
+        [[ $stem =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $stem != *..* ]] || return 1
+        principal=$(jq -er --arg k "${stem}_principal" '.[$k] | select(type=="string")' <<< "$data") || return 1
+        [[ $principal =~ ^[A-Za-z0-9._/-]+@[A-Za-z0-9._-]+$ && $principal != *..* ]] || return 1
+        encoded=$(jq -er --arg k "${stem}_keytab" '.[$k] | select(type=="string")' <<< "$data") || return 1
+        file=$(mktemp -p "$TMP" .vcli-krb.XXXXXX) || return 1
+        if ! printf '%s' "$encoded" | base64 --decode > "$file" 2>/dev/null ||
+           ! klist -kt "$file" 2>/dev/null | grep -Fq "$principal"; then
+            rm -f "$file"
+            echo "vcli: invalid keytab or principal" >&2
+            return 1
+        fi
+        rm -f "$file"
     done
-    echo "done."
-    rm -f "$tmp"
-    IFS=$backIFS
+    (( $(jq '[keys[] | select(endswith("_keytab"))] | length' <<< "$data") == ${#stems[@]} ))
+}
+function _getkrb(){
+    local data stem principal encoded destination
+    data=$(_vcli_pki_json "${1:-}") || return 1
+    _vcli_krb_pairs "$data" || return 1
+    local -a stems
+    mapfile -t stems < <(jq -r 'keys[] | select(endswith("_principal")) | .[:-10]' <<< "$data")
+    for stem in "${stems[@]}"; do
+        principal=$(jq -er --arg k "${stem}_principal" '.[$k]' <<< "$data") || return 1
+        encoded=$(jq -er --arg k "${stem}_keytab" '.[$k]' <<< "$data") || return 1
+        destination="$TMP/${principal//\//_}.keytab"
+        (umask 077; printf '%s' "$encoded" | base64 --decode > "$destination") || return 1
+        echo "Exported $destination"
+    done
 }
 
 # validate that crt and key match and show certificate info
 function _certinfo(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    local _CRT _KEY
-    if [[ ! $url ]]; then
-        echo "Error! Missing cert path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    local _certs _cert shacrt _keys _key shakey
-    tmp=$(mktemp -p "$TMP" -t .certinfo.XXXX)
-    _cat "$url" > "$tmp"
-    backIFS=$IFS
-    IFS=$' '
-    _certs=( $(jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
-    _keys=( $(jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
-    for ((n=0;n<${#_certs[@]};n++)); do
-        _cert=${_certs[$n]}
-        _key=${_keys[$n]}
-        debug "jq .data .$_cert -r < $tmp"
-        _CRT=$(jq ".data .$_cert" -r < "$tmp" | \
-                      sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
-                          -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
-                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
-        debug "jq .data .$_key -r < $tmp"
-        _KEY=$(jq ".data .$_key" -r < "$tmp" | \
-                      sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
-                          -e 's/-----BEGIN PRIVATE KEY-----/-----BEGIN PRIVATE KEY-----\n/g' \
-                          -e 's/-----END PRIVATE KEY-----/\n-----END PRIVATE KEY-----/g' \
-                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
-        shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
-        shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
-        echo -en "\n${BOLD}certificate${NONE}: $CYAN${_cert//\"/}${NONE}"
-        if [[ "$shacrt" != "$shakey" ]]; then
-            echo -e " ${RED}DOESN'T MATCH${NONE} ${BOLD}${_key//\"/}${NONE}"
-        else
-            echo
-        fi
-        echo -e "$_CRT" | openssl x509 -text -noout
+    local data stem crt
+    data=$(_vcli_pki_json "${1:-}") || return 1
+    _vcli_cert_pairs "$data" || return 1
+    local -a stems
+    mapfile -t stems < <(jq -r 'keys[] | select(endswith("_crt")) | .[:-4]' <<< "$data")
+    for stem in "${stems[@]}"; do
+        crt=$(jq -er --arg k "${stem}_crt" '.[$k]' <<< "$data") || return 1
+        printf '%s\n' "$crt" | openssl x509 -text -noout || return 1
     done
-    rm -f "$tmp"
-    IFS=$backIFS
 }
 
 # print principal of kerberos secret
 function _getprinc(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    local tmp tmp2 _keys
-    # Get principals and store them in ${princs[@]}
-    declare -A princs
-    if [[ ! $url ]]; then
-        echo "Error! Missing keytab path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    tmp=$(mktemp -p "$TMP" -t .krbinfo.XXXX)
-    _cat "$url" > "$tmp"
-    eval "$(jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" -r < "$tmp" | sed -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
-    backIFS=$IFS
-    IFS=$' '
-    _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
-    for _key in $_keys ; do
-        local value=${princs[$_key]}
-        _key="\"${_key}_keytab\""
-        tmp2=$(mktemp -p "$TMP" -t .krbinfo.XXXX)
-        jq ".data .${_key}" -r < "$tmp" | base64 -d > "$tmp2"
-        echo -en "${value}"
-        if ! klist -kt "$tmp2" | grep -v "Keytab name:" | grep -q "$value"; then
-            echo -e " ${RED}NOT FOUND${NONE} ${BOLD}in keytab!${NONE}"
-        else
-            echo
-        fi
-        rm -f "$tmp2"
-    done | sort -u
-    rm -f "$tmp"
-    IFS=$backIFS
+    local data stem principal
+    data=$(_vcli_pki_json "${1:-}") || return 1
+    _vcli_krb_pairs "$data" || return 1
+    local -a stems
+    mapfile -t stems < <(jq -r 'keys[] | select(endswith("_principal")) | .[:-10]' <<< "$data")
+    for stem in "${stems[@]}"; do
+        principal=$(jq -er --arg k "${stem}_principal" '.[$k]' <<< "$data") || return 1
+        printf '%s\n' "$principal"
+    done
 }
 
 # print CN and SAN of certificate secret
 function _getsan(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    local _CRT _KEY
-    if [[ ! $url ]]; then
-        echo "Error! Missing cert path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    local _certs _cert shacrt _keys _key shakey
-    tmp=$(mktemp -p "$TMP" -t .certinfo.XXXX)
-    _cat "$url" > "$tmp"
-    backIFS=$IFS
-    IFS=$' '
-    _certs=( $(jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
-    _keys=( $(jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
-    for ((n=0;n<${#_certs[@]};n++)); do
-        _cert=${_certs[$n]}
-        _key=${_keys[$n]}
-        debug "jq .data .$_cert -r < $tmp"
-        _CRT=$(jq ".data .$_cert" -r < "$tmp" | \
-                      sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
-                          -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
-                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
-        debug "jq .data .$_key -r < $tmp"
-        _KEY=$(jq ".data .$_key" -r < "$tmp" | \
-                      sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
-                          -e 's/-----BEGIN PRIVATE KEY-----/-----BEGIN PRIVATE KEY-----\n/g' \
-                          -e 's/-----END PRIVATE KEY-----/\n-----END PRIVATE KEY-----/g' \
-                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
-        shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
-        shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
-        echo -en "CN:"
-        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject:.*CN.*=[[:space:]]*" | sed -e "s/^.*CN.*=[[:space:]]*//" | tr -d '\n'
-        echo -en ", "
-        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject Alternative Name" -A1 | tail -1 | sed -e "s/^\s*//"
+    local data stem crt
+    data=$(_vcli_pki_json "${1:-}") || return 1
+    _vcli_cert_pairs "$data" || return 1
+    local -a stems
+    mapfile -t stems < <(jq -r 'keys[] | select(endswith("_crt")) | .[:-4]' <<< "$data")
+    for stem in "${stems[@]}"; do
+        crt=$(jq -er --arg k "${stem}_crt" '.[$k]' <<< "$data") || return 1
+        printf '%s\n' "$crt" | openssl x509 -noout -subject -ext subjectAltName || return 1
     done
-    rm -f "$tmp"
-    IFS=$backIFS
 }
 
 # recover krb.list from certificates path
@@ -2209,48 +2125,39 @@ function _getallcertexpiration(){
 }
 
 # download certificates crt and key
-function _getcert(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    local _CRT _KEY
-    if [[ ! $url ]]; then
-        echo "Error! Missing cert path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    local _certs _cert _keys _key
-    tmp=$(mktemp -p "$TMP" -t .getcert.XXXX)
-    _cat "$url" > "$tmp"
-    backIFS=$IFS
-    IFS=$' '
-    _certs=( $(jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
-    _keys=( $(jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
-    echo "Exporting certificates..."
-    for ((n=0;n<${#_certs[@]};n++)); do
-        _cert=${_certs[$n]}
-        _key=${_keys[$n]}
-        debug "jq .data .$_cert -r < $tmp"
-        _CRT=$(jq ".data .$_cert" -r < "$tmp" | \
-                      sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
-                          -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
-                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
-        debug "jq .data .$_key -r < $tmp"
-        _KEY=$(jq ".data .$_key" -r < "$tmp" | \
-                      sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
-                          -e 's/-----BEGIN PRIVATE KEY-----/-----BEGIN PRIVATE KEY-----\n/g' \
-                          -e 's/-----END PRIVATE KEY-----/\n-----END PRIVATE KEY-----/g' \
-                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
-        _cert=${_cert//\"/}
-        _key=${_key//\"/}
-        echo -e "  - ${_cert} exported to '$TMP/${_cert//_crt/}.crt'"
-        echo -e "$_CRT" > "$TMP/${_cert//_crt/}.crt"
-        echo -e "  - ${_key} exported to '$TMP/${_key//_key/}.key'"
-        echo -e "$_KEY" > "$TMP/${_key//_key/}.key"
+function _vcli_pki_json(){
+    local response
+    response=$(_cat "$1") || return 1
+    jq -ce '.data | select(type=="object")' <<< "$response"
+}
+function _vcli_cert_pairs(){
+    local data="$1" stem crt key certpub keypub
+    local -a stems
+    mapfile -t stems < <(jq -r 'keys[] | select(endswith("_crt")) | .[:-4]' <<< "$data")
+    (( ${#stems[@]} > 0 )) || { echo "vcli: no certificates" >&2; return 1; }
+    for stem in "${stems[@]}"; do
+        [[ $stem =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ && $stem != .* && $stem != *..* ]] || return 1
+        crt=$(jq -er --arg k "${stem}_crt" '.[$k] | select(type=="string")' <<< "$data") || return 1
+        key=$(jq -er --arg k "${stem}_key" '.[$k] | select(type=="string")' <<< "$data") || return 1
+        certpub=$(printf '%s\n' "$crt" | openssl x509 -pubkey -noout 2>/dev/null) || return 1
+        keypub=$(printf '%s\n' "$key" | openssl pkey -pubout 2>/dev/null) || return 1
+        [[ $certpub == "$keypub" ]] || { echo "vcli: certificate/private key mismatch" >&2; return 1; }
     done
-    IFS=$backIFS
-    rm -f "$tmp"
-    echo "done."
+    (( $(jq '[keys[] | select(endswith("_key"))] | length' <<< "$data") == ${#stems[@]} )) || return 1
+}
+function _getcert(){
+    local data stem crt key
+    data=$(_vcli_pki_json "${1:-}") || return 1
+    _vcli_cert_pairs "$data" || return 1
+    local -a stems
+    mapfile -t stems < <(jq -r 'keys[] | select(endswith("_crt")) | .[:-4]' <<< "$data")
+    for stem in "${stems[@]}"; do
+        crt=$(jq -er --arg k "${stem}_crt" '.[$k]' <<< "$data") || return 1
+        key=$(jq -er --arg k "${stem}_key" '.[$k]' <<< "$data") || return 1
+        (umask 077; printf '%s\n' "$crt" > "$TMP/$stem.crt" &&
+           printf '%s\n' "$key" > "$TMP/$stem.key") || return 1
+        echo "Exported $stem.crt and $stem.key"
+    done
 }
 
 # main function
