@@ -44,10 +44,10 @@ jobs:
         run: python3 -m unittest -v tests.cli.test_cli_contract
       - name: Bash syntax and ShellCheck
         run: |
-          bash -n ./vcli.sh
-          shellcheck --severity=error ./vcli.sh
+          bash -n ./vcli
+          shellcheck --severity=error ./vcli
       - name: Security invariants
-        run: python3 tests/integration/test_source_guards.py ./vcli.sh
+        run: python3 tests/integration/test_source_guards.py ./vcli
 
   integration:
     name: Vault ${{ matrix.vault }} integration
@@ -76,7 +76,7 @@ jobs:
           fi
           for cmd in jq curl openssl klist; do command -v "$cmd"; done
       - name: Validate production candidate
-        run: bash -n ./vcli.sh
+        run: bash -n ./vcli
       - name: Test against real Vault
         env:
           VCLI_TEST_VAULT_TAG: ${{ matrix.vault }}
@@ -108,12 +108,11 @@ jobs:
       - name: Checkout tag
         uses: actions/checkout@v4
       - name: Verify release candidate
-        run: bash -n ./vcli.sh
+        run: bash -n ./vcli
       - name: Build checksum-verified artifact
         run: |
           mkdir -p dist/vcli
-          cp vcli.sh README.md LICENSE dist/vcli/
-          mv dist/vcli/vcli.sh dist/vcli/vcli
+          cp vcli README.md LICENSE dist/vcli/
           tar -C dist -czf "vcli-${GITHUB_REF_NAME}.tar.gz" vcli
           sha256sum "vcli-${GITHUB_REF_NAME}.tar.gz" > "vcli-${GITHUB_REF_NAME}.tar.gz.sha256"
       - name: Upload manual-release artifact

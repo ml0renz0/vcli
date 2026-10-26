@@ -93,11 +93,11 @@ sealed_status=$(curl --silent --show-error --cacert "$VAULT_CACERT" \
   exit 1
 }
 # Neither reading nor writing can produce a successful CLI exit once sealed.
-if printf 'cat kv1/sealed-smoke\n' | ./vcli.sh -n >/dev/null 2>"$tls_dir/sealed-read.err"; then
+if printf 'cat kv1/sealed-smoke\n' | ./vcli -n >/dev/null 2>"$tls_dir/sealed-read.err"; then
   echo 'VCLI falsely reports successful read against sealed Vault' >&2
   exit 1
 fi
-if printf 'put kv1/sealed-smoke {"x":1}\n' | ./vcli.sh -n >/dev/null 2>"$tls_dir/sealed-write.err"; then
+if printf 'put kv1/sealed-smoke {"x":1}\n' | ./vcli -n >/dev/null 2>"$tls_dir/sealed-write.err"; then
   echo 'VCLI falsely reports successful write against sealed Vault' >&2
   exit 1
 fi

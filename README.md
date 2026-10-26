@@ -69,9 +69,9 @@ Now it has become a useful tool here at [Stratio](http://www.stratio.com)
 ## Revival work in progress (0.7)
 
 The **unchanged historical Bash CLI** is [`vcli.orig.sh`](vcli.orig.sh).
-The **tested modernization candidate** is [`vcli.sh`](vcli.sh).
+The **tested modernization candidate** is [`vcli`](vcli).
 
-Compare the two directly with `git diff --no-index -- vcli.orig.sh vcli.sh`
+Compare the two directly with `git diff --no-index -- vcli.orig.sh vcli`
 (`git diff --no-index` exits with code 1 when differences are found).
 
 - [CLI behavior contract](docs/CLI-CONTRACT.md) describes user-visible behavior.

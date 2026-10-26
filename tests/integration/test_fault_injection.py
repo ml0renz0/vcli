@@ -1,4 +1,4 @@
-"""HTTPS fault injection contracts for vcli.sh (black-box).
+"""HTTPS fault injection contracts for vcli (black-box).
 
 The normal integration suite talks to real Vault. This isolated fixture is
 intentionally a hostile HTTP peer for response codes and broken framing which

@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 
-BIN = Path(__file__).resolve().parents[2] / "vcli.sh"
+BIN = Path(__file__).resolve().parents[2] / "vcli"
 
 
 def run_cli(*args: str, stdin: str = "", env_extra=None) -> subprocess.CompletedProcess[str]:

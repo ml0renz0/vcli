@@ -14,7 +14,7 @@ import tempfile
 import time
 import unittest
 
-VCLI = Path(__file__).resolve().parents[2] / "vcli.sh"
+VCLI = Path(__file__).resolve().parents[2] / "vcli"
 
 
 def read_until(fd, marker: bytes, timeout=8) -> bytes:

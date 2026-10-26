@@ -127,8 +127,8 @@ verificar entradas, salidas, exit codes, cambios de estado mediante la API
 independiente de Vault, seguridad de datos y comportamiento de la TTY, **sin
 inspeccionar detalles de implementación de Bash para determinar el éxito**.
 
-- El CLI que ejecuta CI es siempre `vcli.sh` (sin parcheadores).
-- `vcli.orig.sh` conserva intacto el original histórico; `vcli.sh` es el candidato validado.
+- El CLI que ejecuta CI es siempre `vcli` (sin parcheadores).
+- `vcli.orig.sh` conserva intacto el original histórico; `vcli` es el candidato validado.
 - Cada nueva regresión necesita test que falle **antes** de cambiar el Bash.
 - Fixtures temporales generadas en cada ejecución, nunca credenciales reales.
 - Si la prueba implica KV v2, autenticar y consultar la API para verificar
@@ -139,7 +139,7 @@ inspeccionar detalles de implementación de Bash para determinar el éxito**.
 
 ```bash
 python3 -m unittest -v tests.cli.test_cli_contract
-bash -n vcli.sh
+bash -n vcli
 # Requiere Docker y runtime Bash:
 VCLI_TEST_VAULT_TAG=2.1.1 bash tests/integration/run.sh
 ```

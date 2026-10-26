@@ -40,7 +40,7 @@ Los tests no comprueban el nombre de una función interna ni si se usó
 
 - Diseñar primero el comportamiento esperado y añadir el test reproducible.
 - Ejecutar rojo sobre versión antigua cuando sea posible (*red*).
-- Implementar en **`vcli.sh`**, no en un patcher (*green*).
+- Implementar en **`vcli`**, no en un patcher (*green*).
 - Refactorizar manteniendo la suite verde.
 - Conservar intacto `vcli.orig.sh` y no publicar release mientras queden
   gaps bloqueantes descritos en `docs/CI-CD.md`.
@@ -61,7 +61,7 @@ los comandos Bash. El primer run real encontró:
 
 Los tests se mantienen como gate obligatorio. No usar `skip`, `xfail`,
 `continue-on-error` ni relajar las aserciones. Corregir exclusivamente
-`vcli.sh` y volver a comprobar las cuatro versiones reales de Vault.
+`vcli` y volver a comprobar las cuatro versiones reales de Vault.
 El contrato de `rmtree` exige además conservar un secreto centinela fuera
 del subárbol solicitado.
 
