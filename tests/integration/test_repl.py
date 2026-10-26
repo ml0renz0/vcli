@@ -69,7 +69,7 @@ class InteractiveShellTests(unittest.TestCase):
                 os.close(master)
 
 
-    def session(self):
+    def session(self, history: str | None = None):
         """Return PTY process with its own HOME and real Vault TLS credentials."""
         home = tempfile.TemporaryDirectory(prefix="vcli-repl-matrix-")
         env = os.environ.copy()
@@ -79,6 +79,8 @@ class InteractiveShellTests(unittest.TestCase):
             "VAULT_CACERT": os.environ["VAULT_CACERT"],
             "VAULT_TOKEN": os.environ.get("VCLI_TEST_READONLY_TOKEN", ""),
         })
+        if history is not None:
+            (Path(home.name) / ".vclistory").write_text(history, encoding="utf-8")
         master, slave = pty.openpty()
         child = subprocess.Popen([str(VCLI)], stdin=slave, stdout=slave,
                                  stderr=slave, env=env, start_new_session=True)
@@ -151,6 +153,40 @@ class InteractiveShellTests(unittest.TestCase):
             time.sleep(0.25)
             self.assertIsNone(child.poll(), "Empty reverse-search must not terminate REPL")
             self.send(fd, b"\x15help\n")
+            out = read_until(fd, b"Available commands:", timeout=8)
+            self.assertIn(b"Available commands:", out)
+        finally:
+            self.end(home, fd, child)
+
+    def test_07_down_restores_unsent_draft_without_persisting_it(self):
+        home, fd, child = self.session(history="help\n")
+        try:
+            self.send(fd, b"his\x1b[A\x1b[Btory\n", pace=0.04)
+            out = read_until(fd, b"#1: help", timeout=8)
+            self.assertIn(b"#1: help", out)
+            self.assertIsNone(child.poll())
+            self.send(fd, b"\x04")
+            self.assertEqual(child.wait(timeout=8), 0)
+            self.assertNotIn("his\n", (Path(home.name) / ".vclistory").read_text())
+        finally:
+            self.end(home, fd, child)
+
+    def test_08_literal_tilde_is_inserted_not_forward_delete(self):
+        home, fd, child = self.session()
+        try:
+            # "help" + Left + "~" + Backspace -> "help", not "he"
+            self.send(fd, b"help\x1b[D~\x7f\n", pace=0.04)
+            out = read_until(fd, b"Available commands:", timeout=8)
+            self.assertIn(b"Available commands:", out)
+        finally:
+            self.end(home, fd, child)
+
+    def test_09_csi_delete_removes_character_at_cursor(self):
+        home, fd, child = self.session()
+        try:
+            # "helxp" + Home + Right*3 + Delete -> "help"
+            self.send(fd, b"helxp\x1b[H\x1b[C\x1b[C\x1b[C\x1b[3~\n",
+                      pace=0.04)
             out = read_until(fd, b"Available commands:", timeout=8)
             self.assertIn(b"Available commands:", out)
         finally:
