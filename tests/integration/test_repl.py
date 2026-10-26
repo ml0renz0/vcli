@@ -69,7 +69,7 @@ class InteractiveShellTests(unittest.TestCase):
                 os.close(master)
 
 
-    def session(self, history: str | None = None):
+    def session(self, history: str | None = None, files: dict[str, str] | None = None):
         """Return PTY process with its own HOME and real Vault TLS credentials."""
         home = tempfile.TemporaryDirectory(prefix="vcli-repl-matrix-")
         env = os.environ.copy()
@@ -81,9 +81,12 @@ class InteractiveShellTests(unittest.TestCase):
         })
         if history is not None:
             (Path(home.name) / ".vclistory").write_text(history, encoding="utf-8")
+        for name, content in (files or {}).items():
+            (Path(home.name) / name).write_text(content, encoding="utf-8")
         master, slave = pty.openpty()
         child = subprocess.Popen([str(VCLI)], stdin=slave, stdout=slave,
-                                 stderr=slave, env=env, start_new_session=True)
+                                 stderr=slave, env=env, cwd=home.name,
+                                 start_new_session=True)
         os.close(slave)
         read_until(master, b" >", timeout=12)
         return home, master, child
@@ -189,6 +192,45 @@ class InteractiveShellTests(unittest.TestCase):
                       pace=0.04)
             out = read_until(fd, b"Available commands:", timeout=8)
             self.assertIn(b"Available commands:", out)
+        finally:
+            self.end(home, fd, child)
+
+    def test_10_command_name_colliding_with_file_does_not_load_it_as_history(self):
+        home, fd, child = self.session(files={"help": "untrusted-line\n"})
+        try:
+            self.send(fd, b"help\n")
+            read_until(fd, b"Available commands:", timeout=8)
+            self.send(fd, b"history\n")
+            output = read_until(fd, b"#1: help", timeout=8)
+            self.assertIn(b"#1: help", output)
+            self.assertNotIn(b"untrusted-line", output)
+        finally:
+            self.end(home, fd, child)
+
+    def test_11_repeated_help_deduplicates_persistent_history(self):
+        home, fd, child = self.session()
+        try:
+            for _ in range(2):
+                self.send(fd, b"help\n")
+                read_until(fd, b"Available commands:", timeout=8)
+                time.sleep(0.15)
+            self.send(fd, b"\x04")
+            self.assertEqual(child.wait(timeout=8), 0)
+            saved = (Path(home.name) / ".vclistory").read_text(encoding="utf-8")
+            self.assertEqual(saved.splitlines().count("help"), 1, saved)
+        finally:
+            self.end(home, fd, child)
+
+    def test_12_ctrl_r_matches_literal_brackets_and_cycles_through_history(self):
+        home, fd, child = self.session(history="help [one]\nhelp [two]\n")
+        try:
+            self.send(fd, b"help [\x12", pace=0.04)
+            first = read_until(fd, b"help [two]", timeout=8)
+            self.assertIn(b"help [two]", first)
+            self.send(fd, b"\x12")
+            second = read_until(fd, b"help [one]", timeout=8)
+            self.assertIn(b"help [one]", second)
+            self.assertIsNone(child.poll())
         finally:
             self.end(home, fd, child)
 

@@ -345,32 +345,22 @@ function completion(){
     unset tmparray found
 }
 
-# add $cmd to command history @cmd_history
+# Add a successful command to history. Loading files is handled only by load_history.
 function add_cmd(){
-    local vclistory
-    # If "$1" is a file then process it
-    if [[ -r "$1" ]]; then
-        mapfile -t vclistory < <(sed '1!G;h;$!d' "$1") # read history in reverse
-        cmd_history=( "${vclistory[@]}" )
-    else
-        local cmd
-        cmd="$(echo "$*" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')"
-        is_cmd "$cmd" || return 1
-        # Commands may contain passwords/certificates. Do not persist their data.
-        if [[ ${VCLI_HISTORY_SECRETS:-false} != true &&
-              $cmd =~ ^(put|addsecret|replace|delsecret|find)[[:space:]] ]]; then
-            return 0
-        fi
-        local -a new_history
-        new_history=( "$cmd" )
-        for old_cmd in "${cmd_history[@]}"; do
-            if [[ $old_cmd != $"cmd" ]]; then
-                new_history+=( "$old_cmd" )
-            fi
-        done
-        cmd_history=( "${new_history[@]}" )
-        debug "add_cmd cmd_history[0]: $cmd"
+    local cmd old_cmd
+    cmd="$(echo "$*" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')"
+    is_cmd "$cmd" || return 1
+    # Do not persist potentially sensitive command payloads by default.
+    if [[ ${VCLI_HISTORY_SECRETS:-false} != true &&
+          $cmd =~ ^(put|addsecret|replace|delsecret|find)[[:space:]] ]]; then
+        return 0
     fi
+    local -a new_history=( "$cmd" )
+    for old_cmd in "${cmd_history[@]}"; do
+        [[ $old_cmd == "$cmd" ]] || new_history+=( "$old_cmd" )
+    done
+    cmd_history=( "${new_history[@]}" )
+    debug "add_cmd cmd_history[0]: $cmd"
 }
 
 # Redraw a command after moving through interactive history.
@@ -429,8 +419,14 @@ function save_history(){
 
 # loads history from $HOME/.vclistory
 function load_history(){
-    [[ ! -e $VCLISTORY ]] && return
-    add_cmd "$VCLISTORY"
+    [[ -f $VCLISTORY && -r $VCLISTORY ]] || return 0
+    local -a loaded=()
+    local idx
+    mapfile -t loaded < "$VCLISTORY" || return 1
+    cmd_history=()
+    for (( idx=${#loaded[@]}-1; idx>=0; idx-- )); do
+        [[ -n ${loaded[idx]} ]] && cmd_history+=( "${loaded[idx]}" )
+    done
 }
 
 # loads history from $HOME/.vclistory
@@ -460,7 +456,7 @@ function rotate_found_cmds(){
     if [[ ! $SEARCHIST ]]; then
         # starting vcli search mode. Build a tmp_history with all matching commands
         for (( idx=0 ; idx<=${#cmd_history[@]}-1 ; idx++ )) ; do
-            if [[ "${cmd_history[$idx]}" =~ $search_cmd ]]; then
+            if [[ "${cmd_history[$idx]}" == *"$search_cmd"* ]]; then
                 tmp_history+=( "${cmd_history[$idx]}" )
             fi
             [[ ! $SEARCHIST ]] && SEARCHIST="0"
