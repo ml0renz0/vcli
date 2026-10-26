@@ -157,7 +157,7 @@ class AuthLifecycleContracts(unittest.TestCase):
                 "VAULT_ROLE_ID": "", "VAULT_SECRET_ID": "",
             })
             proc = subprocess.Popen(
-                [str(Path(__file__).resolve().parents[2] / "vcli-revival.sh"), "-n"],
+                [str(Path(__file__).resolve().parents[2] / "vcli.sh"), "-n"],
                 env=env, text=True, stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             )

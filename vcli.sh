@@ -2051,7 +2051,17 @@ function main(){
                                 [[ $len != 0 ]] && tput cuf $((len-pos+1)) # move cursor right to the end
                                 let pos=len+1
                         ;;
-                                            esac
+                        $'\x48') # HOME
+                                debug "HOME pressed"
+                                [[ $len != 0 ]] && tput cub $((pos-1))
+                                pos=1
+                        ;;
+                        3) # Forward Delete is CSI 3~, not a literal tilde.
+                            if IFS= read -rsn1 -t 0.2 _key && [[ $_key == '~' ]]; then
+                                vcli_delete_forward
+                            fi
+                        ;;
+                    esac
                 fi
                 unset ENDHIST
             ;;
@@ -2169,155 +2179,6 @@ function main(){
         [[ $DEBUG_HEXDUMP == "yes" ]] && debug "\nhexdump: \n $(echo -n "$_key" | hexdump -C)"
         # print prompt if commadn was run
         if [[ $is_command ]]; then prompt ; unset is_command cmd pos len history_draft ; history_index=-1 ; pos=1; fi
-    done < /dev/stdin
-}
-
-main "$@"
-\x48') # HOME
-                                debug "HOME pressed"
-                                [[ $len != 0 ]] && tput cub $((pos-1)) # move cursor left to the beginning
-                                let pos=1
-                        ;;
-                        3) # Delete (CSI 3~); the literal '~' must remain editable text
-                            if IFS= read -rsn1 -t 0.2 _key && [[ $_key == '~' ]]; then
-                                vcli_delete_forward
-                            fi
-                        ;;
-                    esac
-                fi
-                unset ENDHIST
-            ;;
-            $'\x0a') # ENTER
-                unset ENDHIST
-                is_command="true"
-                debug "current_pwd=$current_pwd"
-                [[ ! $disable_prompt ]] && echo
-                if [[ $cmd ]] && [[ ! "$cmd" =~ ^[[:space:]]+$ ]]; then
-                    cmd=$(echo "$cmd" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')
-                    if ! run_cmd "$cmd"; then exit_status=1; fi
-                fi
-            ;;
-            $'\x7f') # BACKSPACE
-                unset ENDHIST
-                if [[ $len != 0 ]] && [[ $pos -gt 1 ]]; then # if anything was typed and position>0 allow to delete
-                    echo -en "\b \b"
-                    let len-=1
-                    let pos-=1
-                    tmpmsg="${#cmd}: \"$cmd\""
-                    # remove $_key in $((pos-1))
-                    cmd="${cmd:0:$((pos-1))}${cmd:$((pos)):${#cmd}}"
-                    tput el # clean to the end of the line
-                    restcmd="${cmd:$((pos-1)):${#cmd}}"
-                    echo -n "$restcmd"
-                    # reposition cursor after backspace only if we moved chars
-                    if [[ ${#restcmd} != 0 ]]; then tput cub ${#restcmd} ; fi
-                    debug "$tmpmsg => ${#cmd}: \"$cmd\""
-                    debug "pos: $pos, len: $len"
-                fi
-            ;;
-            $'\x7e') # ERASE
-                unset ENDHIST
-                if [[ $len != 0 ]] && [[ $pos -lt $((len+1)) ]]; then # if anything was typed and position>0 allow to delete
-                    tput ech 1 # erase 1 character at $pos
-                    let len-=1
-                    tmpmsg="${#cmd}: \"$cmd\""
-                    cmd=${cmd:0:$((pos-1))}${cmd:${pos}:$((${#cmd}-1))}
-                    tput el # clean to the end of the line
-                    #cmd=${cmd::-1} # delete last character
-                    restcmd="${cmd:$((pos-1)):$((${#cmd}))}"
-                    echo -n "$restcmd"
-                    # reposition cursor after backspace only if we moved chars
-                    if [[ ${#restcmd} != 0 ]]; then tput cub ${#restcmd} ; fi
-                    debug "$tmpmsg => ${#cmd}: \"$cmd\""
-                    debug "pos: $pos, len: $len"
-                fi
-            ;;
-            $'\x09') # tab completions
-                completion "$cmd"
-                exit_status=$?
-
-                if [[ $exit_status == 0 ]]; then
-                    # move the cursor to the beginning to print the command selected
-                    [[ $pos != 1 ]] && tput cub $((pos-1)) # move cursor left to the beginning
-
-                    # print the command found in history
-                    len=0
-                    pos=1
-                    tput el # clean to the end of the line
-                    echo -n "$cmd"
-                    tput el # clean to the end of the line
-                    let len=${#cmd}
-                    let pos=len+1
-                else
-                    # print the command found in history
-                    len=0
-                    pos=1
-                    tput el # clean to the end of the line
-                    echo -n "$cmd"
-                    tput el # clean to the end of the line
-                    let len=${#cmd}
-                    let pos=len+1
-                fi
-            ;;
-            $'\x12') # Ctrl+r
-                if [[ ! $cmd ]]; then
-                    # clean line
-                    echo -e "\nvcli hint: hit Ctrl+r when typing command to search the vcli history"
-                    print_history
-                    is_command="true"
-                else
-                    rotate_found_cmds "$cmd"
-                    debug "search_cmd: $search_cmd, \$SEARCHIST: $SEARCHIST"
-
-
-                    # move the cursor to the beginning to print the command selected
-                    [[ $pos != 1 ]] && tput cub $((pos-1)) # move cursor left to the beginning
-
-                    # print the command found in history
-                    echo -n "$cmd"
-
-                    tput el # clean to the end of the line
-                    let pos=$((${#cmd}+1))
-                    let len=${#cmd}
-                fi
-            ;;
-            
-            $'\x15') # Ctrl+U
-                cmd=""
-                len=0
-                pos=1
-                printf '\r'
-                prompt
-                tput el
-            ;;
-            $'\x04') # Ctrl+D
-                clean_n_exit
-            ;;
-            $'')
-                clean_n_exit
-            ;;
-            $'\x20'|*) # NORMAL CHARS
-                if [[ ! $disable_prompt ]]; then
-                    tput ich 1 # insert chars rather than overwriting them
-                    echo -n "$_key" #| hexdump -C
-                fi
-                let len+=1
-                let pos+=1
-                tmpmsg="${#cmd}: \"$cmd\""
-                # insert $_key in $pos within $cmd string
-                cmd="${cmd:0:$((pos-2))}$_key${cmd:$((pos-2)):${#cmd}}"
-                debug " => ${#cmd}: \"$cmd\""
-                debug "pos: $pos, len: $len"
-            ;;
-        esac
-        # Exit history search mode
-        if [[ "$_key" != "$lastkey" ]] && [[ "$_key" != $'\x12' ]]; then
-            debug "exiting history search mode"
-            unset SEARCHIST search_cmd tmp_history
-        fi
-        [[ $DEBUG_HEXDUMP == "yes" ]] && debug "\nhexdump: \n $(echo -n "$_key" | hexdump -C)"
-        # print prompt if commadn was run
-        if [[ $is_command ]]; then prompt ; unset is_command cmd pos len ; history_index=-1 ; pos=1; fi
     done < /dev/stdin
 }
 

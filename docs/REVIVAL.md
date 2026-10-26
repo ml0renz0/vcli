@@ -1,7 +1,9 @@
 # VCLI revival: cambios directos sobre Bash
 
-La PR mantiene el fichero original `vcli` y añade
-`vcli-revival.sh`: una copia modificada y revisable del shell original.
+La PR conserva el histórico intacto en `vcli.orig.sh` y desarrolla
+`vcli.sh` como candidato Bash revisable. Para inspeccionar exactamente las
+diferencias, ejecutar `git diff --no-index -- vcli.orig.sh vcli.sh`.
+Este comando devuelve código 1 cuando encuentra diferencias.
 
 No existe un generador de parches Python. CI valida **el fichero Bash que
 realmente se entregará**, con los contratos de `docs/CLI-CONTRACT.md`.
@@ -25,6 +27,6 @@ servidor productivo ni credenciales reales en la suite.
 
 ## Plan de integración
 
-Una vez que las pruebas y el candidato estén estabilizados, sustituir
-`vcli` por el código probado, eliminar `vcli-revival.sh` y actualizar
-las instrucciones de instalación y release.
+Una vez estabilizados los contratos y las pruebas, empaquetar `vcli.sh`
+como ejecutable distribuido `vcli` sin alterar `vcli.orig.sh`.
+Actualizar las instrucciones de instalación y release al cerrar la fase.

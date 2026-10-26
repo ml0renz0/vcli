@@ -68,12 +68,15 @@ Now it has become a useful tool here at [Stratio](http://www.stratio.com)
 
 ## Revival work in progress (0.7)
 
-The original Bash CLI (`vcli`) is retained as a historical reference.
-The **tested modernization candidate** is [`vcli-revival.sh`](vcli-revival.sh).
+The **unchanged historical Bash CLI** is [`vcli.orig.sh`](vcli.orig.sh).
+The **tested modernization candidate** is [`vcli.sh`](vcli.sh).
+
+Compare the two directly with `git diff --no-index -- vcli.orig.sh vcli.sh`
+(`git diff --no-index` exits with code 1 when differences are found).
 
 - [CLI behavior contract](docs/CLI-CONTRACT.md) describes user-visible behavior.
 - [CI and real-Vault test matrix](docs/CI-CD.md) explains test coverage and blockers.
-- [Revival notes](docs/REVIVAL.md) document the temporary naming and rollout.
+- [Revival notes](docs/REVIVAL.md) document the naming, migration and rollout.
 
 The CI starts ephemeral real HashiCorp Vault servers with native TLS and
 verifies read/write behavior independently through the Vault HTTP API.

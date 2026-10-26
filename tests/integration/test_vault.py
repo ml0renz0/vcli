@@ -16,7 +16,7 @@ import unittest
 from urllib import error, request
 from uuid import uuid4
 
-VCLI = Path(__file__).resolve().parents[2] / "vcli-revival.sh"
+VCLI = Path(__file__).resolve().parents[2] / "vcli.sh"
 VAULT = os.environ.get("VAULT_ADDR", "https://127.0.0.1:8200")
 ROOT_TOKEN = "local-ci-root-only"  # Intentionally ephemeral and CI-only.
 
