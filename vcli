@@ -1954,6 +1954,36 @@ function vcli_read_csi(){
     return 1
 }
 
+# Handle navigation keys common to ANSI CSI and SS3 (application mode).
+# Unsupported function keys and modifiers must never enter the command buffer.
+function vcli_apply_navigation(){
+    case $1 in
+        A) get_prev_cmd ;;
+        B) get_next_cmd ;;
+        C) # Right
+            if (( pos < len+1 )); then
+                tput cuf 1
+                pos=$((pos+1))
+            fi
+        ;;
+        D) # Left
+            if (( pos > 1 )); then
+                tput cub 1
+                pos=$((pos-1))
+            fi
+        ;;
+        F|4~|8~) # End (including xterm numeric variants)
+            (( len == 0 )) || tput cuf $((len-pos+1))
+            pos=$((len+1))
+        ;;
+        H|1~|7~) # Home (including xterm numeric variants)
+            (( pos == 1 )) || tput cub $((pos-1))
+            pos=1
+        ;;
+        3~) vcli_delete_forward ;;
+    esac
+}
+
 function main(){
     # First of all: check command dependencies
     check_dependency "$DEPENDENCIES"
@@ -2065,33 +2095,13 @@ function main(){
                 if IFS= read -rsn1 -t 0.2 _key; then
                     if [[ $_key == "[" ]]; then
                         if vcli_read_csi; then
-                            case $csi_sequence in
-                                A) get_prev_cmd ;;
-                                B) get_next_cmd ;;
-                                C) # Right
-                                    if (( pos < len+1 )); then
-                                        tput cuf 1
-                                        pos=$((pos+1))
-                                    fi
-                                ;;
-                                D) # Left
-                                    if (( pos > 1 )); then
-                                        tput cub 1
-                                        pos=$((pos-1))
-                                    fi
-                                ;;
-                                F|4~|8~) # End (including xterm numeric variants)
-                                    (( len == 0 )) || tput cuf $((len-pos+1))
-                                    pos=$((len+1))
-                                ;;
-                                H|1~|7~) # Home (including xterm numeric variants)
-                                    (( pos == 1 )) || tput cub $((pos-1))
-                                    pos=1
-                                ;;
-                                3~) vcli_delete_forward ;;
-                                # Ignore unsupported CSI sequences, including key
-                                # modifiers and bracketed-paste delimiters, whole.
-                            esac
+                            vcli_apply_navigation "$csi_sequence"
+                        fi
+                    elif [[ $_key == "O" ]]; then # SS3 (application cursor mode)
+                        # Some terminals use ESC O H/F/A/B/C/D rather than CSI.
+                        # Consume unsupported SS3 keys (e.g. F1=ESC O P) whole.
+                        if IFS= read -rsn1 -t 0.2 _ss3_key; then
+                            vcli_apply_navigation "$_ss3_key"
                         fi
                     else
                         # Preserve the ordinary/control key after a lone ESC.

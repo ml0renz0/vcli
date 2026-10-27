@@ -374,5 +374,66 @@ class InteractiveShellTests(unittest.TestCase):
             self.end(home, fd, child)
 
 
+    def test_24_ss3_home_right_insert(self):
+        home, fd, child = self.session()
+        try:
+            # Application cursor mode: "hlp" + SS3 Home + Right + "e" -> "help".
+            self.send(fd, b"hlp\x1bOH\x1bOCe\n", pace=0.035)
+            self.expect_help(fd)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
+    def test_25_ss3_home_end_append(self):
+        home, fd, child = self.session()
+        try:
+            # Moving Home and then End must leave insertion at the end.
+            self.send(fd, b"hel\x1bOH\x1bOFp\n", pace=0.035)
+            self.expect_help(fd)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
+    def test_26_ss3_left_edits_in_middle(self):
+        home, fd, child = self.session()
+        try:
+            self.send(fd, b"hlp\x1bODe\n", pace=0.035)
+            self.expect_help(fd)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
+    def test_27_ss3_function_key_does_not_pollute_command(self):
+        home, fd, child = self.session()
+        try:
+            # Application-mode F1 is ESC O P, not literal "OP".
+            self.send(fd, b"help\x1bOP\n", pace=0.035)
+            self.expect_help(fd)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
+    def test_28_ss3_history_navigation_restores_draft(self):
+        home, fd, child = self.session(history="help\n")
+        try:
+            self.send(fd, b"his\x1bOA\x1bOBtory\n", pace=0.04)
+            out = read_until(fd, b"#1: help", timeout=8)
+            self.assertIn(b"#1: help", out)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
+    def test_29_partial_ss3_times_out_without_sticking(self):
+        home, fd, child = self.session()
+        try:
+            self.send(fd, b"\x1bO", pace=0)
+            time.sleep(0.35)
+            self.assertIsNone(child.poll())
+            self.send(fd, b"help\n", pace=0)
+            self.expect_help(fd)
+        finally:
+            self.end(home, fd, child)
+
+
 if __name__ == "__main__":
     unittest.main()
