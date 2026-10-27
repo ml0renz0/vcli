@@ -69,16 +69,23 @@ class InteractiveShellTests(unittest.TestCase):
                 os.close(master)
 
 
-    def session(self, history: str | None = None, files: dict[str, str] | None = None):
+    def session(self, history: str | None = None, files: dict[str, str] | None = None,
+                term: str | None = "xterm", extra_env: dict[str, str] | None = None):
         """Return PTY process with its own HOME and real Vault TLS credentials."""
         home = tempfile.TemporaryDirectory(prefix="vcli-repl-matrix-")
         env = os.environ.copy()
         env.update({
-            "HOME": home.name, "TMPDIR": home.name, "TERM": "xterm",
+            "HOME": home.name, "TMPDIR": home.name,
             "VAULT_ADDR": os.environ["VAULT_ADDR"],
             "VAULT_CACERT": os.environ["VAULT_CACERT"],
             "VAULT_TOKEN": os.environ.get("VCLI_TEST_READONLY_TOKEN", ""),
         })
+        if term is None:
+            env.pop("TERM", None)
+        else:
+            env["TERM"] = term
+        if extra_env:
+            env.update(extra_env)
         if history is not None:
             (Path(home.name) / ".vclistory").write_text(history, encoding="utf-8")
         for name, content in (files or {}).items():
@@ -517,6 +524,46 @@ class InteractiveShellTests(unittest.TestCase):
             self.assertIsNone(child.poll())
             self.send(fd, b"help\n", pace=0.03)
             self.expect_help(fd)
+        finally:
+            self.end(home, fd, child)
+
+
+    def _exercise_degraded_terminal(self, term):
+        with tempfile.TemporaryDirectory(prefix="vcli-terminfo-hook-") as hook_dir:
+            sentinel = Path(hook_dir) / "tput-called"
+            shim = Path(hook_dir) / "tput"
+            shim.write_text(
+                "#!/bin/sh\nprintf called >> \"$VCLI_TPUT_SENTINEL\"\nexit 89\n",
+                encoding="utf-8",
+            )
+            shim.chmod(0o755)
+            env = {
+                "PATH": hook_dir + os.pathsep + os.environ["PATH"],
+                "VCLI_TPUT_SENTINEL": str(sentinel),
+            }
+            home, fd, child = self.session(term=term, extra_env=env)
+            try:
+                self.send(fd, b"help\n", pace=0.03)
+                self.expect_help(fd)
+                self.assertFalse(sentinel.exists(),
+                                 "Basic input must not depend on tput")
+                self.assertIsNone(child.poll())
+            finally:
+                self.end(home, fd, child)
+
+    def test_36_dumb_term_basic_input_does_not_call_tput(self):
+        self._exercise_degraded_terminal("dumb")
+
+    def test_37_missing_term_basic_input_does_not_call_tput(self):
+        self._exercise_degraded_terminal(None)
+
+    def test_38_unknown_terminfo_entry_still_accepts_basic_input(self):
+        home, fd, child = self.session(term="vcli-nonexistent-terminal")
+        try:
+            self.send(fd, b"help\n", pace=0.03)
+            out = self.expect_help(fd)
+            self.assertNotIn(b"tput:", out)
+            self.assertIsNone(child.poll())
         finally:
             self.end(home, fd, child)
 

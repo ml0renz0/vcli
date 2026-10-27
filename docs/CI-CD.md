@@ -162,9 +162,13 @@ estricto. El proceso individual tiene un timeout de cinco segundos.
 
 El `Required CI gate` exige `static + integration + minimal`. Esto añade
 cobertura de arranque en musl y glibc, **sin sustituir** las cuatro pruebas E2E
-con Vault HTTPS en Ubuntu. Las funciones del REPL que requieren terminal
-real, señales, keytabs y exportaciones aún no están certificadas para Alpine
-ni BSD/macOS.
+con Vault HTTPS en Ubuntu. El REPL tiene tres regresiones PTY adicionales,
+ejecutadas con Vault TLS en Ubuntu, para `TERM=dumb`, `TERM` ausente y
+terminfo desconocido. Las operaciones de dibujo del cursor se omiten o se
+consideran *best effort* sin terminfo; el contrato garantiza entrada simple,
+no representación visual avanzada en esos terminales. Las funciones del REPL,
+señales, keytabs y exportaciones siguen sin certificarse E2E en Alpine ni
+BSD/macOS.
 
 ### Ejecución local
 
