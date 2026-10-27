@@ -57,7 +57,7 @@ class InteractiveShellTests(unittest.TestCase):
                 for key in b"help\n":
                     os.write(master, bytes([key]))
                     time.sleep(0.015)
-                read_until(master, b"Available commands:")
+                self.expect_help(master)
                 # Wait for the REPL to finish rendering help before Ctrl+D.
                 time.sleep(0.5)
                 os.write(master, b"\x04")  # Ctrl+D
@@ -104,11 +104,20 @@ class InteractiveShellTests(unittest.TestCase):
         os.close(fd)
         home.cleanup()
 
+    def expect_help(self, fd, timeout=8):
+        """Require a successful 'help', not the unknown-command error header."""
+        out = read_until(fd, b"Available commands:", timeout=timeout)
+        self.assertIn(
+            b"Available commands:", out.splitlines(),
+            f"REPL did not execute help successfully: {out[-900:]!r}",
+        )
+        return out
+
     def test_02_tab_completes_unique_command(self):
         home, fd, child = self.session()
         try:
             self.send(fd, b"hel\t\n")
-            result = read_until(fd, b"Available commands:", timeout=8)
+            result = self.expect_help(fd, timeout=8)
             self.assertIn(b"Available commands:", result)
             self.assertIsNone(child.poll())
         finally:
@@ -118,10 +127,10 @@ class InteractiveShellTests(unittest.TestCase):
         home, fd, child = self.session()
         try:
             self.send(fd, b"help\n")
-            read_until(fd, b"Available commands:", timeout=8)
+            self.expect_help(fd, timeout=8)
             time.sleep(0.35)
             self.send(fd, b"\x1b[A\n", pace=0.04)
-            again = read_until(fd, b"Available commands:", timeout=8)
+            again = self.expect_help(fd, timeout=8)
             self.assertIn(b"Available commands:", again)
         finally:
             self.end(home, fd, child)
@@ -131,7 +140,7 @@ class InteractiveShellTests(unittest.TestCase):
         try:
             # "hlp" + Home + Right + "e" -> "help"
             self.send(fd, b"hlp\x1b[H\x1b[Ce\n", pace=0.045)
-            out = read_until(fd, b"Available commands:", timeout=8)
+            out = self.expect_help(fd, timeout=8)
             self.assertIn(b"Available commands:", out)
         finally:
             self.end(home, fd, child)
@@ -144,7 +153,7 @@ class InteractiveShellTests(unittest.TestCase):
             time.sleep(0.2)
             self.assertIsNone(child.poll(), "Ctrl+C must not terminate the session")
             self.send(fd, b"help\n")
-            out = read_until(fd, b"Available commands:", timeout=8)
+            out = self.expect_help(fd, timeout=8)
             self.assertIn(b"Available commands:", out)
         finally:
             self.end(home, fd, child)
@@ -156,7 +165,7 @@ class InteractiveShellTests(unittest.TestCase):
             time.sleep(0.25)
             self.assertIsNone(child.poll(), "Empty reverse-search must not terminate REPL")
             self.send(fd, b"\x15help\n")
-            out = read_until(fd, b"Available commands:", timeout=8)
+            out = self.expect_help(fd, timeout=8)
             self.assertIn(b"Available commands:", out)
         finally:
             self.end(home, fd, child)
@@ -179,7 +188,7 @@ class InteractiveShellTests(unittest.TestCase):
         try:
             # "help" + Left + "~" + Backspace -> "help", not "he"
             self.send(fd, b"help\x1b[D~\x7f\n", pace=0.04)
-            out = read_until(fd, b"Available commands:", timeout=8)
+            out = self.expect_help(fd, timeout=8)
             self.assertIn(b"Available commands:", out)
         finally:
             self.end(home, fd, child)
@@ -190,7 +199,7 @@ class InteractiveShellTests(unittest.TestCase):
             # "helxp" + Home + Right*3 + Delete -> "help"
             self.send(fd, b"helxp\x1b[H\x1b[C\x1b[C\x1b[C\x1b[3~\n",
                       pace=0.04)
-            out = read_until(fd, b"Available commands:", timeout=8)
+            out = self.expect_help(fd, timeout=8)
             self.assertIn(b"Available commands:", out)
         finally:
             self.end(home, fd, child)
@@ -199,7 +208,7 @@ class InteractiveShellTests(unittest.TestCase):
         home, fd, child = self.session(files={"help": "untrusted-line\n"})
         try:
             self.send(fd, b"help\n")
-            read_until(fd, b"Available commands:", timeout=8)
+            self.expect_help(fd, timeout=8)
             self.send(fd, b"history\n")
             output = read_until(fd, b"#1: help", timeout=8)
             self.assertIn(b"#1: help", output)
@@ -212,7 +221,7 @@ class InteractiveShellTests(unittest.TestCase):
         try:
             for _ in range(2):
                 self.send(fd, b"help\n")
-                read_until(fd, b"Available commands:", timeout=8)
+                self.expect_help(fd, timeout=8)
                 time.sleep(0.15)
             self.send(fd, b"\x04")
             self.assertEqual(child.wait(timeout=8), 0)
@@ -243,7 +252,7 @@ class InteractiveShellTests(unittest.TestCase):
                 history = Path(home.name) / ".vclistory"
                 history.symlink_to(protected)
                 self.send(fd, b"help\n", pace=0.03)
-                read_until(fd, b"Available commands:", timeout=8)
+                self.expect_help(fd, timeout=8)
                 # Help renders multiple lines; give the REPL time to read Ctrl+D.
                 time.sleep(0.5)
                 self.send(fd, b"\x04")
@@ -271,7 +280,7 @@ class InteractiveShellTests(unittest.TestCase):
         home, fd, child = self.session()
         try:
             self.send(fd, b"help\n", pace=0)
-            out = read_until(fd, b"Available commands:", timeout=8)
+            out = self.expect_help(fd, timeout=8)
             self.assertIn(b"Available commands:", out)
             self.assertIsNone(child.poll())
             self.send(fd, b"history\n", pace=0)
@@ -284,7 +293,7 @@ class InteractiveShellTests(unittest.TestCase):
         home, fd, child = self.session()
         try:
             self.send(fd, b"\x1bhelp\n", pace=0)
-            out = read_until(fd, b"Available commands:", timeout=8)
+            out = self.expect_help(fd, timeout=8)
             self.assertIn(b"Available commands:", out)
             self.assertIsNone(child.poll())
         finally:
@@ -297,7 +306,7 @@ class InteractiveShellTests(unittest.TestCase):
             time.sleep(0.35)
             self.assertIsNone(child.poll())
             self.send(fd, b"help\n", pace=0)
-            out = read_until(fd, b"Available commands:", timeout=8)
+            out = self.expect_help(fd, timeout=8)
             self.assertIn(b"Available commands:", out)
         finally:
             self.end(home, fd, child)
@@ -307,7 +316,7 @@ class InteractiveShellTests(unittest.TestCase):
         try:
             # Ctrl+Left commonly emits CSI 1;5D. It must not type ";5D".
             self.send(fd, b"help\x1b[1;5D\n", pace=0.03)
-            out = read_until(fd, b"Available commands:", timeout=8)
+            out = self.expect_help(fd, timeout=8)
             self.assertIn(b"Available commands:", out)
             self.assertIsNone(child.poll())
         finally:
@@ -318,7 +327,7 @@ class InteractiveShellTests(unittest.TestCase):
         try:
             # A single-line bracketed paste sends CSI 200~ and CSI 201~.
             self.send(fd, b"\x1b[200~help\x1b[201~\n", pace=0.03)
-            out = read_until(fd, b"Available commands:", timeout=8)
+            out = self.expect_help(fd, timeout=8)
             self.assertIn(b"Available commands:", out)
             self.assertIsNone(child.poll())
         finally:
@@ -328,9 +337,20 @@ class InteractiveShellTests(unittest.TestCase):
         home, fd, child = self.session()
         try:
             self.send(fd, b"help\x1b[5~\n", pace=0.03)
-            out = read_until(fd, b"Available commands:", timeout=8)
+            out = self.expect_help(fd, timeout=8)
             self.assertIn(b"Available commands:", out)
             self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
+    def test_21_unknown_command_is_not_confused_with_successful_help(self):
+        home, fd, child = self.session()
+        try:
+            self.send(fd, b"definitely-no-such-command\n", pace=0.02)
+            out = read_until(fd, b"Available commands:", timeout=8)
+            self.assertNotIn(b"Available commands:", out.splitlines(),
+                             "Unknown command must not satisfy help contract")
+            self.assertIn(b"vcli command. Available commands:", out)
         finally:
             self.end(home, fd, child)
 
