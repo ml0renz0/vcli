@@ -81,6 +81,49 @@ HCL
 
 # This token has no write/delete/create privileges.
 export VCLI_TEST_READONLY_TOKEN="$(v token create -policy=vcli-ci-ro -orphan -field=token)"
+
+# Reuse the same disposable TLS Vault fixture for a real CLI/API smoke suite
+# inside minimal distros. Linux host networking reaches the loopback-only
+# Vault port; the checked-out code and public CA are mounted read-only.
+# No Docker socket or host credentials enter the client container.
+if [[ -n ${VCLI_TEST_MINIMAL_IMAGE:-} ]]; then
+  : "${VCLI_TEST_MINIMAL_DISTRO:?Set alpine or debian for minimal Vault E2E}"
+  case "$VCLI_TEST_MINIMAL_DISTRO" in alpine|debian) ;; *) exit 2 ;; esac
+  docker run --rm --network host \
+    --mount "type=bind,source=$PWD,target=/repo,readonly" \
+    --mount "type=bind,source=$tls_dir,target=/vcli-tls,readonly" \
+    --workdir /repo \
+    --env "VCLI_MINIMAL_DISTRO=$VCLI_TEST_MINIMAL_DISTRO" \
+    --env "VAULT_ADDR=$VAULT_ADDR" \
+    --env "VAULT_TOKEN=$root_token" \
+    --env "VAULT_CACERT=/vcli-tls/vault-ca.pem" \
+    --env "VCLI_TEST_READONLY_TOKEN=$VCLI_TEST_READONLY_TOKEN" \
+    --env PYTHONDONTWRITEBYTECODE=1 \
+    "$VCLI_TEST_MINIMAL_IMAGE" /bin/sh -ec '
+      case "$VCLI_MINIMAL_DISTRO" in
+        alpine)
+          apk add --no-cache bash curl jq coreutils tar python3 ca-certificates
+        ;;
+        debian)
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            bash curl jq coreutils tar python3 ca-certificates
+        ;;
+      esac
+      bash -n ./vcli
+      curl --fail --silent --show-error --cacert "$VAULT_CACERT" \
+        "$VAULT_ADDR/v1/sys/health" >/dev/null
+      if curl --fail --silent "$VAULT_ADDR/v1/sys/health" >/dev/null 2>&1; then
+        echo "FAIL: minimal client trusts Vault CA implicitly" >&2
+        exit 1
+      fi
+      python3 -m unittest -v \
+        tests.integration.test_vault tests.integration.test_operations
+      python3 -m tests.integration.bench_vault
+    '
+  exit 0
+fi
+
 python3 -m unittest -v tests.integration.test_vault tests.integration.test_operations tests.integration.test_kv2_advanced tests.integration.test_security tests.integration.test_fault_injection tests.integration.test_partial_failures tests.integration.test_cas_concurrency tests.integration.test_auth_lifecycle tests.integration.test_tls tests.integration.test_tls_advanced tests.integration.test_pki_kerberos tests.integration.test_repl
 
 # Destructive last-stage test: seal the actual ephemeral Vault only after all

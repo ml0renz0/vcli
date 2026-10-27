@@ -89,6 +89,12 @@ jobs:
               python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_portability
               python3 tests/cli/bench_startup.py
             '
+      - name: Real Vault HTTPS and live-read benchmark in minimal distro
+        env:
+          VCLI_TEST_MINIMAL_IMAGE: ${{ matrix.image }}
+          VCLI_TEST_MINIMAL_DISTRO: ${{ matrix.distro }}
+          VCLI_TEST_VAULT_TAG: '2.1.1'
+        run: bash tests/integration/run.sh
 
   integration:
     name: Vault ${{ matrix.vault }} integration
