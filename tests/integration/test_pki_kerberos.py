@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import os
+import shutil
 import signal
 import time
 from pathlib import Path
@@ -98,6 +99,21 @@ class PkiKerberosContracts(unittest.TestCase):
                 + struct.pack(">H", 32) + bytes(range(32)))
         return b"\x05\x02" + struct.pack(">i", len(data)) + data
 
+    @staticmethod
+    def _native_commands():
+        """Resolve real tools before PATH-injection shims override their names.
+
+        Alpine, Debian and Ubuntu do not share universal /usr/bin paths
+        for ln, base64, sleep, cat and mkdir; resolve the installed tool.
+        """
+        native = {}
+        for command in ("ln", "mkdir", "cat", "base64", "sleep"):
+            resolved = shutil.which(command)
+            if not resolved:
+                raise RuntimeError(f"Required fault-injection tool absent: {command}")
+            native[f"VCLI_TEST_REAL_{command.upper()}"] = resolved
+        return native
+
     def cli(self, directory, command, extra_env=None):
         env = os.environ.copy()
         env.update({
@@ -106,6 +122,7 @@ class PkiKerberosContracts(unittest.TestCase):
             "VAULT_CACERT": os.environ["VAULT_CACERT"],
             "VAULT_KV_VERSION": "1", "VAULT_KV_MOUNTS": "kv2,team/config",
         })
+        env.update(self._native_commands())
         if extra_env:
             env.update(extra_env)
         out = subprocess.run([str(VCLI), "-n"], input=command + "\n",
@@ -124,12 +141,12 @@ for destination in "$@"; do :; done
 if [ "$destination" = "$VCLI_TEST_LN_DEST" ]; then
     case "$VCLI_TEST_LN_ACTION" in
         regular) printf 'RACE-MARKER' > "$destination" ;;
-        symlink) /usr/bin/ln -s -- "$VCLI_TEST_LN_VICTIM" "$destination" ;;
-        directory) /usr/bin/mkdir -- "$destination" ;;
+        symlink) "$VCLI_TEST_REAL_LN" -s -- "$VCLI_TEST_LN_VICTIM" "$destination" ;;
+        directory) "$VCLI_TEST_REAL_MKDIR" -- "$destination" ;;
         fail) exit 86 ;;
     esac
 fi
-exec /usr/bin/ln "$@"
+exec "$VCLI_TEST_REAL_LN" "$@"
 """, encoding="utf-8")
         hook.chmod(0o755)
         return {
@@ -416,12 +433,12 @@ exec /usr/bin/ln "$@"
             hook.write_text("""#!/bin/sh
 count=0
 if [ -f "$VCLI_TEST_BASE64_COUNTER" ]; then
-    count=$(/usr/bin/cat "$VCLI_TEST_BASE64_COUNTER")
+    count=$("$VCLI_TEST_REAL_CAT" "$VCLI_TEST_BASE64_COUNTER")
 fi
 count=$((count+1))
 printf '%s\n' "$count" > "$VCLI_TEST_BASE64_COUNTER"
 if [ "$count" -eq 2 ]; then exit 87; fi
-exec /usr/bin/base64 "$@"
+exec "$VCLI_TEST_REAL_BASE64" "$@"
 """, encoding="utf-8")
             hook.chmod(0o755)
             env = {
@@ -444,6 +461,7 @@ exec /usr/bin/base64 "$@"
             "VAULT_CACERT": os.environ["VAULT_CACERT"],
             "VAULT_KV_VERSION": "1", "VAULT_KV_MOUNTS": "kv2,team/config",
         })
+        env.update(self._native_commands())
         env.update(extra_env)
         child = subprocess.Popen(
             [str(VCLI), "-n"], env=env, stdin=subprocess.PIPE,
@@ -483,7 +501,7 @@ exec /usr/bin/base64 "$@"
             hook.write_text("""#!/bin/sh
 # Simulate an ln variant silently discarding -T.
 [ "$1" = "-T" ] && shift
-exec /usr/bin/ln "$@"
+exec "$VCLI_TEST_REAL_LN" "$@"
 """, encoding="utf-8")
             hook.chmod(0o755)
             out = self.cli(root, f"getcert {self.cert_path}", {
@@ -505,15 +523,15 @@ exec /usr/bin/ln "$@"
             hook.write_text("""#!/bin/sh
 count=0
 if [ -f "$VCLI_TEST_BASE64_COUNTER" ]; then
-    count=$(/usr/bin/cat "$VCLI_TEST_BASE64_COUNTER")
+    count=$("$VCLI_TEST_REAL_CAT" "$VCLI_TEST_BASE64_COUNTER")
 fi
 count=$((count+1))
 printf '%s\n' "$count" > "$VCLI_TEST_BASE64_COUNTER"
 if [ "$count" -eq 2 ]; then
     : > "$VCLI_TEST_MARKER"
-    exec /usr/bin/sleep 60
+    exec "$VCLI_TEST_REAL_SLEEP" 60
 fi
-exec /usr/bin/base64 "$@"
+exec "$VCLI_TEST_REAL_BASE64" "$@"
 """, encoding="utf-8")
             hook.chmod(0o755)
             self._interrupt_export(root, f"getkrb {self.krb_path}", {
@@ -533,9 +551,9 @@ exec /usr/bin/base64 "$@"
 for destination in "$@"; do :; done
 if [ "$destination" = "$VCLI_TEST_LN_DEST" ]; then
     : > "$VCLI_TEST_MARKER"
-    exec /usr/bin/sleep 60
+    exec "$VCLI_TEST_REAL_SLEEP" 60
 fi
-exec /usr/bin/ln "$@"
+exec "$VCLI_TEST_REAL_LN" "$@"
 """, encoding="utf-8")
             hook.chmod(0o755)
             self._interrupt_export(root, f"getcert {self.cert_path}", {
