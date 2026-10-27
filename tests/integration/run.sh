@@ -102,15 +102,25 @@ if [[ -n ${VCLI_TEST_MINIMAL_IMAGE:-} ]]; then
     "$VCLI_TEST_MINIMAL_IMAGE" /bin/sh -ec '
       case "$VCLI_MINIMAL_DISTRO" in
         alpine)
-          apk add --no-cache bash curl jq coreutils tar python3 ca-certificates
+          apk add --no-cache bash curl jq coreutils tar python3 ca-certificates \
+            openssl krb5 ncurses ncurses-terminfo-base
         ;;
         debian)
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-            bash curl jq coreutils tar python3 ca-certificates
+            bash curl jq coreutils tar python3 ca-certificates \
+            openssl krb5-user ncurses-bin
         ;;
       esac
       bash -n ./vcli
+      # These are not optional: avoid green checks from skipped PKI/REPL
+      # tests when a minimal image is missing required native utilities.
+      for cmd in bash curl jq openssl klist ln tput tar; do
+        command -v "$cmd" >/dev/null || {
+          echo "Missing minimal E2E dependency: $cmd" >&2
+          exit 1
+        }
+      done
       curl --fail --silent --show-error --cacert "$VAULT_CACERT" \
         "$VAULT_ADDR/v1/sys/health" >/dev/null
       if curl --fail --silent "$VAULT_ADDR/v1/sys/health" >/dev/null 2>&1; then
@@ -118,7 +128,8 @@ if [[ -n ${VCLI_TEST_MINIMAL_IMAGE:-} ]]; then
         exit 1
       fi
       python3 -m unittest -v \
-        tests.integration.test_vault tests.integration.test_operations
+        tests.integration.test_vault tests.integration.test_operations \
+        tests.integration.test_pki_kerberos tests.integration.test_repl
       python3 -m tests.integration.bench_vault
     '
   exit 0
