@@ -397,7 +397,8 @@ class InteractiveShellTests(unittest.TestCase):
     def test_26_ss3_left_edits_in_middle(self):
         home, fd, child = self.session()
         try:
-            self.send(fd, b"hlp\x1bODe\n", pace=0.035)
+            # "hep" + SS3 Left + "l" inserts before p -> "help".
+            self.send(fd, b"hep\x1bODl\n", pace=0.035)
             self.expect_help(fd)
             self.assertIsNone(child.poll())
         finally:
