@@ -11,7 +11,7 @@ declare DEBUGFILE="${VCLI_DEBUGFILE:-$HOME/.vcli.debug}"
 declare TMP="${TMPDIR:-/tmp}"
 # Private temporary data and exported secret files.
 umask 077
-declare is_command cmd cmd_history restcmd _key len pos history_index
+declare is_command cmd cmd_history restcmd _key len pos history_index pending_key
 declare timeout="2" # timeout to verify connection to Vault
 declare http_code
 declare vault_host vault_port vault_token current_pwd
@@ -2027,7 +2027,10 @@ function main(){
     while true; do
         lastkey=$_key
         # read key and process
-        if ! read -r -sN1 _key; then
+        if [[ ${pending_key+x} ]]; then
+            _key=$pending_key
+            unset pending_key
+        elif ! read -r -sN1 _key; then
             # An interrupted read is recoverable; EOF should exit.
             if [[ -t 0 ]]; then
                 continue
@@ -2036,9 +2039,10 @@ function main(){
         fi
         case $_key in
             $'\x1b')
-                if IFS= read -rsn1 -t 0.2 _key && [[ $_key == "[" ]]; then # CSI
-                    IFS= read -rsn1 -t 0.2 _key || _key=""
-                    case $_key in
+                if IFS= read -rsn1 -t 0.2 _key; then
+                    if [[ $_key == "[" ]]; then # CSI
+                        IFS= read -rsn1 -t 0.2 _key || _key=""
+                        case $_key in
                         $'\x41') # up cursor: older history
                             get_prev_cmd
                         ;;
@@ -2074,7 +2078,11 @@ function main(){
                                 vcli_delete_forward
                             fi
                         ;;
-                    esac
+                        esac
+                    else
+                        # Preserve the ordinary/control key after a lone ESC.
+                        pending_key=$_key
+                    fi
                 fi
                 unset ENDHIST
             ;;

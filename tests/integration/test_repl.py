@@ -244,6 +244,8 @@ class InteractiveShellTests(unittest.TestCase):
                 history.symlink_to(protected)
                 self.send(fd, b"help\n", pace=0.03)
                 read_until(fd, b"Available commands:", timeout=8)
+                # Help renders multiple lines; give the REPL time to read Ctrl+D.
+                time.sleep(0.5)
                 self.send(fd, b"\x04")
                 self.assertEqual(child.wait(timeout=8), 0)
                 self.assertEqual(protected.read_text(), "do-not-touch\n")
@@ -275,6 +277,28 @@ class InteractiveShellTests(unittest.TestCase):
             self.send(fd, b"history\n", pace=0)
             out = read_until(fd, b"#1: help", timeout=8)
             self.assertIn(b"#1: help", out)
+        finally:
+            self.end(home, fd, child)
+
+    def test_16_escape_before_normal_key_preserves_typed_character(self):
+        home, fd, child = self.session()
+        try:
+            self.send(fd, b"\x1bhelp\n", pace=0)
+            out = read_until(fd, b"Available commands:", timeout=8)
+            self.assertIn(b"Available commands:", out)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
+    def test_17_incomplete_csi_times_out_without_breaking_next_command(self):
+        home, fd, child = self.session()
+        try:
+            self.send(fd, b"\x1b[", pace=0)
+            time.sleep(0.35)
+            self.assertIsNone(child.poll())
+            self.send(fd, b"help\n", pace=0)
+            out = read_until(fd, b"Available commands:", timeout=8)
+            self.assertIn(b"Available commands:", out)
         finally:
             self.end(home, fd, child)
 
