@@ -49,6 +49,47 @@ jobs:
       - name: Security invariants
         run: python3 tests/integration/test_source_guards.py ./vcli
 
+  minimal:
+    name: Minimal Linux ${{ matrix.distro }} CLI
+    needs: static
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: alpine
+            image: alpine:3.22
+          - distro: debian
+            image: debian:bookworm-slim
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Test candidate inside minimal distro
+        env:
+          IMAGE: ${{ matrix.image }}
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          docker run --rm \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/repo,readonly" \
+            --workdir /repo \
+            --env "VCLI_DISTRO=$DISTRO" \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            "$IMAGE" /bin/sh -ec '
+              case "$VCLI_DISTRO" in
+                alpine) apk add --no-cache bash curl jq coreutils python3 ca-certificates ;;
+                debian)
+                  apt-get update -qq
+                  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+                    bash curl jq coreutils python3 ca-certificates
+                ;;
+                *) echo "Unknown distro: $VCLI_DISTRO" >&2; exit 1 ;;
+              esac
+              bash -n ./vcli
+              python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_portability
+              python3 tests/cli/bench_startup.py
+            '
+
   integration:
     name: Vault ${{ matrix.vault }} integration
     needs: static
@@ -84,7 +125,7 @@ jobs:
 
   gate:
     name: Required CI gate
-    needs: [static, integration]
+    needs: [static, integration, minimal]
     if: always()
     runs-on: ubuntu-24.04
     steps:
@@ -92,9 +133,11 @@ jobs:
         env:
           STATIC_RESULT: ${{ needs.static.result }}
           INTEGRATION_RESULT: ${{ needs.integration.result }}
+          MINIMAL_RESULT: ${{ needs.minimal.result }}
         run: |
           test "$STATIC_RESULT" = success
           test "$INTEGRATION_RESULT" = success
+          test "$MINIMAL_RESULT" = success
 
   package_candidate:
     name: Produce release candidate artifact

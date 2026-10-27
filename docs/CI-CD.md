@@ -27,6 +27,12 @@ PR / merge a master / manual / cron semanal
      │ TLS nativo: CA válida/incorrecta/desconocida     │
      └─────────┬─────────────────────────────────────────┘
                │
+     ┌─────────▼─────────────────────────────────────────┐
+     │ Minimal Linux CLI: Alpine 3.22 / Debian bookworm │
+     │ Bash syntax + CLI + TERM inválido/ausente + p95   │
+     │ Sin servidor Vault (las integraciones van aparte)│
+     └─────────┬─────────────────────────────────────────┘
+               │
      ┌─────────▼──────────┐
      │ gate REQUIRED      │
      │ *todo* debe pasar  │
@@ -49,6 +55,8 @@ Los tokens de test nunca proceden de GitHub Secrets ni de un Vault externo.
 | Syntax/quality | `bash -n`, ShellCheck severidad error | PR obligatorio |
 | Source guard | No `eval` en transporte, no `curl -k` fijo, sin secretos de prueba al arrancar | PR obligatorio |
 | Contratos CLI | Ayuda, versión, flags inválidos, errores de configuración y salida sin credenciales | PR obligatorio |
+| Linux mínimo | Alpine 3.22 (musl) y Debian bookworm-slim (glibc) ejecutan CLI real, sintaxis Bash, TERM ausente/dumb/inválido y pruebas de arranque sin Vault | PR obligatorio |
+| Rendimiento CLI | Benchmark del arranque `--version`: 2 warmups + 12 muestras, p50/p95 informativos y presupuesto p95 conservador de 2500 ms por contenedor | PR obligatorio |
 | E2E KV v1 | `put`, `cat`, `ls`, `rm`, verificación por API | PR obligatorio |
 | E2E KV v2 | escritura/lectura/listado/borrado lógico, comprobación metadatos | PR obligatorio |
 | Montajes | KV v2 anidado `team/config`, rutas mixtas | PR obligatorio |
@@ -82,8 +90,11 @@ no se debe fingir cobertura por el mero hecho de lanzar un Vault real.
 6. **Fault injection**: Vault sellado, reconexión, timeouts, DNS/TLS, servidor
    caído, respuestas JSON malformadas, respuestas HTTP 429 y 500; el CLI debe
    fallar cerrado, sin borrar datos ni registrar tokens.
-7. **Compatibilidad OS**: Ubuntu actual + Debian estable + Alpine/Bash moderno.
-   Definir expresamente cuáles son soportadas y cuáles solo *best effort*.
+7. **Compatibilidad OS**: Ubuntu con Vault real y contratos CLI sin Vault en
+   contenedores Alpine 3.22 (musl) / Debian bookworm-slim (glibc). Las pruebas
+   de contenedor son *smoke* de CLI y arranque, **no** certifican PKI/Kerberos,
+   API Vault ni TTY PTY sobre esas distribuciones. BSD/macOS no verificado.
+   Versionar imágenes y comprobar periódicamente cambios en las dependencias.
 8. **Pre-release**: correr matriz entera en cada RC, generar changelog y paquete
    reproducible, subir artefacto verificable (SHA-256), firmado/procedencia, y
    publicar release manualmente **solo** si todos los gates están verdes.
@@ -135,10 +146,31 @@ inspeccionar detalles de implementación de Bash para determinar el éxito**.
   datos y metadatos, no solo grep sobre stdout.
 - El gate global permanece obligatorio y no se silencia con `continue-on-error`.
 
+### Linux mínimo y medición de arranque
+
+La matriz `minimal` del workflow ejecuta **el mismo `./vcli` del PR** dentro
+de `alpine:3.22` y `debian:bookworm-slim`. Instala Bash, curl, jq,
+coreutils, Python y certificados CA en un contenedor limpio. El checkout está
+montado **solo lectura** y las pruebas utilizan HOME/TMPDIR efímeros.
+
+Se ejecutan los seis contratos CLI previos, cinco contratos nuevos de
+entorno/terminal y `tests/cli/bench_startup.py`: dos calentamientos y doce
+ejecuciones reales de `--version` sin Vault ni credenciales. Se registran la
+mediana y p95; el límite **p95 ≤ 2500 ms** solo detecta regresiones extremas
+o procesos bloqueados, no debe usarse para comparar máquinas/distro de modo
+estricto. El proceso individual tiene un timeout de cinco segundos.
+
+El `Required CI gate` exige `static + integration + minimal`. Esto añade
+cobertura de arranque en musl y glibc, **sin sustituir** las cuatro pruebas E2E
+con Vault HTTPS en Ubuntu. Las funciones del REPL que requieren terminal
+real, señales, keytabs y exportaciones aún no están certificadas para Alpine
+ni BSD/macOS.
+
 ### Ejecución local
 
 ```bash
-python3 -m unittest -v tests.cli.test_cli_contract
+python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_portability
+python3 tests/cli/bench_startup.py
 bash -n vcli
 # Requiere Docker y runtime Bash:
 VCLI_TEST_VAULT_TAG=2.1.1 bash tests/integration/run.sh
