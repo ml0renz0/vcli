@@ -502,5 +502,24 @@ class InteractiveShellTests(unittest.TestCase):
             self.end(home, fd, child)
 
 
+    def test_35_sigint_during_bracketed_paste_does_not_expose_commands(self):
+        home, fd, child = self.session()
+        try:
+            self.send(fd, b"\x1b[200~help", pace=0.025)
+            os.kill(child.pid, signal.SIGINT)
+            time.sleep(0.2)
+            self.assertIsNone(child.poll())
+            # These bytes are still part of the paste: neither the newline
+            # nor the remaining "history" may execute before CSI 201~.
+            self.send(fd, b"help\nhistory\x1b[201~", pace=0.025)
+            out = read_until(fd, b"bracketed paste discarded", timeout=8)
+            self.assertNotIn(b"Available commands:", out)
+            self.assertIsNone(child.poll())
+            self.send(fd, b"help\n", pace=0.03)
+            self.expect_help(fd)
+        finally:
+            self.end(home, fd, child)
+
+
 if __name__ == "__main__":
     unittest.main()

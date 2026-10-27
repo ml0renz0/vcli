@@ -1993,6 +1993,20 @@ function vcli_clear_editor(){
     unset history_draft SEARCHIST search_cmd tmp_history pending_key ENDHIST
 }
 
+# Keep consuming the paste after an interrupt until its closing marker.
+# Otherwise a pasted newline after Ctrl+C could execute a Vault command.
+function vcli_interrupt_editor(){
+    vcli_clear_editor
+    if [[ $vcli_paste_mode == yes ]]; then
+        vcli_paste_bad=yes
+    else
+        vcli_paste_mode=""
+        vcli_paste_bad=""
+    fi
+    printf '\n'
+    prompt
+}
+
 function main(){
     # Track bracketed paste explicitly so an embedded newline cannot execute
     # a Vault command before the user confirms the pasted input.
@@ -2085,7 +2099,7 @@ function main(){
     fi
 
     # Ctrl+C clears the editing buffer without terminating the session.
-    trap 'vcli_clear_editor; vcli_paste_mode=""; vcli_paste_bad=""; printf "\\n"; prompt' INT
+    trap 'vcli_interrupt_editor' INT
 
     # Begin iteration
     IFS=
