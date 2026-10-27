@@ -410,16 +410,33 @@ function get_lastcmd_arg(){
 
 # saves history to $HOME/.vclistory
 function save_history(){
-    : > "$VCLISTORY"
-    chmod 600 "$VCLISTORY" 2>/dev/null || true
-    for (( idx=${#cmd_history[@]}-1 ; idx>=0 ; idx-- )) ; do
-        echo "${cmd_history[$idx]}" >> "$VCLISTORY"
+    local history_tmp idx
+    # Never write through a symlink or truncate an existing unrelated file.
+    if [[ -L $VCLISTORY || ( -e $VCLISTORY && ! -f $VCLISTORY ) ]]; then
+        printf 'vcli: refusing unsafe history path: %s\n' "$VCLISTORY" >&2
+        return 1
+    fi
+    # A temporary file in the same directory makes replacement atomic and 0600.
+    history_tmp=$(mktemp "${VCLISTORY}.XXXXXXXX") || return 1
+    chmod 600 "$history_tmp" || { rm -f -- "$history_tmp"; return 1; }
+    for (( idx=${#cmd_history[@]}-1 ; idx>=0 ; idx-- )); do
+        if ! printf '%s\n' "${cmd_history[idx]}" >> "$history_tmp"; then
+            rm -f -- "$history_tmp"
+            return 1
+        fi
     done
+    # Recheck, and use rename rather than opening the target for writing.
+    if [[ -L $VCLISTORY || ( -e $VCLISTORY && ! -f $VCLISTORY ) ]]; then
+        rm -f -- "$history_tmp"
+        printf 'vcli: refusing unsafe history path: %s\n' "$VCLISTORY" >&2
+        return 1
+    fi
+    mv -f -- "$history_tmp" "$VCLISTORY" || { rm -f -- "$history_tmp"; return 1; }
 }
 
 # loads history from $HOME/.vclistory
 function load_history(){
-    [[ -f $VCLISTORY && -r $VCLISTORY ]] || return 0
+    [[ ! -L $VCLISTORY && -f $VCLISTORY && -r $VCLISTORY ]] || return 0
     local -a loaded=()
     local idx
     mapfile -t loaded < "$VCLISTORY" || return 1

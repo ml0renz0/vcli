@@ -234,6 +234,50 @@ class InteractiveShellTests(unittest.TestCase):
         finally:
             self.end(home, fd, child)
 
+    def test_13_history_symlink_does_not_overwrite_target(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-history-target-") as outside:
+            protected = Path(outside) / "important.txt"
+            protected.write_text("do-not-touch\n", encoding="utf-8")
+            home, fd, child = self.session()
+            try:
+                history = Path(home.name) / ".vclistory"
+                history.symlink_to(protected)
+                self.send(fd, b"help\n", pace=0.03)
+                read_until(fd, b"Available commands:", timeout=8)
+                self.send(fd, b"\x04")
+                self.assertEqual(child.wait(timeout=8), 0)
+                self.assertEqual(protected.read_text(), "do-not-touch\n")
+                self.assertTrue(history.is_symlink())
+            finally:
+                self.end(home, fd, child)
+
+    def test_14_history_rewrite_is_atomic_and_private(self):
+        home, fd, child = self.session(history="help\n")
+        try:
+            self.send(fd, b"history\n", pace=0.03)
+            read_until(fd, b"#1: help", timeout=8)
+            self.send(fd, b"\x04")
+            self.assertEqual(child.wait(timeout=8), 0)
+            history_file = Path(home.name) / ".vclistory"
+            self.assertEqual(history_file.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(history_file.read_text().splitlines(), ["help", "history"])
+            self.assertFalse(list(Path(home.name).glob(".vclistory.*")))
+        finally:
+            self.end(home, fd, child)
+
+    def test_15_single_write_paste_is_not_truncated(self):
+        home, fd, child = self.session()
+        try:
+            self.send(fd, b"help\n", pace=0)
+            out = read_until(fd, b"Available commands:", timeout=8)
+            self.assertIn(b"Available commands:", out)
+            self.assertIsNone(child.poll())
+            self.send(fd, b"history\n", pace=0)
+            out = read_until(fd, b"#1: help", timeout=8)
+            self.assertIn(b"#1: help", out)
+        finally:
+            self.end(home, fd, child)
+
 
 if __name__ == "__main__":
     unittest.main()
