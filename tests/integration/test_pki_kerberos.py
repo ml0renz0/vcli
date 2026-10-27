@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import base64
 import os
+import signal
+import time
 from pathlib import Path
 import struct
 import subprocess
@@ -431,6 +433,118 @@ exec /usr/bin/base64 "$@"
             self.assertEqual(counter.read_text().strip(), "2")
             self.assertFalse(list(Path(root).glob("*.keytab")))
             self._assert_no_stage(root)
+
+
+    def _interrupt_export(self, root, command, extra_env, marker):
+        """Terminate a real batch CLI once an injected helper reports progress."""
+        env = os.environ.copy()
+        env.update({
+            "HOME": str(root), "TMPDIR": str(root), "TERM": "dumb",
+            "VAULT_ADDR": VAULT, "VAULT_TOKEN": ROOT_TOKEN,
+            "VAULT_CACERT": os.environ["VAULT_CACERT"],
+            "VAULT_KV_VERSION": "1", "VAULT_KV_MOUNTS": "kv2,team/config",
+        })
+        env.update(extra_env)
+        child = subprocess.Popen(
+            [str(VCLI), "-n"], env=env, stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, start_new_session=True,
+        )
+        try:
+            child.stdin.write(command + "\n")
+            child.stdin.flush()
+            child.stdin.close()
+            deadline = time.monotonic() + 18
+            while time.monotonic() < deadline and not marker.exists():
+                if child.poll() is not None:
+                    self.fail("vcli exited before reaching the injected signal point")
+                time.sleep(0.05)
+            self.assertTrue(marker.exists(), "vcli never reached the signal point")
+            self.assertIsNone(child.poll())
+            os.killpg(child.pid, signal.SIGTERM)
+            child.wait(timeout=10)
+            # Subshell EXIT handlers can finish just after the parent exits.
+            deadline = time.monotonic() + 6
+            while time.monotonic() < deadline and list(Path(root).glob(".vcli-export.*")):
+                time.sleep(0.05)
+            self._assert_no_stage(root)
+        finally:
+            if child.poll() is None:
+                os.killpg(child.pid, signal.SIGKILL)
+                child.wait(timeout=5)
+            child.stdout.close()
+            child.stderr.close()
+
+    def test_31_export_rejects_ln_that_silently_ignores_no_target_directory(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-ln-portability-") as root:
+            bindir = Path(root) / "hook-bin"
+            bindir.mkdir()
+            hook = bindir / "ln"
+            hook.write_text("""#!/bin/sh
+# Simulate an ln variant silently discarding -T.
+[ "$1" = "-T" ] && shift
+exec /usr/bin/ln "$@"
+""", encoding="utf-8")
+            hook.chmod(0o755)
+            out = self.cli(root, f"getcert {self.cert_path}", {
+                "PATH": str(bindir) + os.pathsep + os.environ["PATH"]
+            })
+            self.assertNotEqual(out.returncode, 0)
+            self.assertIn("unsafe ln implementation", out.stderr)
+            self.assertFalse((Path(root) / "web.crt").exists())
+            self.assertFalse((Path(root) / "web.key").exists())
+            self._assert_no_stage(root)
+
+    def test_32_sigterm_during_keytab_staging_removes_private_data(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-stage-term-") as root:
+            bindir = Path(root) / "hook-bin"
+            bindir.mkdir()
+            marker = Path(root) / "stage-reached"
+            counter = Path(root) / "decode-count"
+            hook = bindir / "base64"
+            hook.write_text("""#!/bin/sh
+count=0
+if [ -f "$VCLI_TEST_BASE64_COUNTER" ]; then
+    count=$(/usr/bin/cat "$VCLI_TEST_BASE64_COUNTER")
+fi
+count=$((count+1))
+printf '%s\n' "$count" > "$VCLI_TEST_BASE64_COUNTER"
+if [ "$count" -eq 2 ]; then
+    : > "$VCLI_TEST_MARKER"
+    exec /usr/bin/sleep 60
+fi
+exec /usr/bin/base64 "$@"
+""", encoding="utf-8")
+            hook.chmod(0o755)
+            self._interrupt_export(root, f"getkrb {self.krb_path}", {
+                "PATH": str(bindir) + os.pathsep + os.environ["PATH"],
+                "VCLI_TEST_BASE64_COUNTER": str(counter),
+                "VCLI_TEST_MARKER": str(marker),
+            }, marker)
+            self.assertFalse(list(Path(root).glob("*.keytab")))
+
+    def test_33_sigterm_during_second_publish_rolls_back_certificate(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-publish-term-") as root:
+            bindir = Path(root) / "hook-bin"
+            bindir.mkdir()
+            marker = Path(root) / "publish-reached"
+            hook = bindir / "ln"
+            hook.write_text("""#!/bin/sh
+for destination in "$@"; do :; done
+if [ "$destination" = "$VCLI_TEST_LN_DEST" ]; then
+    : > "$VCLI_TEST_MARKER"
+    exec /usr/bin/sleep 60
+fi
+exec /usr/bin/ln "$@"
+""", encoding="utf-8")
+            hook.chmod(0o755)
+            self._interrupt_export(root, f"getcert {self.cert_path}", {
+                "PATH": str(bindir) + os.pathsep + os.environ["PATH"],
+                "VCLI_TEST_LN_DEST": str(Path(root) / "web.key"),
+                "VCLI_TEST_MARKER": str(marker),
+            }, marker)
+            self.assertFalse((Path(root) / "web.crt").exists())
+            self.assertFalse((Path(root) / "web.key").exists())
 
 
 if __name__ == "__main__":
