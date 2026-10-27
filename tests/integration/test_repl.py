@@ -358,8 +358,7 @@ class InteractiveShellTests(unittest.TestCase):
         home, fd, child = self.session()
         try:
             self.send(fd, b"help\x04\n", pace=0.03)
-            out = read_until(fd, b"Available commands:", timeout=8)
-            self.assertIn(b"Available commands:", out)
+            self.expect_help(fd, timeout=8)
             self.assertIsNone(child.poll())
         finally:
             self.end(home, fd, child)
@@ -369,8 +368,7 @@ class InteractiveShellTests(unittest.TestCase):
         try:
             # "helxp" + Home + Right*3 + Ctrl+D -> "help".
             self.send(fd, b"helxp\x1b[H\x1b[C\x1b[C\x1b[C\x04\n", pace=0.04)
-            out = read_until(fd, b"Available commands:", timeout=8)
-            self.assertIn(b"Available commands:", out)
+            self.expect_help(fd, timeout=8)
             self.assertIsNone(child.poll())
         finally:
             self.end(home, fd, child)

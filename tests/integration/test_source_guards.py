@@ -18,4 +18,7 @@ for label, needle in required.items():
 for forbidden in ('_put secret/-_test_-', '-k -L -X$method', 'eval "$*"'):
     if forbidden in source:
         raise SystemExit(f"FAIL forbidden legacy pattern: {forbidden}")
+# Detect accidental duplicated tails after the Bash entry point.
+if source.count('main "$@"') != 1 or not source.rstrip().endswith('main "$@"'):
+    raise SystemExit('FAIL executable must end at its single main "$@"')
 print('Source security invariants: OK')
