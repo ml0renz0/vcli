@@ -96,7 +96,7 @@ class PkiKerberosContracts(unittest.TestCase):
                 + struct.pack(">H", 32) + bytes(range(32)))
         return b"\x05\x02" + struct.pack(">i", len(data)) + data
 
-    def cli(self, directory, command):
+    def cli(self, directory, command, extra_env=None):
         env = os.environ.copy()
         env.update({
             "HOME": str(directory), "TMPDIR": str(directory), "TERM": "dumb",
@@ -104,10 +104,44 @@ class PkiKerberosContracts(unittest.TestCase):
             "VAULT_CACERT": os.environ["VAULT_CACERT"],
             "VAULT_KV_VERSION": "1", "VAULT_KV_MOUNTS": "kv2,team/config",
         })
+        if extra_env:
+            env.update(extra_env)
         out = subprocess.run([str(VCLI), "-n"], input=command + "\n",
                              text=True, capture_output=True, env=env, timeout=20)
         self.assertNotIn(ROOT_TOKEN, out.stdout + out.stderr)
         return out
+
+    @staticmethod
+    def _ln_race_env(root, destination, action, victim=None):
+        """Inject an exact race at the publication syscall, after preflight."""
+        bindir = Path(root) / "hook-bin"
+        bindir.mkdir()
+        hook = bindir / "ln"
+        hook.write_text("""#!/bin/sh
+for destination in "$@"; do :; done
+if [ "$destination" = "$VCLI_TEST_LN_DEST" ]; then
+    case "$VCLI_TEST_LN_ACTION" in
+        regular) printf 'RACE-MARKER' > "$destination" ;;
+        symlink) /usr/bin/ln -s -- "$VCLI_TEST_LN_VICTIM" "$destination" ;;
+        directory) /usr/bin/mkdir -- "$destination" ;;
+        fail) exit 86 ;;
+    esac
+fi
+exec /usr/bin/ln "$@"
+""", encoding="utf-8")
+        hook.chmod(0o755)
+        return {
+            "PATH": str(bindir) + os.pathsep + os.environ["PATH"],
+            "VCLI_TEST_LN_DEST": str(destination),
+            "VCLI_TEST_LN_ACTION": action,
+            "VCLI_TEST_LN_VICTIM": str(victim or ""),
+        }
+
+    @staticmethod
+    def _assert_no_stage(root):
+        assert not list(Path(root).glob(".vcli-export.*")), (
+            "private staging directories must be cleaned after publication failure"
+        )
 
     def test_01_getcert_exports_exact_matching_pem_with_private_permissions(self):
         with tempfile.TemporaryDirectory(prefix="vcli-export-cert-") as root:
@@ -303,6 +337,100 @@ class PkiKerberosContracts(unittest.TestCase):
             self.assertIn("expiry", out.stdout)
             self.assertIn("days", out.stdout.lower())
 
+
+
+    def test_24_getcert_raced_regular_file_is_not_overwritten(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-race-regular-") as root:
+            cert = Path(root) / "web.crt"
+            env = self._ln_race_env(root, cert, "regular")
+            out = self.cli(root, f"getcert {self.cert_path}", env)
+            self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertEqual(cert.read_text(), "RACE-MARKER")
+            self.assertFalse((Path(root) / "web.key").exists())
+            self._assert_no_stage(root)
+
+    def test_25_getcert_raced_symlink_does_not_touch_target(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-race-symlink-") as root:
+            victim = Path(root) / "sentinel"
+            victim.write_text("SAFE", encoding="utf-8")
+            cert = Path(root) / "web.crt"
+            env = self._ln_race_env(root, cert, "symlink", victim)
+            out = self.cli(root, f"getcert {self.cert_path}", env)
+            self.assertNotEqual(out.returncode, 0)
+            self.assertTrue(cert.is_symlink())
+            self.assertEqual(victim.read_text(), "SAFE")
+            self.assertFalse((Path(root) / "web.key").exists())
+            self._assert_no_stage(root)
+
+    def test_26_getcert_raced_directory_is_not_used_as_link_destination(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-race-dir-") as root:
+            cert = Path(root) / "web.crt"
+            env = self._ln_race_env(root, cert, "directory")
+            out = self.cli(root, f"getcert {self.cert_path}", env)
+            self.assertNotEqual(out.returncode, 0)
+            self.assertTrue(cert.is_dir())
+            self.assertEqual(list(cert.iterdir()), [])
+            self.assertFalse((Path(root) / "web.key").exists())
+            self._assert_no_stage(root)
+
+    def test_27_getcert_second_publish_race_rolls_back_first(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-race-second-") as root:
+            victim = Path(root) / "sentinel"
+            victim.write_text("KEEP", encoding="utf-8")
+            key = Path(root) / "web.key"
+            env = self._ln_race_env(root, key, "symlink", victim)
+            out = self.cli(root, f"getcert {self.cert_path}", env)
+            self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertTrue(key.is_symlink())
+            self.assertEqual(victim.read_text(), "KEEP")
+            self.assertFalse((Path(root) / "web.crt").exists())
+            self._assert_no_stage(root)
+
+    def test_28_getkrb_race_preserves_existing_file(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-krb-race-") as root:
+            keytab = Path(root) / "HTTP_service.example.test@EXAMPLE.TEST.keytab"
+            env = self._ln_race_env(root, keytab, "regular")
+            out = self.cli(root, f"getkrb {self.krb_path}", env)
+            self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertEqual(keytab.read_text(), "RACE-MARKER")
+            self._assert_no_stage(root)
+
+    def test_29_getcert_second_link_failure_rolls_back_first(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-link-failure-") as root:
+            key = Path(root) / "web.key"
+            env = self._ln_race_env(root, key, "fail")
+            out = self.cli(root, f"getcert {self.cert_path}", env)
+            self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertFalse((Path(root) / "web.crt").exists())
+            self.assertFalse(key.exists())
+            self._assert_no_stage(root)
+
+    def test_30_getkrb_staging_decode_failure_leaves_no_export(self):
+        with tempfile.TemporaryDirectory(prefix="vcli-decode-failure-") as root:
+            bindir = Path(root) / "hook-bin"
+            bindir.mkdir()
+            counter = Path(root) / "decode-count"
+            hook = bindir / "base64"
+            hook.write_text("""#!/bin/sh
+count=0
+if [ -f "$VCLI_TEST_BASE64_COUNTER" ]; then
+    count=$(/usr/bin/cat "$VCLI_TEST_BASE64_COUNTER")
+fi
+count=$((count+1))
+printf '%s\n' "$count" > "$VCLI_TEST_BASE64_COUNTER"
+if [ "$count" -eq 2 ]; then exit 87; fi
+exec /usr/bin/base64 "$@"
+""", encoding="utf-8")
+            hook.chmod(0o755)
+            env = {
+                "PATH": str(bindir) + os.pathsep + os.environ["PATH"],
+                "VCLI_TEST_BASE64_COUNTER": str(counter),
+            }
+            out = self.cli(root, f"getkrb {self.krb_path}", env)
+            self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertEqual(counter.read_text().strip(), "2")
+            self.assertFalse(list(Path(root).glob("*.keytab")))
+            self._assert_no_stage(root)
 
 
 if __name__ == "__main__":
