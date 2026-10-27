@@ -436,5 +436,44 @@ class InteractiveShellTests(unittest.TestCase):
             self.end(home, fd, child)
 
 
+    def test_30_ctrl_u_discards_history_navigation_state(self):
+        home, fd, child = self.session(history="help\nhistory\n")
+        try:
+            # Two Up keys -> older entry; Ctrl+U must reset history_index.
+            # Otherwise Down restores "history" and prefixes "help" to it.
+            self.send(fd, b"\x1b[A\x1b[A\x15\x1b[Bhelp\n", pace=0.04)
+            self.expect_help(fd)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
+    def test_31_ctrl_u_restarts_reverse_history_search(self):
+        home, fd, child = self.session(history="help [one]\nhelp [two]\n")
+        try:
+            self.send(fd, b"help [\x12", pace=0.035)
+            read_until(fd, b"help [two]", timeout=8)
+            self.send(fd, b"\x15help [\x12", pace=0.035)
+            # A fresh search selects the newest entry again, not the next hit.
+            out = read_until(fd, b"help [two]", timeout=8)
+            self.assertIn(b"help [two]", out)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
+    def test_32_ctrl_c_restarts_reverse_history_search(self):
+        home, fd, child = self.session(history="help [one]\nhelp [two]\n")
+        try:
+            self.send(fd, b"help [\x12", pace=0.035)
+            read_until(fd, b"help [two]", timeout=8)
+            os.kill(child.pid, signal.SIGINT)
+            time.sleep(0.25)
+            self.assertIsNone(child.poll())
+            self.send(fd, b"help [\x12", pace=0.035)
+            out = read_until(fd, b"help [two]", timeout=8)
+            self.assertIn(b"help [two]", out)
+        finally:
+            self.end(home, fd, child)
+
+
 if __name__ == "__main__":
     unittest.main()
