@@ -302,6 +302,38 @@ class InteractiveShellTests(unittest.TestCase):
         finally:
             self.end(home, fd, child)
 
+    def test_18_modified_cursor_sequence_does_not_pollute_input(self):
+        home, fd, child = self.session()
+        try:
+            # Ctrl+Left commonly emits CSI 1;5D. It must not type ";5D".
+            self.send(fd, b"help\x1b[1;5D\n", pace=0.03)
+            out = read_until(fd, b"Available commands:", timeout=8)
+            self.assertIn(b"Available commands:", out)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
+    def test_19_bracketed_paste_markers_do_not_pollute_command(self):
+        home, fd, child = self.session()
+        try:
+            # A single-line bracketed paste sends CSI 200~ and CSI 201~.
+            self.send(fd, b"\x1b[200~help\x1b[201~\n", pace=0.03)
+            out = read_until(fd, b"Available commands:", timeout=8)
+            self.assertIn(b"Available commands:", out)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
+    def test_20_page_up_csi_is_not_interpreted_as_literal_tilde(self):
+        home, fd, child = self.session()
+        try:
+            self.send(fd, b"help\x1b[5~\n", pace=0.03)
+            out = read_until(fd, b"Available commands:", timeout=8)
+            self.assertIn(b"Available commands:", out)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
 
 if __name__ == "__main__":
     unittest.main()
