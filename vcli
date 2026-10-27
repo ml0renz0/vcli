@@ -1931,6 +1931,29 @@ function vcli_delete_forward(){
     fi
 }
 
+# Read one bounded ANSI CSI sequence through its final byte (0x40-0x7E).
+# Unknown sequences must be consumed without reaching the line editor.
+function vcli_read_csi(){
+    local byte count
+    csi_sequence=""
+    for (( count=0; count<16; count++ )); do
+        if ! IFS= read -rsn1 -t 0.2 byte; then
+            csi_sequence=""
+            return 1
+        fi
+        csi_sequence+="$byte"
+        if [[ $byte == [@-~] ]]; then
+            return 0
+        fi
+        case $byte in
+            [0-9]|';'|':'|'?'|' ') ;;
+            *) csi_sequence=""; return 1 ;;
+        esac
+    done
+    csi_sequence=""
+    return 1
+}
+
 function main(){
     # First of all: check command dependencies
     check_dependency "$DEPENDENCIES"
@@ -2038,47 +2061,38 @@ function main(){
             clean_n_exit
         fi
         case $_key in
-            $'\x1b')
+            $'\x1b') # Escape, optionally followed by an ANSI CSI sequence
                 if IFS= read -rsn1 -t 0.2 _key; then
-                    if [[ $_key == "[" ]]; then # CSI
-                        IFS= read -rsn1 -t 0.2 _key || _key=""
-                        case $_key in
-                        $'\x41') # up cursor: older history
-                            get_prev_cmd
-                        ;;
-                        $'\x42') # down cursor: newer history
-                            get_next_cmd
-                        ;;
-                        $'\x43') # right cursor
-                            if [[ $pos -lt $((len+1)) ]]; then # if anything was typed allow to move cursor left
-                                tput cuf 1 # move cursor right
-                                let pos+=1 # increment cursor position
-                                debug "pos: $pos right"
-                            fi
-                        ;;
-                        $'\x44') # left cursor
-                            if [[ $pos -gt 1 ]]; then # if anything was typed and position>0 allow to move cursor left
-                                tput cub 1 # move cursor left
-                                let pos-=1 # decrement cursor position
-                                debug "pos: $pos left"
-                            fi
-                        ;;
-                        $'\x46') # END
-                                debug "END pressed"
-                                [[ $len != 0 ]] && tput cuf $((len-pos+1)) # move cursor right to the end
-                                let pos=len+1
-                        ;;
-                        $'\x48') # HOME
-                                debug "HOME pressed"
-                                [[ $len != 0 ]] && tput cub $((pos-1))
-                                pos=1
-                        ;;
-                        3) # Forward Delete is CSI 3~, not a literal tilde.
-                            if IFS= read -rsn1 -t 0.2 _key && [[ $_key == '~' ]]; then
-                                vcli_delete_forward
-                            fi
-                        ;;
-                        esac
+                    if [[ $_key == "[" ]]; then
+                        if vcli_read_csi; then
+                            case $csi_sequence in
+                                A) get_prev_cmd ;;
+                                B) get_next_cmd ;;
+                                C) # Right
+                                    if (( pos < len+1 )); then
+                                        tput cuf 1
+                                        pos=$((pos+1))
+                                    fi
+                                ;;
+                                D) # Left
+                                    if (( pos > 1 )); then
+                                        tput cub 1
+                                        pos=$((pos-1))
+                                    fi
+                                ;;
+                                F|4~|8~) # End (including xterm numeric variants)
+                                    (( len == 0 )) || tput cuf $((len-pos+1))
+                                    pos=$((len+1))
+                                ;;
+                                H|1~|7~) # Home (including xterm numeric variants)
+                                    (( pos == 1 )) || tput cub $((pos-1))
+                                    pos=1
+                                ;;
+                                3~) vcli_delete_forward ;;
+                                # Ignore unsupported CSI sequences, including key
+                                # modifiers and bracketed-paste delimiters, whole.
+                            esac
+                        fi
                     else
                         # Preserve the ordinary/control key after a lone ESC.
                         pending_key=$_key
