@@ -354,6 +354,27 @@ class InteractiveShellTests(unittest.TestCase):
         finally:
             self.end(home, fd, child)
 
+    def test_22_ctrl_d_on_nonempty_buffer_does_not_exit(self):
+        home, fd, child = self.session()
+        try:
+            self.send(fd, b"help\x04\n", pace=0.03)
+            out = read_until(fd, b"Available commands:", timeout=8)
+            self.assertIn(b"Available commands:", out)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
+    def test_23_ctrl_d_deletes_character_under_cursor(self):
+        home, fd, child = self.session()
+        try:
+            # "helxp" + Home + Right*3 + Ctrl+D -> "help".
+            self.send(fd, b"helxp\x1b[H\x1b[C\x1b[C\x1b[C\x04\n", pace=0.04)
+            out = read_until(fd, b"Available commands:", timeout=8)
+            self.assertIn(b"Available commands:", out)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
 
 if __name__ == "__main__":
     unittest.main()
