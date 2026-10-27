@@ -1994,6 +1994,9 @@ function vcli_clear_editor(){
 }
 
 function main(){
+    # Track bracketed paste explicitly so an embedded newline cannot execute
+    # a Vault command before the user confirms the pasted input.
+    local vcli_paste_mode="" vcli_paste_bad=""
     # First of all: check command dependencies
     check_dependency "$DEPENDENCIES"
     local msg info
@@ -2082,7 +2085,7 @@ function main(){
     fi
 
     # Ctrl+C clears the editing buffer without terminating the session.
-    trap 'vcli_clear_editor; printf "\\n"; prompt' INT
+    trap 'vcli_clear_editor; vcli_paste_mode=""; vcli_paste_bad=""; printf "\\n"; prompt' INT
 
     # Begin iteration
     IFS=
@@ -2099,18 +2102,46 @@ function main(){
             fi
             clean_n_exit
         fi
+        # Bracketed paste must never execute embedded newlines or control keys.
+        # Once unsafe input is seen, drop the rest until the closing CSI 201~.
+        if [[ $vcli_paste_mode == yes && $_key != $'\x1b' ]]; then
+            if [[ $_key == [[:cntrl:]] ]]; then
+                if [[ $vcli_paste_bad != yes ]]; then
+                    vcli_paste_bad=yes
+                    vcli_clear_editor
+                    printf '\r'
+                    prompt
+                    tput el
+                fi
+                continue
+            fi
+            [[ $vcli_paste_bad == yes ]] && continue
+        fi
         case $_key in
             $'\x1b') # Escape, optionally followed by an ANSI CSI sequence
                 if IFS= read -rsn1 -t 0.2 _key; then
                     if [[ $_key == "[" ]]; then
                         if vcli_read_csi; then
-                            vcli_apply_navigation "$csi_sequence"
+                            case $csi_sequence in
+                                200~) vcli_paste_mode=yes ;;
+                                201~)
+                                    if [[ $vcli_paste_bad == yes ]]; then
+                                        printf '\nvcli: bracketed paste discarded (control/newline data)\n'
+                                        prompt
+                                    fi
+                                    vcli_paste_mode=""
+                                    vcli_paste_bad=""
+                                ;;
+                                *) [[ $vcli_paste_mode == yes ]] ||
+                                       vcli_apply_navigation "$csi_sequence" ;;
+                            esac
                         fi
                     elif [[ $_key == "O" ]]; then # SS3 (application cursor mode)
                         # Some terminals use ESC O H/F/A/B/C/D rather than CSI.
                         # Consume unsupported SS3 keys (e.g. F1=ESC O P) whole.
                         if IFS= read -rsn1 -t 0.2 _ss3_key; then
-                            vcli_apply_navigation "$_ss3_key"
+                            [[ $vcli_paste_mode == yes ]] ||
+                                vcli_apply_navigation "$_ss3_key"
                         fi
                     else
                         # Preserve the ordinary/control key after a lone ESC.

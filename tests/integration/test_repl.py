@@ -475,5 +475,32 @@ class InteractiveShellTests(unittest.TestCase):
             self.end(home, fd, child)
 
 
+    def test_33_multiline_bracketed_paste_does_not_execute_any_command(self):
+        home, fd, child = self.session()
+        try:
+            # The paste contains a would-be Enter after "help". Neither command
+            # may execute automatically while the terminal is still pasting.
+            self.send(fd, b"\x1b[200~help\nhistory\x1b[201~", pace=0.02)
+            out = read_until(fd, b"bracketed paste discarded", timeout=8)
+            self.assertNotIn(b"Available commands:", out)
+            self.assertIsNone(child.poll())
+            self.send(fd, b"help\n", pace=0.035)
+            self.expect_help(fd)
+        finally:
+            self.end(home, fd, child)
+
+    def test_34_ctrl_d_inside_bracketed_paste_cannot_exit_session(self):
+        home, fd, child = self.session()
+        try:
+            self.send(fd, b"\x1b[200~\x04\x1b[201~", pace=0.035)
+            out = read_until(fd, b"bracketed paste discarded", timeout=8)
+            self.assertIn(b"bracketed paste discarded", out)
+            self.assertIsNone(child.poll())
+            self.send(fd, b"help\n", pace=0.035)
+            self.expect_help(fd)
+        finally:
+            self.end(home, fd, child)
+
+
 if __name__ == "__main__":
     unittest.main()
