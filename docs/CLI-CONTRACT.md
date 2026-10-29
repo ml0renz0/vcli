@@ -1,4 +1,4 @@
-# Contrato CLI de VCLI revival (v0.7) — test-first
+# Contrato de vcli revival (candidato v0.7) — test-first
 
 Este documento define la interfaz que **un usuario de VCLI** puede observar.
 Los tests no comprueban el nombre de una función interna ni si se usó
@@ -28,20 +28,24 @@ Los tests no comprueban el nombre de una función interna ni si se usó
    salida y no fuga de tokens.
 2. **Vault HTTPS real:** KV1/KV2, montajes anidados, roles, policies, permisos,
    no mutación al inicio, salidas y códigos de error.
-3. **TLS negativo:** CA ausente/incorrecta; positivo: CA correcta;
-   opt-out explícito. Pendientes: SAN incorrecta, certificados expirados, mTLS.
-4. **TTY:** abrir, prompt, ayuda, salir; ampliar a Tab/flechas/Control-R.
-5. **Destructivo:** backup/restore, cptree/rmtree, límites de ruta;
-   antes de declarar v0.7 estable.
-6. **Resiliencia:** errores 403/404/5xx, timeouts, Vault sellado,
-   fallos de conexión, concurrencia/CAS.
+3. **TLS:** CA ausente, incorrecta y correcta, opt-out explícito, cadenas
+   inválidas, hostname/expiración y casos de mTLS dentro de la suite avanzada.
+4. **TTY:** 38 contratos PTY cubren navegación, historial, pegados,
+   interrupciones y TERM mínimo. Unicode/ancho del cursor y resize pendientes.
+5. **Destructivo:** backup/restore, cptree/rmtree, límites de rutas y
+   resultados parciales sobre el estado independiente de Vault.
+6. **Resiliencia:** errores HTTP/TLS, pérdida de respuesta y escrituras
+   ambiguas, fallos parciales, concurrencia y CAS KV v2.
 
 ## Reglas de avance
 
 - Diseñar primero el comportamiento esperado y añadir el test reproducible.
 - Ejecutar rojo sobre versión antigua cuando sea posible (*red*).
 - Implementar en **`vcli`**, no en un patcher (*green*).
-- Refactorizar manteniendo la suite verde.
+- Refactorizar manteniendo la suite verde y midiendo rendimiento antes/después
+  cuando se modifique una ruta crítica; véase [fase 04-Q](CODE-QUALITY.md).
+- Mantener helpers y comentarios mínimos que expliquen invariantes,
+  especialmente seguridad, control de errores y efectos secundarios.
 - Conservar intacto `vcli.orig.sh` y no publicar release mientras queden
   gaps bloqueantes descritos en `docs/CI-CD.md`.
 
@@ -49,25 +53,23 @@ Los tests Python en `tests/cli` son **test harness**, no transformación
 del código de producción: VCLI sigue siendo Bash.
 
 
-## Regresiones nuevas detectadas — PR #25
+## Incidencias históricas detectadas y corregidas durante la PR #25
 
-La batería `tests/integration/test_operations.py` se añadió antes de corregir
-los comandos Bash. El primer run real encontró:
+La batería `tests/integration/test_operations.py` se añadió antes de
+corregir los comandos Bash. Las primeras ejecuciones revelaron:
 
 - `replace`: no modifica todos los secretos coincidentes.
 - `cptree`: no recrea la estructura de destino dentro del mismo KV mount.
 - `rmtree`: no elimina todos los secretos del subárbol.
 - `backup`: el TAR no contiene todos los secretos previstos.
 
-Los tests se mantienen como gate obligatorio. No usar `skip`, `xfail`,
-`continue-on-error` ni relajar las aserciones. Corregir exclusivamente
-`vcli` y volver a comprobar las cuatro versiones reales de Vault.
-El contrato de `rmtree` exige además conservar un secreto centinela fuera
-del subárbol solicitado.
+Esas incidencias motivaron correcciones y tests reales que forman parte
+del gate actual, incluyendo el roundtrip backup/restore y la preservación
+de un secreto centinela fuera del subárbol de `rmtree`. No deben
+presentarse como fallos todavía abiertos sin una reproducción actual.
 
-El test `restore` forma parte del roundtrip de backup y no llegará a
-validar la restauración completa mientras falle antes la comprobación
-de contenido del archivo. Esto no debe contarse como cobertura verde.
+No usar `skip`, `xfail`, `continue-on-error` ni relajar aserciones
+para ocultar regresiones. Verificar estado final mediante la API de Vault.
 
 ## KV v2 safe moves
 
@@ -99,14 +101,14 @@ de Vault se evalúen como código shell. `getsan`, `certinfo` y
 `getprinc` reutilizan validaciones de datos, sin exportar secretos.
 Los archivos exportados tienen permisos 0600 por `umask 077`.
 
-`tests/integration/test_pki_kerberos.py` contiene 12 contratos que
-ejercitan los comandos reales con certificados generados por OpenSSL,
-un keytab v2 de MIT Kerberos, datos inválidos, parejas no coincidentes,
-ausencia de datos y nombres potencialmente peligrosos. El CI instala
-`klist` (paquete `krb5-user`) solo cuando falta.
+`tests/integration/test_pki_kerberos.py` contiene **33 contratos E2E**
+de exportación e inspección, incluidos certificados OpenSSL, keytabs MIT,
+parejas incorrectas, rutas inseguras, TOCTOU, rollback y señales.
+Los comandos de listados y caducidad también se ejercitan. El playground
+precarga datos sintéticos equivalentes para pruebas manuales.
 
-**Limitaciones:** todavía se deben auditar los comandos históricos
-de listados, expedición y caducidad (por ejemplo `getcertlist`,
-`getallcertlist`, `getcertexpiration`, `krbinfo`) y sus dependencias,
-así como los permisos/symlinks preexistentes en el directorio destino.
-La exportación múltiple no es transaccional frente a fallos de disco.
+**Límites:** las exportaciones múltiples no son transacciones completas;
+`SIGKILL`, fallos de disco y ciertas carreras de nombres requieren
+prudencia. La compatibilidad nativa BSD/macOS no está certificada.
+La auditoría de [fase 04-Q](CODE-QUALITY.md) revisará duplicidades de
+validación, dependencias GNU, manejo de temporales y su coste en procesos.

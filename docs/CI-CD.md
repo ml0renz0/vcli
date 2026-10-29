@@ -4,7 +4,9 @@
 un stub de `curl` devuelve 200. Todo cambio debe superar pruebas de contrato con
 **HashiCorp Vault real** y demostrar que no rompe las operaciones heredadas.
 
-Este diseño pertenece a **VCLI original (0.7)**, no al futuro Forge/VCLI 2.0.
+Esta documentación se refiere al **revival de vcli (candidato v0.7)**. Las
+capacidades declarativas futuras pertenecen al roadmap posterior del mismo
+proyecto; no implican que exista otro CLI llamado «VCLI Forge».
 
 ## Flujo de validación
 
@@ -31,6 +33,11 @@ PR / merge a master / manual / cron semanal
      │ Minimal Linux: Alpine 3.22 / Debian bookworm     │
      │ CLI offline + Vault TLS 2.1.1 + PKI/REPL PTY     │
      │ KV/ACL/backup y p95 real de cat (proceso nuevo)  │
+     └─────────┬─────────────────────────────────────────┘
+               │
+     ┌─────────▼─────────────────────────────────────────┐
+     │ Playground: Vault TLS + catálogo KV/PKI/Kerberos  │
+     │ up → smoke → reset → smoke → down (Bash real)     │
      └─────────┬─────────────────────────────────────────┘
                │
      ┌─────────▼──────────┐
@@ -83,23 +90,27 @@ Alpine/Debian, portabilidad nativa BSD/macOS, comportamiento visual Unicode
 o al redimensionar terminales, ni operaciones no contempladas por los
 contratos actuales. Los datos del benchmark corresponden solo al CI.
 
-## Requisitos adicionales antes de 0.7
+## Cobertura lograda y pendientes antes de 0.7
 
-1. **Regresión completa de comandos**: escenario aislado de cada comando, casos vacíos,
-   caracteres especiales, rutas relativas, montajes mixtos y errores 403/404/5xx.
-2. **Mutaciones destructivas**: `rmtree`, `mv`, backup/restore en un mount único,
-   con asserts de estado y sin tocar rutas externas al prefijo de prueba. Exigir
-   respaldo de versionado al aplicar sobre KV v2 (no confundir soft-delete con purge).
-3. **Concurrencia y consistencia**: dos escritores simultáneos; detectar pérdida de
-   actualización en `addsecret`/`delsecret`; implementar CAS v2 antes de exigir éxito.
-4. **TTY real**: con `pexpect` en PTY, `Tab`, flechas, `Ctrl+R`, Home/End,
-   `Ctrl+D` y comandos pegados con rapidez. Separar de batch para evitar flakiness.
-5. **PKI y Kerberos**: fixtures generadas durante el test (`openssl`, `ktutil` o
-   minicliente Kerberos de pruebas), exportación, permisos 0600 y comparación de
-   claves públicas. Nunca certificados o keytabs reales.
-6. **Fault injection**: Vault sellado, reconexión, timeouts, DNS/TLS, servidor
-   caído, respuestas JSON malformadas, respuestas HTTP 429 y 500; el CLI debe
-   fallar cerrado, sin borrar datos ni registrar tokens.
+1. **Regresión de comandos**: ya hay contratos E2E extensos sobre KV, roles,
+   TLS, PTY y operaciones destructivas. Antes de declarar estable, revisar
+   comandos históricos y casos límite aún no representados: entradas vacías,
+   Unicode, rutas especiales y diferentes errores de permisos.
+2. **Mutaciones destructivas**: `rmtree`, `mv`, backup/restore y restricciones
+   fuera del prefijo ya tienen pruebas específicas. Mantener las aserciones
+   independientes de estado y verificar nuevas rutas de fallo o concurrencia.
+3. **Concurrencia y consistencia**: CAS y escritores simultáneos ya están
+   cubiertos; conservar los límites documentados de atomicidad y añadir
+   casos de carga prolongada antes del RC.
+4. **TTY real**: la suite PTY ya cubre navegación, historial, pegado y
+   terminales mínimos; faltan Unicode/ancho de cursor, redimensionamiento
+   y escenarios exploratorios adicionales.
+5. **PKI y Kerberos**: ya existen fixtures sintéticos, comparación de claves,
+   permisos 0600, exportación, casos malformados y recorridos. Revisar
+   dependencias y errores de disco en la auditoría. Nunca usar secretos reales.
+6. **Fault injection**: las doce suites E2E incluyen distintos errores TLS,
+   HTTP, pérdida de respuesta y fallos parciales. Añadir únicamente escenarios
+   ausentes y mantener la regla de no reintentar escrituras ambiguas.
 7. **Compatibilidad OS**: Ubuntu con cuatro versiones de Vault reales; en
    Alpine 3.22 (musl) y Debian bookworm-slim (glibc), CLI offline y **todas
    las 12 suites E2E (170 tests)** contra Vault HTTPS 2.1.1. Continúan
@@ -107,14 +118,18 @@ contratos actuales. Los datos del benchmark corresponden solo al CI.
    pruebas largas de carga y otras versiones de Vault en distribuciones
    mínimas. Revisar periódicamente dependencias e imágenes de base.
 8. **Playground local con Vault real (previo al RC)**: Docker Compose y
-   lanzador Bash con `up/status/shell/batch/smoke/reset/down`; se generan y
-   precargan KV v1/v2, X.509/PEM, keytabs binarios MIT, ACL y AppRole,
-   incluidos fixtures inválidos. Gate obligatorio con el `./vcli` Bash y
-   comprobaciones independientes de API, TLS, ACL, reset y limpieza.
-   Véase `playground/README.md`. **Implementado; pendiente de revisión manual**.
-9. **Pre-release**: correr matriz entera en cada RC, generar changelog y paquete
-   reproducible, subir artefacto verificable (SHA-256), firmado/procedencia, y
-   publicar release manualmente **solo** si todos los gates están verdes.
+   Bash con `up/status/shell/batch/smoke/reset/down`, catálogo sintético
+   KV v1/v2, X.509, keytabs MIT, ACL/AppRole y datos inválidos.
+   La aceptación automatizada se ejecuta como job obligatorio; falta
+   explorar manualmente la UX. Véase `playground/README.md`.
+9. **Fase 04-Q — calidad, reutilización y eficiencia** (**pendiente**):
+   auditoría estructural y de seguridad de Bash; reducción justificada de
+   duplicidades, procesos externos, parsing y llamadas HTTP; benchmark
+   reproducible antes/después; comentarios breves y Markdown actualizado.
+   Véase [`docs/CODE-QUALITY.md`](CODE-QUALITY.md). **Bloquea el RC**.
+10. **Pre-release**: ejecutar matriz completa y playground, revisar changelog,
+    reproducibilidad, SHA-256, procedencia y el estado de la auditoría; publicar
+    manualmente **solo** con todos los gates y la fase 04-Q completados.
 
 ## Trunk-based development (TBD), protección y releases
 
@@ -132,7 +147,9 @@ contratos actuales. Los datos del benchmark corresponden solo al CI.
 por el propio Vault. El job copia solo la CA pública al runner y obliga a
 `curl`, la CLI oficial y VCLI a verificarla. No hay terminador TLS externo ni
 `curl -k` fuera del caso negativo `VAULT_SKIP_VERIFY` explícito.
-Los casos de hostname erróneo, expiración de certificado y mTLS quedan pendientes.
+La suite avanzada ya comprueba casos de cadena/hostname, expiración y
+mTLS. Revisar nuevas variantes durante la auditoría, sin presentar esa
+cobertura como una garantía para cualquier despliegue.
 
 - `master`: branch protegida, bloquear merges directos, require checks **Required CI gate**.
 - CI de PR (matriz fija) + nightly/cron semanal para localizar regresiones del
@@ -145,8 +162,8 @@ Los casos de hostname erróneo, expiración de certificado y mTLS quedan pendien
 - Para tags `v0.7.*`, el job `package_candidate` solo genera un TAR con
   suma SHA-256 tras un CI íntegramente verde. Su `environment: release`
   puede requerir aprobación manual; no publica automáticamente en GitHub Releases.
-- La primera versión `0.7.0-rc1` debería generarse una vez implementados
-  los bloques de regresión pendientes.
+- La primera versión `0.7.0-rc1` debe esperar al cierre de las
+  regresiones pendientes, la revisión 04-Q y la auditoría final.
 
 ## CLI-first: contrato antes de implementación
 
@@ -212,18 +229,21 @@ operaciones concretas verificadas.
 ### Ejecución local
 
 ```bash
-python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_portability
+python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_portability tests.cli.test_ci_matrix
 python3 tests/cli/bench_startup.py
-bash -n vcli
+bash -n vcli scripts/playground.sh scripts/playground-seed.sh tests/playground/smoke.sh
 # Requiere Docker y runtime Bash:
 VCLI_TEST_VAULT_TAG=2.1.1 bash tests/integration/run.sh
 # Solo en host Linux con Docker (modo compatibilidad desde Alpine):
 VCLI_TEST_MINIMAL_IMAGE=alpine:3.22 VCLI_TEST_MINIMAL_DISTRO=alpine \
   VCLI_TEST_VAULT_TAG=2.1.1 bash tests/integration/run.sh
+# Playground: destruye todo el catálogo de prueba; revisar el estado local.
+scripts/playground.sh up
+scripts/playground.sh smoke
+scripts/playground.sh down
 ```
 
-Los primeros runs de la PR detectaron errores de exit code, AppRole y REPL.
-Tras corregir el candidato Bash y la fixture Docker, la matriz real pasó
-contra Vault 1.20.4, 1.21.4, 2.0.4 y 2.1.1. Es un baseline funcional;
-la suite NO cubre aún todos los comandos heredados. El merge no equivale
-a declarar estable VCLI 0.7.
+La matriz real y el playground ya están integrados en el gate obligatorio.
+Se mantienen limitaciones documentadas de portabilidad BSD/macOS, Unicode,
+terminal y operaciones no cubiertas por los contratos. El merge **no**
+equivale a declarar estable vcli 0.7: quedan la fase 04-Q y la auditoría final.

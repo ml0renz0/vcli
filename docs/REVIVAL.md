@@ -1,93 +1,92 @@
-# VCLI revival: cambios directos sobre Bash
+# Revival de vcli — Bash mantenible y verificable
 
-La PR conserva el histórico intacto en `vcli.orig.sh` y desarrolla
-`vcli` como candidato Bash revisable. Para inspeccionar exactamente las
-diferencias, ejecutar `git diff --no-index -- vcli.orig.sh vcli`.
-Este comando devuelve código 1 cuando encuentra diferencias.
+**Estado:** candidato v0.7 en PR, todavía no publicado como estable.
+Se conserva el ejecutable histórico `vcli.orig.sh` sin modificar y se
+desarrolla directamente `vcli` como único ejecutable de producción.
 
-No existe un generador de parches Python. CI valida **el fichero Bash que
-realmente se entregará**, con los contratos de `docs/CLI-CONTRACT.md`.
+```bash
+git diff --no-index -- vcli.orig.sh vcli
+```
 
-## Objetivos
+El código de producción es **Bash autocontenido**. Python se usa para
+pruebas, benchmarks y herramientas de desarrollo, no como motor de `vcli`.
 
-- Vault actual con KV v1 y KV v2 explícitamente configurado.
-- TLS verificado por defecto. VAULT_CACERT permite usar una CA privada.
-- El cliente no hace escrituras al arrancar.
-- Tokens restringidos y errores HTTP sin filtración de secretos.
-- Mantener comandos y REPL históricos, documentando compatibilidades.
+## Objetivos y garantías
 
-## Contratos y pruebas
+- Operaciones Vault KV v1/v2 con montajes anidados y rutas verificables.
+- HTTPS verificado por defecto, CA propia opcional y autenticación token/AppRole.
+- Sin mutaciones al arrancar ni filtración deliberada de credenciales.
+- Comandos históricos útiles y REPL con garantías de seguridad documentadas.
+- Errores y resultados parciales explícitos donde Vault no es transaccional.
+- Calidad y eficiencia demostrables con pruebas y mediciones antes del RC.
 
-`python3 -m unittest -v tests.cli.test_cli_contract` cubre la interfaz
-independiente de Vault. La matriz de integración levanta Vault con TLS
-nativo y verifica el estado a través de su API.
+## Estado de las fases
 
-`docs/CI-CD.md` describe los gates y pruebas pendientes. No utilizar un
-servidor productivo ni credenciales reales en la suite.
+| Hito | Alcance | Situación |
+|---|---|---|
+| 00 | Baseline, CI/CD y Vault TLS real | Implementado y cubierto por CI |
+| 01 | Revival Bash, KV y operaciones base | Implementado y cubierto por CI |
+| 02 | PKI, X.509, claves y Kerberos | Implementado y cubierto por CI |
+| 03 | REPL, historial y terminal | Batería principal implementada; quedan casos UX específicos |
+| 04 | Portabilidad, robustez, benchmark | Matriz Linux y playground operativos; quedan casos límites |
+| Playground | Vault TLS real, fixtures KV/PKI/Kerberos/ACL/AppRole | Implementado y con aceptación automática; exploración manual pendiente |
+| **04-Q** | **Revisión de calidad, refactorización y eficiencia** | **Planificado, obligatorio antes del RC** |
+| 05 | Auditoría final y release candidate v0.7 | Pendiente |
+| Evolución posterior | YAML, plan/apply/drift, políticas, plantillas y rotación | Roadmap, no implementado en v0.7 |
 
-## Playground local contra Vault real (fase 04, antes del RC)
+La descripción de las fases indica cobertura de CI dentro del alcance
+documentado, **no** una declaración de compatibilidad universal.
 
-**Estado: implementado en la PR; aceptación automatizada obligatoria.**
-El launcher Bash inicia Vault real con TLS nativo en Docker Compose y siembra
-el catálogo de [playground/README.md](../playground/README.md). Incluye KV v1,
-KV v2 (dos versiones), montaje anidado, JSON estructurado, certificados y
-claves X.509, keytabs binarios MIT sintéticos, ejemplos inválidos, ACL y AppRole.
-La demo usa el verdadero `./vcli`, sin reescribirlo ni sustituirlo por Python.
+## Pruebas y laboratorio
 
-### Diseño implementado
+La matriz del workflow valida el `vcli` real con Vault nativo TLS
+en cuatro versiones desde Ubuntu y todas las suites E2E sobre Vault 2.1.1
+desde Alpine/Debian. También se comprueban terminales PTY y rutas de fallo.
+Consulta [CI/CD](CI-CD.md) y [contrato CLI](CLI-CONTRACT.md).
 
-- **Docker Compose + lanzador Bash** (`scripts/playground.sh`): ciclo de vida
-  explícito `up`, `status`, `shell`, `smoke`, `reset` y `down`. El modo
-  `shell` ejecutará el verdadero `./vcli` en una terminal interactiva; se
-  documentará también cómo invocarlo en modo batch.
-- **Vault HashiCorp real con versión fijada**, inicialmente 2.1.1; modo
-  desarrollo **efímero**, TLS nativo con CA generada para cada entorno,
-  escucha publicada exclusivamente en `127.0.0.1` y nombres/redes de
-  contenedor dedicados. Sin exposición pública ni conexiones a Vault de
-  producción. Posibilidad futura de seleccionar otras versiones de la matriz.
-- **Bootstrap idempotente de datos ficticios**: KV v1, KV v2 y mount KV v2
-  anidado; secretos de ejemplo, política de solo lectura, token limitado y
-  AppRole para probar tanto operaciones autorizadas como errores 403/404.
-  Reutilizar, donde sea posible, la preparación del fixture de
-  `tests/integration/run.sh` evitando una segunda definición divergente.
-- **Credenciales y certificados solo locales y temporales**: directorio de
-  estado privado con permisos restrictivos (0700, archivos sensibles 0600),
-  ignorado por Git; nada de secretos reales, credenciales permanentes, CA de
-  usuario ni tokens en logs o archivos versionados. `down` y `reset`
-  limpiarán los artefactos generados, también si falla el arranque.
-- **Guía práctica de ejercicios**: `ls`, `cat`, `put`, `cp`, `mv`,
-  navegación/REPL, KV v2, ACL/AppRole y exportación de certificados/keytabs
-  *sintéticos*, además de TLS válido/CA inválida y recuperación ante
-  reinicio. Incluir comandos de inspección del estado desde la API de Vault.
-- **Separación del CI**: el playground manual es voluntario, pero el
-  smoke automatizado en `tests/playground/smoke.sh` ejecuta
-  `up → bootstrap → vcli real → validación por API → reset → down` y
-  verifica permisos y PKI/keytabs. No automatiza sesiones exploratorias.
+El [playground](../playground/README.md) permite lanzar un Vault descartable
+con datos sintéticos y ejecutar `vcli` directamente, sin mocks:
 
-### Criterios de aceptación
+```bash
+scripts/playground.sh up
+scripts/playground.sh smoke
+scripts/playground.sh shell
+# Al terminar:
+scripts/playground.sh down
+```
 
-1. En un host Linux con Docker/Compose y Bash, una persona puede crear el
-   entorno con **un comando** y obtener instrucciones de conexión, sin
-   preparar Vault manualmente ni reutilizar tokens externos.
-2. El `vcli` original modernizado se conecta con validación TLS habilitada;
-   las operaciones de ejemplo se corroboran mediante la API, no solo por el
-   texto de salida del CLI.
-3. Se prueba un token de lectura: puede leer, pero **no** modificar secretos.
-   Una CA desconocida y un token inválido deben fallar sin filtrar secretos.
-4. `reset` es repetible y `down` elimina los contenedores, los datos
-   sintéticos y los archivos temporales con permisos seguros.
-5. README con requisitos, comandos y troubleshooting; smoke test integrado
-   en CI antes del RC. El playground no modifica `vcli.orig.sh` ni requiere
-   Python como implementación de `vcli`.
+Se precargan KV v1/v2, dos versiones de valores ficticios, montajes anidados,
+JSON, certificados y claves X.509, keytabs MIT, ejemplos malformados, ACL
+de lectura y AppRoles. El `smoke` comprueba API/CLI, permisos, autenticación
+y limpieza; no sustituye una revisión exploratoria completa.
 
-**Orden de trabajo:** playground y catálogo sintético incluidos en la PR,
-con gate obligatorio de aceptación; después quedan exploración manual y
-auditoría final del release candidate. Blueprints YAML y rotación pertenecen
-a fases posteriores de VCLI Forge, no a esta entrega.
+## Siguiente hito — Fase 04-Q: calidad y eficiencia
 
-## Plan de integración
+**No se considera completada.** Antes de la auditoría final se realizará
+una revisión incremental del código Bash para:
 
-Una vez estabilizados los contratos y las pruebas, completar el
-playground local con Vault TLS real y su smoke test de aceptación manual.
-Solo después, empaquetar `vcli` como ejecutable distribuido sin alterar
-`vcli.orig.sh`. Actualizar instalación y release al cerrar la fase.
+1. Inventariar duplicidades, funciones con demasiadas responsabilidades,
+   estado global, errores y temporales, priorizando seguridad y corrección.
+2. Identificar helpers reutilizables en rutas KV v2, recorrido de árboles,
+   transporte HTTP, validación PKI/Kerberos y REPL, sin introducir
+   dependencias obligatorias ni alterar el contrato externo.
+3. Medir procesos externos, llamadas HTTP, coste de parsing, CPU/memoria
+   y latencia mediana/p95 sobre el mismo catálogo de Vault antes/después.
+4. Aplicar cambios pequeños, con regresiones primero, matriz E2E obligatoria
+   y benchmark comparativo para aceptar o revertir cada mejora.
+5. Añadir **comentarios breves centrados en invariantes y decisiones no
+   obvias**, evitando documentación redundante, y revisar los cinco Markdown.
+
+La especificación completa, candidatos concretos y criterios de salida
+están en [`docs/CODE-QUALITY.md`](CODE-QUALITY.md).
+
+## Release y evolución posterior
+
+**Orden:** finalizar límites de fase 04 → **04-Q** → auditoría fase 05 →
+release candidate v0.7 con gate totalmente verde y artefacto verificable.
+El playground y la matriz real siguen siendo obligatorios.
+
+Las futuras funciones declarativas (blueprints YAML, validación, plan,
+aplicación, detección de drift, gestión de accesos, plantillas SaaS y rotación)
+son **evolución de vcli dentro de este mismo proyecto**. No existe aquí
+un segundo producto implementado denominado «VCLI Forge».

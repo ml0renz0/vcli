@@ -19,6 +19,12 @@ sobre el socket Docker local (equivalente a una cuenta privilegiada).
     scripts/playground.sh smoke
     scripts/playground.sh shell
 
+`smoke` realiza una validación breve contra el Vault real: comprueba
+KV v1/v2, CA TLS, permisos ACL/AppRole, exportaciones de X.509 y keytabs
+sintéticos y rechazos de datos malformados. **No** ejecuta los 170 tests
+E2E; estos viven en la matriz del CI. El comando utiliza datos de prueba
+y limpia los artefactos generados sin borrar tu catálogo.
+
 Para lanzar el CLI directamente:
 
     source .playground/env.sh
@@ -73,9 +79,12 @@ están en .playground/fixtures/ (privados y excluidos de Git).
 klist, pero su clave es pública, fija y sintética. **No hay KDC** y
 no puede usarse para demostrar autenticación Kerberos con kinit.
 
-Los formatos cubiertos son los que gestiona actualmente el VCLI Bash
-revival. Blueprints YAML, reconciliación declarativa y rotación pertenecen
-a fases futuras de VCLI Forge, no a esta entrega.
+Los formatos cubiertos son los que gestiona actualmente el **vcli
+Bash revival**. Blueprints YAML, reconciliación declarativa, políticas
+gestionadas por descriptores y rotación son **funcionalidades futuras
+del mismo proyecto vcli**, no comandos disponibles en esta entrega.
+La [fase 04-Q](../docs/CODE-QUALITY.md) revisará la reutilización y la
+eficiencia del código antes del release candidate.
 
 ## ACL y AppRole
 
