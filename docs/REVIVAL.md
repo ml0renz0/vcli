@@ -88,5 +88,5 @@ El playground y la matriz real siguen siendo obligatorios.
 
 Las futuras funciones declarativas (blueprints YAML, validación, plan,
 aplicación, detección de drift, gestión de accesos, plantillas SaaS y rotación)
-son **evolución de vcli dentro de este mismo proyecto**. No existe aquí
-un segundo producto implementado denominado «VCLI Forge».
+son **evolución de vcli dentro de este mismo proyecto**, no funcionalidades
+ya implementadas en el candidato actual.

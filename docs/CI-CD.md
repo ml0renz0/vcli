@@ -6,7 +6,7 @@ un stub de `curl` devuelve 200. Todo cambio debe superar pruebas de contrato con
 
 Esta documentación se refiere al **revival de vcli (candidato v0.7)**. Las
 capacidades declarativas futuras pertenecen al roadmap posterior del mismo
-proyecto; no implican que exista otro CLI llamado «VCLI Forge».
+proyecto y no están implementadas en el candidato actual.
 
 ## Flujo de validación
 

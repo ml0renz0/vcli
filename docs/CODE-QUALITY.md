@@ -85,9 +85,9 @@ obligatoria para ejecutar `vcli`.
 - Revisar `README.md`, `docs/CI-CD.md`, `docs/CLI-CONTRACT.md`,
   `docs/REVIVAL.md` y `playground/README.md`: eliminar descripciones
   obsoletas, diferenciar **histórico / implementado / pendiente** y comprobar
-  enlaces, comandos y versiones. Usar una única identidad de proyecto:
-  `vcli`; las futuras capacidades YAML/declarativas son **roadmap**, no
-  un producto existente denominado «VCLI Forge».
+  enlaces, comandos y versiones. Usar una única identidad de proyecto,
+  `vcli`; las futuras capacidades YAML/declarativas son **roadmap** y no
+  forman parte del candidato actual.
 
 ## Criterios de aceptación
 
