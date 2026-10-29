@@ -87,5 +87,23 @@ class SessionCommandContracts(unittest.TestCase):
             self.assertNotIn(marker, history,
                              "The default history must not store secret values")
 
+    def test_08_noarg_commands_reject_repeated_name_as_argument(self):
+        # Historically "history history" could pass is_cmd due to an
+        # accidental equality check between the command and its argument.
+        for command in ("history", "verbose", "enable-debug",
+                        "disable-debug", "enable-hexdump-debug",
+                        "disable-hexdump-debug", "exit"):
+            with self.subTest(command=command):
+                result, _ = invoke(f"{command} {command}\nhelp")
+                self.assertNotEqual(result.returncode, 0,
+                                    f"{command}: {result.stdout} {result.stderr}")
+                self.assertIn("Available commands:", result.stdout)
+
+    def test_09_unknown_prefix_does_not_match_public_command(self):
+        result, _ = invoke("help-extra\nhelp")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Available commands:", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
