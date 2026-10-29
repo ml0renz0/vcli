@@ -88,6 +88,44 @@ class KV2AdvancedTests(unittest.TestCase):
         self.assertEqual(self.get("cross/dest/a",mount="team/config"),{"x":1})
         self.assertEqual(self.get("cross/dest/deep/b",mount="team/config"),{"x":2})
 
+    def test_09_nested_mount_wins_over_prefix_independent_of_order(self):
+        """A configured 'team' prefix must not steal team/config requests."""
+        leaf = "routing/longest-prefix"
+        secret = f"team/config/{self.p}/{leaf}"
+        self.put(leaf, {"initial": True}, mount="team/config")
+        for mounts in ("team,team/config,kv2", "team/config,team,kv2"):
+            with self.subTest(mounts=mounts):
+                read, _ = invoke(f"cat {secret}", version=2, mounts=mounts)
+                self.assertEqual(read.returncode, 0, read.stdout + read.stderr)
+                import json
+                self.assertEqual(json.loads(read.stdout)["data"], {"initial": True})
+                listing, _ = invoke(
+                    f"ls team/config/{self.p}/routing", version=2, mounts=mounts
+                )
+                self.assertEqual(listing.returncode, 0, listing.stdout + listing.stderr)
+                self.assertIn("longest-prefix", listing.stdout)
+
+        updated, _ = invoke(
+            f'put {secret} {{"updated":true}}',
+            version=2, mounts="team,team/config,kv2",
+        )
+        self.assertEqual(updated.returncode, 0, updated.stdout + updated.stderr)
+        self.assertEqual(self.get(leaf, mount="team/config"), {"updated": True})
+        self.assertEqual(self.meta(leaf, mount="team/config")["current_version"], 2)
+
+    def test_10_explicit_nested_mount_api_path_is_not_rewritten(self):
+        """Raw data endpoints must remain raw even with overlapping prefixes."""
+        leaf = "routing/raw-path"
+        self.put(leaf, {"raw": True}, mount="team/config")
+        path = f"team/config/data/{self.p}/{leaf}"
+        result, _ = invoke(
+            f"cat {path}", version=2, mounts="team,team/config,kv2"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        import json
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["data"]["data"], {"raw": True})
+
     def test_08_backup_restore_creates_new_versions_after_soft_delete(self):
         import os
         from pathlib import Path
