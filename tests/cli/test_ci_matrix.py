@@ -24,6 +24,7 @@ MANDATORY = (
     "test_tls_advanced",
     "test_pki_kerberos",
     "test_repl",
+    "test_session_commands",
 )
 
 
