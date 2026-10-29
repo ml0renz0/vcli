@@ -41,7 +41,7 @@ jobs:
           fi
           for cmd in jq curl shellcheck; do command -v "$cmd"; done
       - name: CLI contract and E2E matrix parity (no Vault required)
-        run: python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_ci_matrix
+        run: python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_ci_matrix tests.cli.test_command_coverage
       - name: Bash syntax and ShellCheck
         run: |
           bash -n ./vcli ./scripts/playground.sh ./scripts/playground-seed.sh ./tests/playground/smoke.sh
