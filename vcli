@@ -202,29 +202,14 @@ declare -A vcli_commands_help=(
 
 # return whether is a command or not
 function is_cmd(){
-    local cmd=${1%% *}
-    local args=${1#* }
-    if [[ $cmd == "$args" ]]; then unset args; fi
+    local command=${1%% *}
     local args
-    #debug "IS_CMD1: cmd=$cmd args=$args"
-    for command in "${!vcli_commands[@]}"; do
-        #debug "IS_CMD2: command=$command, args=$args"
-        #debug "IS_CMD3: $cmd =~ ^$command$"
-        if [[ $cmd =~ ^$command$ ]]; then
-            if [[ ${vcli_commands[$command]} = "noarg" ]]; then
-                if [[ $args ]]; then
-                    return 1
-                else
-                    #debug "IS_CMD4: MATCHED"
-                    return 0
-                fi
-            fi
-            #debug "IS_CMD4: MATCHED"
-            return 0
-        fi
-    done
-    return 1
+    [[ -v "vcli_commands[$command]" ]] || return 1
+    args=${1#"$command"}
+    # Only noarg commands reject additional non-whitespace arguments.
+    [[ ${vcli_commands[$command]} != noarg || -z ${args//[[:space:]]/} ]]
 }
+
 
 # complete command
 function completion(){
