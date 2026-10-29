@@ -360,6 +360,31 @@ smoke() (
         die 'unknown CA unexpectedly trusted'
     fi
 
+    # Verify the other seeded types, including an actual two-version KV v2
+    # history and an independent nested mount, via both CLI and Vault API.
+    api GET kv2/metadata/demo/payments/database |
+        jq -e '.data.current_version == 2' >/dev/null ||
+        die 'KV v2 did not retain both synthetic revisions'
+    printf 'cat kv2/demo/payments/database\n' |
+        client_with "$root_token" "$STATE/ca.pem" "$tmp" -n \
+        > "$tmp/output" 2>&1 || die 'VCLI KV v2 read failed'
+    jq -e '.data.password=="FAKE-VERSION-2"' "$tmp/output" >/dev/null ||
+        die 'VCLI did not return the latest KV v2 revision'
+    api GET team/config/data/demo/payments |
+        jq -e '.data.data.team=="demo" and .data.data.feature_flags.tls==true' \
+        >/dev/null || die 'nested KV v2 mount was not seeded'
+    printf 'cat team/config/demo/payments\n' |
+        client_with "$root_token" "$STATE/ca.pem" "$tmp" -n \
+        > "$tmp/output" 2>&1 || die 'VCLI nested KV v2 read failed'
+    jq -e '.data.team=="demo"' "$tmp/output" >/dev/null ||
+        die 'VCLI failed to route the nested KV v2 mount'
+    printf 'cat kv1/demo/nested/config\n' |
+        client_with "$root_token" "$STATE/ca.pem" "$tmp" -n \
+        > "$tmp/output" 2>&1 || die 'VCLI nested JSON read failed'
+    jq -e '.data.enabled==true and .data.limits.retries==3 and
+           .data.roles==["reader","writer"]' "$tmp/output" >/dev/null ||
+        die 'VCLI changed nested JSON types'
+
     # Verify the generated X.509 private key and raw MIT keytab are exported
     # exactly, with private permissions, not merely "success" printed by VCLI.
     printf 'getcert kv1/demo/pki/web\n' |
@@ -391,6 +416,37 @@ smoke() (
         > "$tmp/output" 2>&1 || die 'VCLI principal extraction failed'
     grep -Fq 'HTTP/service.example.test@EXAMPLE.TEST' "$tmp/output" ||
         die 'synthetic Kerberos principal was not returned'
+    printf 'getallcertlist kv1/demo/pki\n' |
+        client_with "$root_token" "$STATE/ca.pem" "$tmp" -n \
+        > "$tmp/output" 2>&1 || die 'recursive certificate listing failed'
+    grep -Fq 'expiring.playground.example.test' "$tmp/output" ||
+        die 'nested expiring certificate missing from listing'
+    printf 'getallkrblist kv1/demo/kerberos\n' |
+        client_with "$root_token" "$STATE/ca.pem" "$tmp" -n \
+        > "$tmp/output" 2>&1 || die 'recursive keytab listing failed'
+    grep -Fq 'HTTP/service.example.test@EXAMPLE.TEST' "$tmp/output" ||
+        die 'nested keytab missing from listing'
+    printf 'getcertexpiration kv1/demo/pki/nested/service\n' |
+        client_with "$root_token" "$STATE/ca.pem" "$tmp" -n \
+        > "$tmp/output" 2>&1 || die 'X.509 expiration inspection failed'
+    grep -Fq 'days' "$tmp/output" ||
+        die 'expiring certificate was not reported'
+
+    # Authenticate with an actual AppRole issued in the throwaway Vault.
+    local role_id secret_id
+    read_private role-id
+    role_id="$REPLY"
+    read_private secret-id
+    secret_id="$REPLY"
+    env -i PATH="$PATH" HOME="$tmp" TMPDIR="$tmp" TERM=dumb \
+        NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost \
+        VAULT_ADDR="$ADDRESS" VAULT_CACERT="$STATE/ca.pem" \
+        VAULT_ROLE_ID="$role_id" VAULT_SECRET_ID="$secret_id" \
+        VAULT_KV_VERSION=2 VAULT_KV_MOUNTS='kv2,team/config' \
+        "$ROOT/vcli" -n <<< 'cat kv1/demo/app' > "$tmp/output" 2>&1 ||
+        die 'VCLI AppRole authentication failed'
+    jq -e '.data.user=="demo"' "$tmp/output" >/dev/null ||
+        die 'AppRole did not grant the expected read permission'
 
     # Negative fixtures must NOT export or overwrite any files.
     if printf 'getcert kv1/negative/pki/key-mismatch\n' |
@@ -402,6 +458,21 @@ smoke() (
         client_with "$root_token" "$STATE/ca.pem" "$tmp" -n \
         > "$tmp/output" 2>&1; then
         die 'invalid keytab unexpectedly exported'
+    fi
+    if printf 'getcert kv1/negative/pki/malformed\n' |
+        client_with "$root_token" "$STATE/ca.pem" "$tmp" -n \
+        > "$tmp/output" 2>&1; then
+        die 'malformed certificate was accepted'
+    fi
+    if printf 'getcert kv1/negative/pki/missing-key\n' |
+        client_with "$root_token" "$STATE/ca.pem" "$tmp" -n \
+        > "$tmp/output" 2>&1; then
+        die 'missing certificate key was accepted'
+    fi
+    if printf 'getkrb kv1/negative/kerberos/unsafe-principal\n' |
+        client_with "$root_token" "$STATE/ca.pem" "$tmp" -n \
+        > "$tmp/output" 2>&1; then
+        die 'pathlike Kerberos principal was accepted'
     fi
     if grep -Fq "$root_token" "$tmp/output"; then
         die 'root token leaked in CLI error output'

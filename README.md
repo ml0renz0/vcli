@@ -76,8 +76,25 @@ Compare the two directly with `git diff --no-index -- vcli.orig.sh vcli`
 
 - [CLI behavior contract](docs/CLI-CONTRACT.md) describes user-visible behavior.
 - [CI and real-Vault test matrix](docs/CI-CD.md) explains test coverage and blockers.
-- [Revival notes and planned local playground](docs/REVIVAL.md) document the migration, rollout and proposed Docker Compose + Bash playground for hands-on testing against a disposable TLS Vault.
+- [Revival notes](docs/REVIVAL.md) document the migration, rollout and release acceptance.
+- [Live Vault playground catalog](playground/README.md) documents the disposable TLS Vault, its full synthetic fixtures (KV v1/v2, X.509, MIT keytabs, ACL/AppRole) and interactive Bash CLI examples.
 
 The CI starts ephemeral real HashiCorp Vault servers with native TLS and
 verifies read/write behavior independently through the Vault HTTP API.
 The candidate is not yet declared production-stable.
+
+### Try the real Vault playground
+
+On Linux with local Docker/Compose, Bash, curl, jq, OpenSSL and MIT Kerberos:
+
+    scripts/playground.sh up
+    scripts/playground.sh smoke
+    scripts/playground.sh shell
+    # Or run VCLI directly:
+    source .playground/env.sh
+    ./vcli
+
+The lab listens only on 127.0.0.1 with Vault-generated native TLS.
+All data is fake. Repeating up preserves your experiments; reset
+recreates the whole catalog; down deletes the disposable resources.
+See [the secret catalog and test recipes](playground/README.md).

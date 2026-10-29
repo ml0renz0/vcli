@@ -56,6 +56,7 @@ Los tokens de test nunca proceden de GitHub Secrets ni de un Vault externo.
 | Source guard | No `eval` en transporte, no `curl -k` fijo, sin secretos de prueba al arrancar | PR obligatorio |
 | Contratos CLI | Ayuda, versión, flags inválidos, errores de configuración y salida sin credenciales | PR obligatorio |
 | Linux mínimo | Alpine 3.22 (musl) y Debian bookworm-slim (glibc): **las 12 suites E2E completas (170 tests por distribución)**, con KV v1/v2, TLS/mTLS avanzado, CAS, concurrencia, fault injection, ACL, PKI/Kerberos y 38 PTY, contra Vault HTTPS 2.1.1 | PR obligatorio |
+| Playground local | Docker Compose con Vault TLS real, catálogo sintético completo KV/X.509/keytab, AppRole/ACL, `up` repetible, `smoke`, `reset`, `down` y eliminación de estado; CLI Bash + oráculo API | PR obligatorio |
 | Rendimiento CLI | Benchmark del arranque `--version`: 2 warmups + 12 muestras, p50/p95 informativos y presupuesto p95 conservador de 2500 ms por contenedor | PR obligatorio |
 | Rendimiento con Vault | 2 warmups + 10 invocaciones nuevas `vcli -n` para `cat` KV v1 HTTPS; verificación del valor vía JSON y p50/p95, límite de bloqueo conservador p95 8000 ms | PR obligatorio |
 | E2E KV v1 | `put`, `cat`, `ls`, `rm`, verificación por API | PR obligatorio |
@@ -106,11 +107,11 @@ contratos actuales. Los datos del benchmark corresponden solo al CI.
    pruebas largas de carga y otras versiones de Vault en distribuciones
    mínimas. Revisar periódicamente dependencias e imágenes de base.
 8. **Playground local con Vault real (previo al RC)**: Docker Compose y
-   lanzador Bash para iniciar, sembrar, inspeccionar, reiniciar y destruir un
-   Vault TLS efímero con KV v1/v2, ACL y AppRole sintéticos. Ejecutar el
-   `./vcli` real interactivamente o en batch con credenciales locales
-   aisladas y un smoke test de creación, lectura, escritura, rechazo ACL,
-   verificación por API y limpieza. Véase `docs/REVIVAL.md`. **Planificado**.
+   lanzador Bash con `up/status/shell/batch/smoke/reset/down`; se generan y
+   precargan KV v1/v2, X.509/PEM, keytabs binarios MIT, ACL y AppRole,
+   incluidos fixtures inválidos. Gate obligatorio con el `./vcli` Bash y
+   comprobaciones independientes de API, TLS, ACL, reset y limpieza.
+   Véase `playground/README.md`. **Implementado; pendiente de revisión manual**.
 9. **Pre-release**: correr matriz entera en cada RC, generar changelog y paquete
    reproducible, subir artefacto verificable (SHA-256), firmado/procedencia, y
    publicar release manualmente **solo** si todos los gates están verdes.
@@ -198,7 +199,7 @@ JSON/valor del resultado de cada lectura. Registra mediana/p95; el máximo
 p95 de **8000 ms** detecta bloqueos severos, no sirve como SLA de producción
 ni comparación concluyente entre distribuciones/hardware.
 
-El `Required CI gate` exige `static + integration + minimal`. En
+El `Required CI gate` exige `static + integration + minimal + playground`. En
 [CI #40793127176](https://github.com/ml0renz0/vcli/actions/runs/40793127176)
 pasaron 170 E2E por instancia: cuatro Vault en Ubuntu y otros dos Vault 2.1.1
 desde Alpine y Debian (**1020 ejecuciones E2E**). También se ejecutan

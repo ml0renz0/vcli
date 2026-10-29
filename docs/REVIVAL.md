@@ -25,15 +25,16 @@ nativo y verifica el estado a través de su API.
 `docs/CI-CD.md` describe los gates y pruebas pendientes. No utilizar un
 servidor productivo ni credenciales reales en la suite.
 
-## Próximo hito — Playground local contra Vault real (fase 04, antes del RC)
+## Playground local contra Vault real (fase 04, antes del RC)
 
-**Estado: planificado; aún no implementado.** El CI ya comprueba el CLI con
-Vault real y TLS, pero inicia y destruye sus servidores automáticamente.
-El playground añadirá un entorno **manual, reproducible y aislado**, donde
-probar el `vcli` Bash de esta misma rama con datos sintéticos antes de publicar
-un release candidate. No será un simulador de HTTP ni un reemplazo del CI.
+**Estado: implementado en la PR; aceptación automatizada obligatoria.**
+El launcher Bash inicia Vault real con TLS nativo en Docker Compose y siembra
+el catálogo de [playground/README.md](../playground/README.md). Incluye KV v1,
+KV v2 (dos versiones), montaje anidado, JSON estructurado, certificados y
+claves X.509, keytabs binarios MIT sintéticos, ejemplos inválidos, ACL y AppRole.
+La demo usa el verdadero `./vcli`, sin reescribirlo ni sustituirlo por Python.
 
-### Diseño previsto
+### Diseño implementado
 
 - **Docker Compose + lanzador Bash** (`scripts/playground.sh`): ciclo de vida
   explícito `up`, `status`, `shell`, `smoke`, `reset` y `down`. El modo
@@ -58,10 +59,10 @@ un release candidate. No será un simulador de HTTP ni un reemplazo del CI.
   navegación/REPL, KV v2, ACL/AppRole y exportación de certificados/keytabs
   *sintéticos*, además de TLS válido/CA inválida y recuperación ante
   reinicio. Incluir comandos de inspección del estado desde la API de Vault.
-- **Separación del CI**: funcionamiento local voluntario; un smoke test
-  automatizado validará `up → bootstrap → vcli real → verificación por API
-  → down` y la limpieza, pero las sesiones exploratorias del usuario no
-  se ejecutarán en los runners de CI.
+- **Separación del CI**: el playground manual es voluntario, pero el
+  smoke automatizado en `tests/playground/smoke.sh` ejecuta
+  `up → bootstrap → vcli real → validación por API → reset → down` y
+  verifica permisos y PKI/keytabs. No automatiza sesiones exploratorias.
 
 ### Criterios de aceptación
 
@@ -79,11 +80,10 @@ un release candidate. No será un simulador de HTTP ni un reemplazo del CI.
    en CI antes del RC. El playground no modifica `vcli.orig.sh` ni requiere
    Python como implementación de `vcli`.
 
-**Orden de trabajo:** completar la fase 04 de portabilidad y robustez,
-implementar el playground como hito previo al release candidate y utilizarlo
-en la aceptación manual del CLI antes de cerrar la PR. Posteriormente podrá
-ampliarse para experimentar con blueprints YAML, AppRoles y rotación, pero
-esas funciones quedan fuera del primer entregable.
+**Orden de trabajo:** playground y catálogo sintético incluidos en la PR,
+con gate obligatorio de aceptación; después quedan exploración manual y
+auditoría final del release candidate. Blueprints YAML y rotación pertenecen
+a fases posteriores de VCLI Forge, no a esta entrega.
 
 ## Plan de integración
 
