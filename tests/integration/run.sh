@@ -127,8 +127,14 @@ if [[ -n ${VCLI_TEST_MINIMAL_IMAGE:-} ]]; then
         echo "FAIL: minimal client trusts Vault CA implicitly" >&2
         exit 1
       fi
+      # Run the same twelve modules as the Ubuntu matrix, never a smoke-only
+      # subset. All paths use native HTTPS Vault and explicit negative controls.
       python3 -m unittest -v \
         tests.integration.test_vault tests.integration.test_operations \
+        tests.integration.test_kv2_advanced tests.integration.test_security \
+        tests.integration.test_fault_injection tests.integration.test_partial_failures \
+        tests.integration.test_cas_concurrency tests.integration.test_auth_lifecycle \
+        tests.integration.test_tls tests.integration.test_tls_advanced \
         tests.integration.test_pki_kerberos tests.integration.test_repl
       python3 -m tests.integration.bench_vault
     '
