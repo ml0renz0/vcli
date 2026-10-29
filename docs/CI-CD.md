@@ -55,7 +55,7 @@ Los tokens de test nunca proceden de GitHub Secrets ni de un Vault externo.
 | Syntax/quality | `bash -n`, ShellCheck severidad error | PR obligatorio |
 | Source guard | No `eval` en transporte, no `curl -k` fijo, sin secretos de prueba al arrancar | PR obligatorio |
 | Contratos CLI | Ayuda, versión, flags inválidos, errores de configuración y salida sin credenciales | PR obligatorio |
-| Linux mínimo | Alpine 3.22 (musl) y Debian bookworm-slim (glibc): CLI offline, KV v1/v2, ACL, árbol, backup/restore, PKI/Kerberos y 38 regresiones PTY contra Vault HTTPS efímero 2.1.1 | PR obligatorio |
+| Linux mínimo | Alpine 3.22 (musl) y Debian bookworm-slim (glibc): **las 12 suites E2E completas (170 tests por distribución)**, con KV v1/v2, TLS/mTLS avanzado, CAS, concurrencia, fault injection, ACL, PKI/Kerberos y 38 PTY, contra Vault HTTPS 2.1.1 | PR obligatorio |
 | Rendimiento CLI | Benchmark del arranque `--version`: 2 warmups + 12 muestras, p50/p95 informativos y presupuesto p95 conservador de 2500 ms por contenedor | PR obligatorio |
 | Rendimiento con Vault | 2 warmups + 10 invocaciones nuevas `vcli -n` para `cat` KV v1 HTTPS; verificación del valor vía JSON y p50/p95, límite de bloqueo conservador p95 8000 ms | PR obligatorio |
 | E2E KV v1 | `put`, `cat`, `ls`, `rm`, verificación por API | PR obligatorio |
@@ -68,15 +68,19 @@ Los tokens de test nunca proceden de GitHub Secrets ni de un Vault externo.
 | Privacidad | el payload secreto no debe guardarse en `.vclistory` | PR obligatorio |
 | REPL PTY smoke | abrir consola, ejecutar `help`, salir con `Ctrl+D` | PR obligatorio |
 
-La matriz completa en Ubuntu ya cubre comandos de árbol, edición/CRUD,
-backup/restore, exportaciones PKI/Kerberos y 38 regresiones PTY. La matriz
-de Linux mínimo ahora ejecuta **cuatro suites**: `test_vault`,
-`test_operations`, `test_pki_kerberos` y `test_repl`, contra un Vault
-independiente con TLS real; prueba exportaciones y fallos durante su publicación
-y entrada interactiva sobre una pseudo-terminal. **No** equivale a ejecutar
-la batería completa de fault injection, CAS/ACL avanzado ni TLS extendido en
-Alpine y Debian; tampoco certifica todas las combinaciones de comandos,
-caracteres Unicode y sistemas BSD/macOS.
+La matriz de Ubuntu ejecuta las **12 suites E2E (170 tests)** en cada una de
+cuatro versiones de Vault; Alpine 3.22 y Debian bookworm-slim ejecutan **las
+mismas 12 suites y 170 tests** contra una instancia TLS real independiente
+de Vault 2.1.1 por distribución. La cobertura incluye KV v1/v2, ACL/AppRole,
+CAS, concurrencia, TLS avanzado/mTLS, fault injection, restauraciones,
+PKI/Kerberos y 38 regresiones PTY en Linux. Una prueba estática adicional
+(`tests.cli.test_ci_matrix`) exige paridad exacta de módulos entre el
+runner Ubuntu y los clientes mínimos para impedir regresiones de cobertura.
+
+**Límites**: no se garantiza aún equivalencia de otras versiones Vault en
+Alpine/Debian, portabilidad nativa BSD/macOS, comportamiento visual Unicode
+o al redimensionar terminales, ni operaciones no contempladas por los
+contratos actuales. Los datos del benchmark corresponden solo al CI.
 
 ## Requisitos adicionales antes de 0.7
 
@@ -95,12 +99,12 @@ caracteres Unicode y sistemas BSD/macOS.
 6. **Fault injection**: Vault sellado, reconexión, timeouts, DNS/TLS, servidor
    caído, respuestas JSON malformadas, respuestas HTTP 429 y 500; el CLI debe
    fallar cerrado, sin borrar datos ni registrar tokens.
-7. **Compatibilidad OS**: Ubuntu con matriz integral de cuatro Vault; en
-   Alpine 3.22 (musl) y Debian bookworm-slim (glibc), CLI offline y un subconjunto
-   E2E real sobre Vault HTTPS 2.1.1, ahora con **PKI/Kerberos y editor PTY**.
-   La inyección de fallos completa y los casos avanzados KV v2/TLS aún solo
-   corren íntegramente en Ubuntu. BSD/macOS no verificado. Revisar periódicamente
-   dependencias e imágenes de base.
+7. **Compatibilidad OS**: Ubuntu con cuatro versiones de Vault reales; en
+   Alpine 3.22 (musl) y Debian bookworm-slim (glibc), CLI offline y **todas
+   las 12 suites E2E (170 tests)** contra Vault HTTPS 2.1.1. Continúan
+   pendientes BSD/macOS, Unicode/ancho de cursor, redimensionamientos,
+   pruebas largas de carga y otras versiones de Vault en distribuciones
+   mínimas. Revisar periódicamente dependencias e imágenes de base.
 8. **Playground local con Vault real (previo al RC)**: Docker Compose y
    lanzador Bash para iniciar, sembrar, inspeccionar, reiniciar y destruir un
    Vault TLS efímero con KV v1/v2, ACL y AppRole sintéticos. Ejecutar el
@@ -179,26 +183,30 @@ El contenedor cliente utiliza `--network host` únicamente para alcanzar
 pública del fixture se montan en modo solo lectura. Se pasan exclusivamente
 tokens de prueba generados para ese Vault temporal.
 
-Las suites `tests.integration.test_vault`,
-`tests.integration.test_operations`, `tests.integration.test_pki_kerberos` y
-`tests.integration.test_repl` validan operaciones contra la API independiente
-de Vault, los archivos exportados y una pseudo-terminal Linux. Incluyen
-KV v1/v2, navegación, ACL, operaciones compuestas, backup/restore, certificados,
-keytabs y edición interactiva. Para esta ampliación se instalan OpenSSL, MIT
-Kerberos, ncurses y terminfo, y el job falla si faltan. Se comprueba que el
-certificado no sea de confianza sin la CA generada por Vault.
+Las doce suites de `tests.integration` utilizadas en Ubuntu se ejecutan ahora
+también sin exclusiones en Alpine y Debian, con un Vault HTTPS 2.1.1 efímero.
+Cubren KV v1/v2, navegación, ACL, operaciones compuestas, backup/restore,
+certificados, keytabs, CAS, concurrencia, TLS avanzado/mTLS, expiración de
+tokens y fallos de respuesta o cortes de red. Se comprueba el efecto por la
+API de Vault o sobre ficheros exportados, además del código de salida del CLI.
+Los contenedores instalan OpenSSL, MIT Kerberos, ncurses y terminfo y fallan
+si faltan dependencias. El certificado de Vault debe rechazarse sin CA
+de confianza.
 El benchmark `python3 -m tests.integration.bench_vault` ejecuta **2 calentamientos
 + 10 procesos Bash nuevos** con `cat` de un secreto de prueba en KV v1 y verifica
 JSON/valor del resultado de cada lectura. Registra mediana/p95; el máximo
 p95 de **8000 ms** detecta bloqueos severos, no sirve como SLA de producción
 ni comparación concluyente entre distribuciones/hardware.
 
-El `Required CI gate` exige `static + integration + minimal`. La cobertura
-de Alpine/Debian sigue siendo un **subconjunto E2E**, ahora con 33 pruebas
-PKI/Kerberos y 38 pruebas PTY por distribución (además de 19 KV/ACL/operaciones),
-con Vault HTTPS 2.1.1. No sustituye a la matriz integral de cuatro versiones en
-Ubuntu. Siguen pendientes en esas distribuciones los módulos avanzados de
-fault injection, CAS, TLS y autenticación, y permanece sin probar BSD/macOS.
+El `Required CI gate` exige `static + integration + minimal`. En
+[CI #40793127176](https://github.com/ml0renz0/vcli/actions/runs/40793127176)
+pasaron 170 E2E por instancia: cuatro Vault en Ubuntu y otros dos Vault 2.1.1
+desde Alpine y Debian (**1020 ejecuciones E2E**). También se ejecutan
+los contratos CLI offline y un benchmark de lecturas reales. El gate
+estático incorpora una prueba de paridad de listas de suites para impedir
+desalineación futura. La cobertura multicontenedor no acredita compatibilidad
+nativa con BSD/macOS ni garantiza ausencia de regresiones fuera de las
+operaciones concretas verificadas.
 
 ### Ejecución local
 

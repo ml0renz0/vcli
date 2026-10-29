@@ -40,8 +40,8 @@ jobs:
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
           fi
           for cmd in jq curl shellcheck; do command -v "$cmd"; done
-      - name: CLI contract (no Vault required)
-        run: python3 -m unittest -v tests.cli.test_cli_contract
+      - name: CLI contract and E2E matrix parity (no Vault required)
+        run: python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_ci_matrix
       - name: Bash syntax and ShellCheck
         run: |
           bash -n ./vcli
