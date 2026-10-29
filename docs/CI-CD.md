@@ -101,7 +101,13 @@ caracteres Unicode y sistemas BSD/macOS.
    La inyección de fallos completa y los casos avanzados KV v2/TLS aún solo
    corren íntegramente en Ubuntu. BSD/macOS no verificado. Revisar periódicamente
    dependencias e imágenes de base.
-8. **Pre-release**: correr matriz entera en cada RC, generar changelog y paquete
+8. **Playground local con Vault real (previo al RC)**: Docker Compose y
+   lanzador Bash para iniciar, sembrar, inspeccionar, reiniciar y destruir un
+   Vault TLS efímero con KV v1/v2, ACL y AppRole sintéticos. Ejecutar el
+   `./vcli` real interactivamente o en batch con credenciales locales
+   aisladas y un smoke test de creación, lectura, escritura, rechazo ACL,
+   verificación por API y limpieza. Véase `docs/REVIVAL.md`. **Planificado**.
+9. **Pre-release**: correr matriz entera en cada RC, generar changelog y paquete
    reproducible, subir artefacto verificable (SHA-256), firmado/procedencia, y
    publicar release manualmente **solo** si todos los gates están verdes.
 

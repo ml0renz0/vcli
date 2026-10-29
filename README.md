@@ -76,7 +76,7 @@ Compare the two directly with `git diff --no-index -- vcli.orig.sh vcli`
 
 - [CLI behavior contract](docs/CLI-CONTRACT.md) describes user-visible behavior.
 - [CI and real-Vault test matrix](docs/CI-CD.md) explains test coverage and blockers.
-- [Revival notes](docs/REVIVAL.md) document the naming, migration and rollout.
+- [Revival notes and planned local playground](docs/REVIVAL.md) document the migration, rollout and proposed Docker Compose + Bash playground for hands-on testing against a disposable TLS Vault.
 
 The CI starts ephemeral real HashiCorp Vault servers with native TLS and
 verifies read/write behavior independently through the Vault HTTP API.
