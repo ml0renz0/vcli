@@ -49,7 +49,7 @@ COVERED_BY = {
 }
 
 
-def declared_commands() -> set[str]:
+def declared_commands() -> set[tuple[str, str]]:
     source = SOURCE.read_text(encoding="utf-8")
     block = re.search(r"declare -A vcli_commands=\(\s*(.*?)\s*\)\s*declare -A vcli_commands_help=", source, re.S)
     if not block:
@@ -68,7 +68,7 @@ class CommandCoverageGate(unittest.TestCase):
             with self.subTest(command=command, suite=suite):
                 path = INTEGRATION / suite
                 self.assertTrue(path.is_file(), str(path))
-                text = path.read_text(encoding="utf-8")
+                text = path.read_text(encoding="utf-8").replace(r"\n", "\n")
                 self.assertRegex(text, r"\bdef test_",
                                  f"{suite} has no executable test methods")
                 self.assertRegex(text, r"(?<![\w-])" + re.escape(command) + r"(?![\w-])",
