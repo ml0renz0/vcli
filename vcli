@@ -237,7 +237,7 @@ function completion(){
         _path=$_option
         unset _option
     fi
-    debug "cmd: $_cmd, option: $_option, path: $_path"
+    debug "completion: command candidate"
     # complete command
     if [[ ! $_path ]]; then
         if ! is_cmd "$_cmd" || [[ ! $_cmd =~ \ $ ]]; then
@@ -252,7 +252,7 @@ function completion(){
             local tmpcmd_so_far cmd_so_far
             if [[ $found == 1 ]]; then
                 cmd="${tmparray[0]} "
-                debug "new_cmd cmd1: $cmd"
+                debug "completion: command prefix"
             elif [[ $found -gt 1 ]]; then
                 echo
                 for p in "${tmparray[@]}"; do
@@ -281,7 +281,7 @@ function completion(){
                     let i=0
                 done
                 cmd="$cmd_so_far"
-                debug "new_cmd cmd+1: $cmd"
+                debug "completion: command completed"
                 unset tmparray tmpcmd_so_far cmd_so_far end
                 prompt
                 return 1
@@ -316,7 +316,7 @@ function completion(){
         local tmpath_so_far path_so_far
         if [[ $found == 1 ]]; then
             cmd="$_cmd $_option $_path${tmparray[0]}"
-            debug "new_cmd path1: $cmd"
+            debug "completion: path prefix"
         elif [[ $found -gt 1 ]]; then
             echo
             for p in "${tmparray[@]}"; do
@@ -345,7 +345,7 @@ function completion(){
                 let i=0
             done
             cmd="$_cmd $_option $_path$path_so_far"
-            debug "new_cmd path+1: $cmd"
+            debug "completion: path completed"
             unset tmparray tmpath_so_far path_so_far end
             prompt
             return 1
@@ -369,7 +369,7 @@ function add_cmd(){
         [[ $old_cmd == "$cmd" ]] || new_history+=( "$old_cmd" )
     done
     cmd_history=( "${new_history[@]}" )
-    debug "add_cmd cmd_history[0]: $cmd"
+    debug "history: command recorded"
 }
 
 # Redraw a command after moving through interactive history.
@@ -478,7 +478,7 @@ function rotate_found_cmds(){
     if [[ ! $search_cmd ]]; then
         search_cmd="$*"
     fi
-    debug "search_next_from: $search_cmd, \$SEARCHIST: $SEARCHIST"
+    debug "history: reverse search"
     if [[ ! $SEARCHIST ]]; then
         # starting vcli search mode. Build a tmp_history with all matching commands
         for (( idx=0 ; idx<=${#cmd_history[@]}-1 ; idx++ )) ; do
@@ -965,7 +965,7 @@ function run_cmd(){
             *)                      commands_help "$cmd" ; return 1 ;;
         esac
         command_status=$?
-        debug "run_cmd: $cmd $arg1 $arg2"
+        debug "run_cmd: $cmd"
         debug "run_cmd: http_code=$http_code"
         add_cmd "$cmd $arg1 $arg2 $arg3"
         if (( command_status != 0 )); then return "$command_status"; fi
@@ -1218,12 +1218,12 @@ function _find(){
             _find "$url/$path" "$data"
         else
             secret=$(_cat "$url/$path" | jq -M -S ".data" | tr -t '\n' ' ' | tr -s ' ')
-            debug "find: '$data' '$url'"
+            debug "find: checking candidate"
             if [[ $secret == "$data" ]]; then
-                debug "find: $secret = $data!"
+                debug "find: candidate matched"
                 padecho "$url/$path" "0" "" ""
             else
-                debug "find: $secret == $data"
+                debug "find: candidate did not match"
             fi
         fi
     done
@@ -1535,7 +1535,7 @@ function _cp(){
     fi
     debug "cp: url=$url dest=$dest"
     secret=$(_cat "$url" | jq ".data" )
-    debug "$secret"
+    debug "cp: payload redacted"
     if vcli_is_kv2_path "$dest"; then
         _put "$dest" "$secret" 0
     else
@@ -1646,7 +1646,7 @@ function _put(){
         url="$current_pwd$1"
     fi
     debug "put: url=$url"
-    debug "data: data=$2"
+    debug "put: payload redacted"
     data=$(mktemp -p "$TMP" -t .put.XXXX)
     if command -v envsubst >/dev/null 2>&1; then
         printf '%s\n' "$2" | envsubst > "$data"
@@ -1664,7 +1664,7 @@ function _put(){
         return
     fi
     url="${url/\/\//\/}"
-    debug "$data"
+    debug "put: request prepared"
     debug "uploading '$data' to '$url'"
     if [[ -z $cas ]] && vcli_is_kv2_path "$url"; then
         local metadata metadata_file
@@ -2279,7 +2279,7 @@ function main(){
                     echo -n "$restcmd"
                     # reposition cursor after backspace only if we moved chars
                     if [[ ${#restcmd} != 0 ]]; then vcli_tput cub ${#restcmd} ; fi
-                    debug "$tmpmsg => ${#cmd}: \"$cmd\""
+                    debug "editor: backspace"
                     debug "pos: $pos, len: $len"
                 fi
             ;;
@@ -2318,7 +2318,7 @@ function main(){
                     is_command="true"
                 else
                     rotate_found_cmds "$cmd"
-                    debug "search_cmd: $search_cmd, \$SEARCHIST: $SEARCHIST"
+                    debug "history: reverse search state"
 
 
                     # move the cursor to the beginning to print the command selected
@@ -2360,7 +2360,7 @@ function main(){
                 tmpmsg="${#cmd}: \"$cmd\""
                 # insert $_key in $pos within $cmd string
                 cmd="${cmd:0:$((pos-2))}$_key${cmd:$((pos-2)):${#cmd}}"
-                debug " => ${#cmd}: \"$cmd\""
+                debug "editor: inserted character"
                 debug "pos: $pos, len: $len"
             ;;
         esac
@@ -2369,7 +2369,7 @@ function main(){
             debug "exiting history search mode"
             unset SEARCHIST search_cmd tmp_history
         fi
-        [[ $DEBUG_HEXDUMP == "yes" ]] && debug "\nhexdump: \n $(echo -n "$_key" | hexdump -C)"
+        [[ $DEBUG_HEXDUMP == "yes" ]] && debug "hexdump: key event redacted"
         # print prompt if commadn was run
         if [[ $is_command ]]; then prompt ; unset is_command cmd pos len history_draft ; history_index=-1 ; pos=1; fi
     done < /dev/stdin
