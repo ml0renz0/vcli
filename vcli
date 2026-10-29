@@ -275,7 +275,7 @@ function completion(){
                     done
                     if [[ ! $end ]]; then
                         cmd_so_far=$tmpcmd_so_far
-                        debug "cmdsofar: $cmd_so_far"
+                        debug "completion: command prefix"
                     fi
                     let n++
                     let i=0
@@ -289,17 +289,17 @@ function completion(){
         fi
     # complete path
     else
-        debug "searching path $_path"
+        debug "completion: searching path"
         _secret=${_path##*/}
-        debug "1 path: $_path, secret: $_secret"
+        debug "completion: inspecting path"
         if [[ $_path != "$_secret" ]]; then
             _path=${_path%$_secret*}
         else
             unset _path
         fi
-        debug "2 path: $_path, secret: $_secret"
+        debug "completion: checking path"
         paths=$(_ls "-_disable_colors_-" "$_path" | tr -t '\n' ' ' | tr -s ' ')
-        debug "DEBUG: $(_ls "-_disable_colors_-" "$_path" | tr -t '\n' ' ' | tr -s ' ')"
+        debug "completion: path list obtained"
 
         backIFS=$IFS
         IFS=$' '
@@ -312,7 +312,7 @@ function completion(){
         IFS=$backIFS
         found=${#tmparray[@]}
         debug "paths_found $found: " "${tmparray[@]}"
-        debug "cmd: $_cmd $_path"
+        debug "completion: resolved candidate"
         local tmpath_so_far path_so_far
         if [[ $found == 1 ]]; then
             cmd="$_cmd $_option $_path${tmparray[0]}"
@@ -339,7 +339,7 @@ function completion(){
                 done
                 if [[ ! $end ]]; then
                     path_so_far=$tmpath_so_far
-                    debug "pathsofar: $path_so_far"
+                    debug "completion: path prefix"
                 fi
                 let n++
                 let i=0
@@ -1665,7 +1665,7 @@ function _put(){
     fi
     url="${url/\/\//\/}"
     debug "put: request prepared"
-    debug "uploading '$data' to '$url'"
+    debug "put: submitting prepared request"
     if [[ -z $cas ]] && vcli_is_kv2_path "$url"; then
         local metadata metadata_file
         metadata=$(vcli_kv2_metadata_path "$url") || return 1
