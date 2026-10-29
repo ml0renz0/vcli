@@ -76,7 +76,7 @@ class SessionCommandContracts(unittest.TestCase):
             marker = f"DO-NOT-LOG-{uuid4().hex}"
             path = f"kv1/vcli-debug-{uuid4().hex[:12]}/payload"
             result, history = invoke(
-                f'enable-debug\\nput {path} {{"password":"{marker}"}}\\ncat {path}',
+                f'enable-debug\nput {path} {{"password":"{marker}"}}\\ncat {path}',
                 env_extra={"VCLI_DEBUGFILE": str(logfile)},
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
