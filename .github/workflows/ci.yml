@@ -44,8 +44,8 @@ jobs:
         run: python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_ci_matrix
       - name: Bash syntax and ShellCheck
         run: |
-          bash -n ./vcli
-          shellcheck --severity=error ./vcli
+          bash -n ./vcli ./scripts/playground.sh ./scripts/playground-seed.sh ./tests/playground/smoke.sh
+          shellcheck --severity=error ./vcli ./scripts/playground.sh ./scripts/playground-seed.sh ./tests/playground/smoke.sh
       - name: Security invariants
         run: python3 tests/integration/test_source_guards.py ./vcli
 
@@ -129,9 +129,34 @@ jobs:
           VCLI_TEST_VAULT_TAG: ${{ matrix.vault }}
         run: bash tests/integration/run.sh
 
+  playground:
+    name: Real Vault TLS playground acceptance
+    needs: static
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install playground dependencies
+        run: |
+          missing=()
+          for cmd in jq curl openssl klist; do
+            command -v "$cmd" >/dev/null || missing+=("$cmd")
+          done
+          if (( ${#missing[@]} )); then
+            for i in "${!missing[@]}"; do
+              [[ ${missing[i]} == klist ]] && missing[i]=krb5-user
+            done
+            sudo apt-get update -qq -o Acquire::Retries=2
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
+          fi
+          docker compose version
+      - name: Lifecycle, full synthetic catalog and real VCLI smoke
+        run: bash tests/playground/smoke.sh
+
   gate:
     name: Required CI gate
-    needs: [static, integration, minimal]
+    needs: [static, integration, minimal, playground]
     if: always()
     runs-on: ubuntu-24.04
     steps:
@@ -140,10 +165,12 @@ jobs:
           STATIC_RESULT: ${{ needs.static.result }}
           INTEGRATION_RESULT: ${{ needs.integration.result }}
           MINIMAL_RESULT: ${{ needs.minimal.result }}
+          PLAYGROUND_RESULT: ${{ needs.playground.result }}
         run: |
           test "$STATIC_RESULT" = success
           test "$INTEGRATION_RESULT" = success
           test "$MINIMAL_RESULT" = success
+          test "$PLAYGROUND_RESULT" = success
 
   package_candidate:
     name: Produce release candidate artifact
