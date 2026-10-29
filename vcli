@@ -3,13 +3,15 @@
 # vcli internal variables
 declare SCRIPTNAME
 SCRIPTNAME="$(basename "$0")"
-declare VERSION="0.6.2"
+declare VERSION="0.6.3-revival"
 declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
-declare DEBUGFILE="/tmp/vcli.debug"
-declare TMP="/tmp"
-declare is_command cmd cmd_history restcmd _key len pos history_index
+declare DEBUGFILE="${VCLI_DEBUGFILE:-$HOME/.vcli.debug}"
+declare TMP="${TMPDIR:-/tmp}"
+# Private temporary data and exported secret files.
+umask 077
+declare is_command cmd cmd_history restcmd _key len pos history_index pending_key
 declare timeout="2" # timeout to verify connection to Vault
 declare http_code
 declare vault_host vault_port vault_token current_pwd
@@ -19,21 +21,34 @@ declare VCLISTORY="$HOME/.vclistory"
 declare pri_suffix="_principal"
 declare crt_suffix="_crt"
 declare key_suffix="_key"
-declare SEARCHIST ENDHIST ADDTMPCMD search_cmd
+declare SEARCHIST ENDHIST ADDTMPCMD search_cmd history_draft
 declare -a cmd_history tmp_history
 declare cert_warning_threshold="30"
 declare cert_critical_threshold="15"
 # vcli dependencies
-declare DEPENDENCIES="curl jq openssl klist bc"
+declare DEPENDENCIES="curl jq mktemp timeout"
 
 # COLOURS
-TAB=$(tput setaf 4; tput bold)
-RED="$(tput setaf 1; tput bold)"
-GREEN="$(tput setaf 2; tput bold)"
-YELLOW="$(tput setaf 3)"
-CYAN="$(tput setaf 6; tput bold)"
-NONE="$(tput sgr0)"
-BOLD="$(tput bold)"
+# Non-interactive shells and minimal containers may lack TERM/tput.
+TAB="" RED="" GREEN="" YELLOW="" CYAN="" NONE="" BOLD=""
+if [[ -t 1 && -n ${TERM:-} && $TERM != dumb ]] && command -v tput >/dev/null 2>&1; then
+    TAB=$(tput setaf 4; tput bold)
+    RED=$(tput setaf 1; tput bold)
+    GREEN=$(tput setaf 2; tput bold)
+    YELLOW=$(tput setaf 3)
+    CYAN=$(tput setaf 6; tput bold)
+    NONE=$(tput sgr0)
+    BOLD=$(tput bold)
+fi
+
+# Rendering is optional on simple TTYs. Never require terminfo/tput to
+# accept commands: basic linear input must work with TERM=dumb or unset.
+# Cursor repaint may be limited on such terminals.
+function vcli_tput(){
+    [[ -t 1 && -n ${TERM:-} && $TERM != dumb ]] || return 0
+    command -v tput >/dev/null 2>&1 || return 0
+    tput "$@" 2>/dev/null || true
+}
 
 # URI encoder
 function urlencode {
@@ -61,13 +76,9 @@ function check_connectivity(){
 
 # check vcli latest version
 function new_version(){
-    local latest_release
-    [[ $disable_prompt ]] && return
-    latest_release="$(timeout 2 curl -s https://api.github.com/repos/mlorenzo-stratio/vcli/releases/latest | jq -r '.tag_name')"
-    if [[ $latest_release && $latest_release != "null" && $VERSION != "$latest_release" ]]; then
-        echo -e "New version available: $latest_release\nYou can download it by running:\n   curl -sL https://github.com/mlorenzo-stratio/vcli/raw/$latest_release/vcli > $0"
-        return 0
-    fi
+    # The original upstream release check is obsolete and adds network traffic.
+    # Keep this function as a compatibility stub; a modern release process can
+    # restore update checks later.
     return 1
 }
 
@@ -104,6 +115,7 @@ declare -A vcli_commands=(
                       [ls]=arg
                       [lsrole]=noarg
                       [showrole]=arg
+                      [renew-token]=arg
                       [lspol]=noarg
                       [showpol]=arg
                       [tree]=arg
@@ -149,6 +161,7 @@ declare -A vcli_commands_help=(
         [ls]="ls path/to/secret \n  lists paths and secrets on $current_pwd/path/to/secret"
         [lsrole]="lsrole \n  lists Vault roles"
         [showrole]="showrole myrole \n  shows Vault role named myrole"
+        [renew-token]="renew-token [increment] \n  renews current Vault token (e.g. 45s, 5m)"
         [lspol]="lspol \n  lists Vault policies"
         [showpol]="showpol mypolicy \n  shows Vault policy named mypolicy"
         [tree]="tree path/to/secret \n  prints vault's secrets tree with $current_pwd/path/to/secret as its root"
@@ -189,29 +202,14 @@ declare -A vcli_commands_help=(
 
 # return whether is a command or not
 function is_cmd(){
-    local cmd=${1%% *}
-    local args=${1#* }
-    if [[ $cmd == "$args" ]]; then unset args; fi
+    local command=${1%% *}
     local args
-    #debug "IS_CMD1: cmd=$cmd args=$args"
-    for command in "${!vcli_commands[@]}"; do
-        #debug "IS_CMD2: command=$command, args=$args"
-        #debug "IS_CMD3: $cmd =~ ^$command$"
-        if [[ $cmd =~ ^$command$ ]]; then
-            if [[ ${vcli_commands[$command]} = "noarg" ]]; then
-                if [[ $args ]]; then
-                    return 1
-                else
-                    #debug "IS_CMD4: MATCHED"
-                    return 0
-                fi
-            fi
-            #debug "IS_CMD4: MATCHED"
-            return 0
-        fi
-    done
-    return 1
+    [[ -n $command && ${vcli_commands[$command]+present} ]] || return 1
+    args=${1#"$command"}
+    # Only noarg commands reject additional non-whitespace arguments.
+    [[ ${vcli_commands[$command]} != noarg || -z ${args//[[:space:]]/} ]]
 }
+
 
 # complete command
 function completion(){
@@ -224,7 +222,7 @@ function completion(){
         _path=$_option
         unset _option
     fi
-    debug "cmd: $_cmd, option: $_option, path: $_path"
+    debug "completion: command candidate"
     # complete command
     if [[ ! $_path ]]; then
         if ! is_cmd "$_cmd" || [[ ! $_cmd =~ \ $ ]]; then
@@ -239,7 +237,7 @@ function completion(){
             local tmpcmd_so_far cmd_so_far
             if [[ $found == 1 ]]; then
                 cmd="${tmparray[0]} "
-                debug "new_cmd cmd1: $cmd"
+                debug "completion: command prefix"
             elif [[ $found -gt 1 ]]; then
                 echo
                 for p in "${tmparray[@]}"; do
@@ -262,13 +260,13 @@ function completion(){
                     done
                     if [[ ! $end ]]; then
                         cmd_so_far=$tmpcmd_so_far
-                        debug "cmdsofar: $cmd_so_far"
+                        debug "completion: command prefix"
                     fi
                     let n++
                     let i=0
                 done
                 cmd="$cmd_so_far"
-                debug "new_cmd cmd+1: $cmd"
+                debug "completion: command completed"
                 unset tmparray tmpcmd_so_far cmd_so_far end
                 prompt
                 return 1
@@ -276,17 +274,17 @@ function completion(){
         fi
     # complete path
     else
-        debug "searching path $_path"
+        debug "completion: searching path"
         _secret=${_path##*/}
-        debug "1 path: $_path, secret: $_secret"
+        debug "completion: inspecting path"
         if [[ $_path != "$_secret" ]]; then
             _path=${_path%$_secret*}
         else
             unset _path
         fi
-        debug "2 path: $_path, secret: $_secret"
+        debug "completion: checking path"
         paths=$(_ls "-_disable_colors_-" "$_path" | tr -t '\n' ' ' | tr -s ' ')
-        debug "DEBUG: $(_ls "-_disable_colors_-" "$_path" | tr -t '\n' ' ' | tr -s ' ')"
+        debug "completion: path list obtained"
 
         backIFS=$IFS
         IFS=$' '
@@ -299,11 +297,11 @@ function completion(){
         IFS=$backIFS
         found=${#tmparray[@]}
         debug "paths_found $found: " "${tmparray[@]}"
-        debug "cmd: $_cmd $_path"
+        debug "completion: resolved candidate"
         local tmpath_so_far path_so_far
         if [[ $found == 1 ]]; then
             cmd="$_cmd $_option $_path${tmparray[0]}"
-            debug "new_cmd path1: $cmd"
+            debug "completion: path prefix"
         elif [[ $found -gt 1 ]]; then
             echo
             for p in "${tmparray[@]}"; do
@@ -326,13 +324,13 @@ function completion(){
                 done
                 if [[ ! $end ]]; then
                     path_so_far=$tmpath_so_far
-                    debug "pathsofar: $path_so_far"
+                    debug "completion: path prefix"
                 fi
                 let n++
                 let i=0
             done
             cmd="$_cmd $_option $_path$path_so_far"
-            debug "new_cmd path+1: $cmd"
+            debug "completion: path completed"
             unset tmparray tmpath_so_far path_so_far end
             prompt
             return 1
@@ -341,79 +339,57 @@ function completion(){
     unset tmparray found
 }
 
-# add $cmd to command history @cmd_history
+# Add a successful command to history. Loading files is handled only by load_history.
 function add_cmd(){
-    local vclistory
-    # If "$1" is a file then process it
-    if [[ -r "$1" ]]; then
-        mapfile -t vclistory < <(sed '1!G;h;$!d' "$1") # read history in reverse
-        cmd_history=( "${vclistory[@]}" )
-    else
-        local cmd
-        cmd="$(echo "$*" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')"
-        is_cmd "$cmd" || return 1
-        local -a new_history
-        new_history=( "$cmd" )
-        for old_cmd in "${cmd_history[@]}"; do
-            if [[ $old_cmd != $"cmd" ]]; then
-                new_history+=( "$old_cmd" )
-            fi
-        done
-        cmd_history=( "${new_history[@]}" )
-        debug "add_cmd cmd_history[0]: $cmd"
+    local cmd old_cmd
+    cmd="$(echo "$*" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')"
+    is_cmd "$cmd" || return 1
+    # Do not persist potentially sensitive command payloads by default.
+    if [[ ${VCLI_HISTORY_SECRETS:-false} != true &&
+          $cmd =~ ^(put|addsecret|replace|delsecret|find)[[:space:]] ]]; then
+        return 0
     fi
+    local -a new_history=( "$cmd" )
+    for old_cmd in "${cmd_history[@]}"; do
+        [[ $old_cmd == "$cmd" ]] || new_history+=( "$old_cmd" )
+    done
+    cmd_history=( "${new_history[@]}" )
+    debug "history: command recorded"
 }
 
-# UP: returns previous cmd in history
+# Redraw a command after moving through interactive history.
+function vcli_redraw_history(){
+    [[ $pos != 1 ]] && vcli_tput cub $((pos-1))
+    vcli_tput el
+    printf '%s' "$cmd"
+    vcli_tput el
+    len=${#cmd}
+    pos=$((len+1))
+}
+
+# UP: browse older commands without adding unfinished input to history.
 function get_prev_cmd(){
-    if [[ ! $ADDTMPCMD ]]; then
-        debug "get_prev add tmp_cmd: $cmd"
-        add_cmd "$cmd"
-        ADDTMPCMD="yes"
+    if (( history_index == -1 )); then
+        history_draft=$cmd
     fi
-    if [[ $history_index -lt $((${#cmd_history[@]}-1)) ]]; then
-        cmd="${cmd_history[$((++history_index))]}"
-        debug "get_prev cmd_history[$((history_index))]: $cmd"
-
-        # move the cursor to the beginning to print the command selected
-        [[ $pos != 1 ]] && tput cub $((pos-1)) # move cursor left to the beginning
-
-        # print the command found in history
-        echo -n "$cmd"
-        tput el # clean to the end of the line
-        let pos=$((${#cmd}+1))
-        let len=${#cmd}
-    else
-        debug "get_next reached oldest cmd: $cmd"
+    if (( history_index + 1 < ${#cmd_history[@]} )); then
+        history_index=$((history_index+1))
+        cmd=${cmd_history[$history_index]}
+        vcli_redraw_history
     fi
 }
 
-# DOWN: returns next cmd in history
+# DOWN: restore the unsent input after the most recent history entry.
 function get_next_cmd(){
-    if [[ $history_index -gt 0 ]]; then
-        cmd="${cmd_history[$((--history_index))]}"
-        debug "get_next cmd_history[$((history_index))]: $cmd"
-
-        # move the cursor to the beginning to print the command selected
-        [[ $pos != 1 ]] && tput cub $((pos-1)) # move cursor left to the beginning
-
-        # print the command found in history
-        echo -n "$cmd"
-        tput el # clean to the end of the line
-        let pos=$((${#cmd}+1))
-        let len=${#cmd}
-    elif [[ ! $ENDHIST ]]; then
-        debug "get_next reached newest cmd: $cmd"
-        unset ADDTMPCMD
-        let history_index=-1
-        cmd=""
-        # move the cursor to the beginning to print the command selected
-        [[ $pos != 1 ]] && tput cub $((pos-1)) # move cursor left to the beginning
-
-        tput el # clean to the end of the line
-        let pos=$((${#cmd}+1))
-        let len=${#cmd}
-        ENDHIST=yes
+    if (( history_index > 0 )); then
+        history_index=$((history_index-1))
+        cmd=${cmd_history[$history_index]}
+        vcli_redraw_history
+    elif (( history_index == 0 )); then
+        history_index=-1
+        cmd=${history_draft:-}
+        unset history_draft
+        vcli_redraw_history
     fi
 }
 
@@ -428,16 +404,40 @@ function get_lastcmd_arg(){
 
 # saves history to $HOME/.vclistory
 function save_history(){
-    : > "$VCLISTORY"
-    for (( idx=${#cmd_history[@]}-1 ; idx>=0 ; idx-- )) ; do
-        echo "${cmd_history[$idx]}" >> "$VCLISTORY"
+    local history_tmp idx
+    # Never write through a symlink or truncate an existing unrelated file.
+    if [[ -L $VCLISTORY || ( -e $VCLISTORY && ! -f $VCLISTORY ) ]]; then
+        printf 'vcli: refusing unsafe history path: %s\n' "$VCLISTORY" >&2
+        return 1
+    fi
+    # A temporary file in the same directory makes replacement atomic and 0600.
+    history_tmp=$(mktemp "${VCLISTORY}.XXXXXXXX") || return 1
+    chmod 600 "$history_tmp" || { rm -f -- "$history_tmp"; return 1; }
+    for (( idx=${#cmd_history[@]}-1 ; idx>=0 ; idx-- )); do
+        if ! printf '%s\n' "${cmd_history[idx]}" >> "$history_tmp"; then
+            rm -f -- "$history_tmp"
+            return 1
+        fi
     done
+    # Recheck, and use rename rather than opening the target for writing.
+    if [[ -L $VCLISTORY || ( -e $VCLISTORY && ! -f $VCLISTORY ) ]]; then
+        rm -f -- "$history_tmp"
+        printf 'vcli: refusing unsafe history path: %s\n' "$VCLISTORY" >&2
+        return 1
+    fi
+    mv -f -- "$history_tmp" "$VCLISTORY" || { rm -f -- "$history_tmp"; return 1; }
 }
 
 # loads history from $HOME/.vclistory
 function load_history(){
-    [[ ! -e $VCLISTORY ]] && return
-    add_cmd "$VCLISTORY"
+    [[ ! -L $VCLISTORY && -f $VCLISTORY && -r $VCLISTORY ]] || return 0
+    local -a loaded=()
+    local idx
+    mapfile -t loaded < "$VCLISTORY" || return 1
+    cmd_history=()
+    for (( idx=${#loaded[@]}-1; idx>=0; idx-- )); do
+        [[ -n ${loaded[idx]} ]] && cmd_history+=( "${loaded[idx]}" )
+    done
 }
 
 # loads history from $HOME/.vclistory
@@ -463,25 +463,33 @@ function rotate_found_cmds(){
     if [[ ! $search_cmd ]]; then
         search_cmd="$*"
     fi
-    debug "search_next_from: $search_cmd, \$SEARCHIST: $SEARCHIST"
+    debug "history: reverse search"
     if [[ ! $SEARCHIST ]]; then
         # starting vcli search mode. Build a tmp_history with all matching commands
         for (( idx=0 ; idx<=${#cmd_history[@]}-1 ; idx++ )) ; do
-            if [[ "${cmd_history[$idx]}" =~ $search_cmd ]]; then
+            if [[ "${cmd_history[$idx]}" == *"$search_cmd"* ]]; then
                 tmp_history+=( "${cmd_history[$idx]}" )
             fi
             [[ ! $SEARCHIST ]] && SEARCHIST="0"
         done
+        if (( ${#tmp_history[@]} == 0 )); then
+            unset SEARCHIST search_cmd tmp_history
+            return 1
+        fi
         # print first command found
         # if another Ctrl+r is hit next item will be printed
         debug "\${#tmp_history}=${#tmp_history[@]}"
-        debug "\${tmp_history[$SEARCHIST]}=\"${tmp_history[$SEARCHIST]}"\"
+        debug "history search entry selected"
         cmd="${tmp_history[$SEARCHIST]}"
     else
         let SEARCHIST++
+        if (( ${#tmp_history[@]} == 0 )); then
+            unset SEARCHIST search_cmd tmp_history
+            return 1
+        fi
         SEARCHIST=$((SEARCHIST%(${#tmp_history[@]})))
         debug "\${#tmp_history}=${#tmp_history[@]}"
-        debug "\${tmp_history[$SEARCHIST]}=\"${tmp_history[$SEARCHIST]}"\"
+        debug "history search entry selected"
         cmd="${tmp_history[$SEARCHIST]}"
     fi
 }
@@ -549,90 +557,314 @@ function clean_n_exit(){
     # if ! head -n 1 /proc/1/sched | grep -qE "(systemd|init)"; then
     #   reset
     # fi
-    if [[ ! $http_code =~ ^2 ]]; then exit_status=1 ; fi
+    if [[ -n $http_code && ! $http_code =~ ^2 ]]; then exit_status=1 ; fi
     exit $exit_status
 }
 
 # Run command and prettyfy stdout
+# _run used eval on interpolated HTTP commands; replaced by safe curl arrays.
 function _run(){
-    local exit_status
-    if [[ $VERBOSE == yes ]]; then
-        local tmp
-        tmp=$(mktemp -p /dev/shm -t .run.XXXX)
-        eval "$*" 2> "$tmp" # store stderr in $tmp
-        exit_status=$?
-        while IFS=$'\n' read -r line; do
-            debug "     $line"
-        done < "$tmp"
-        rm -f "$tmp"
-    else
-        eval "$*" 2> /dev/null
-        exit_status=$?
+    echo "Internal error: legacy _run is no longer supported" >&2
+    return 1
+}
+
+# Map legacy paths to KV v2 HTTP paths when opted in.
+# VAULT_KV_VERSION=2 VAULT_KV_MOUNTS=secret,teams/config
+# Resolve the longest configured KV v2 mount; nested mounts take precedence.
+# Writes the match to VCLI_KV_MOUNT in the calling shell, avoiding subshell state.
+function vcli_match_kv2_mount(){
+    VCLI_KV_MOUNT=""
+    [[ ${VAULT_KV_VERSION:-1} == 2 ]] || return 1
+    local path="${1#/}" mount
+    local -a mounts
+    IFS=',' read -r -a mounts <<< "${VAULT_KV_MOUNTS:-secret}"
+    for mount in "${mounts[@]}"; do
+        mount="${mount#/}"; mount="${mount%/}"
+        [[ -n $mount && $path == "$mount/"* ]] || continue
+        if (( ${#mount} > ${#VCLI_KV_MOUNT} )); then
+            VCLI_KV_MOUNT=$mount
+        fi
+    done
+    [[ -n $VCLI_KV_MOUNT ]]
+}
+
+function vcli_is_kv2_path(){
+    vcli_match_kv2_mount "$1"
+}
+
+function vcli_kv2_metadata_path(){
+    local mount rest
+    vcli_match_kv2_mount "$1" || return 1
+    mount=$VCLI_KV_MOUNT
+    rest="${1#/}"
+    rest="${rest#"$mount/"}"
+    printf '/%s/metadata/%s\n' "$mount" "$rest"
+}
+
+function vcli_kv_path(){
+    local path="${1#/}" method="$2" mount rest
+    vcli_match_kv2_mount "$path" || { printf '%s' "$path"; return; }
+    mount=$VCLI_KV_MOUNT
+    rest="${path#"$mount/"}"
+    case "$rest" in
+        data/*|metadata/*|delete/*) printf '%s' "$path"; return;;
+    esac
+    case "$method" in
+        LIST) printf '%s/metadata/%s' "$mount" "$rest" ;;
+        GET|POST|PUT|PATCH|DELETE) printf '%s/data/%s' "$mount" "$rest" ;;
+        *) printf '%s' "$path";;
+    esac
+}
+
+# Encode path components but do not encode / or the query delimiter ?.
+function vcli_encode_endpoint(){
+    local raw="${1#/}" path query seg result="" encoded
+    path="${raw%%\?*}"
+    local -a segments
+    IFS='/' read -r -a segments <<< "$path"
+    for seg in "${segments[@]}"; do
+        encoded=$(urlencode "$seg") || return 1
+        if [[ -n $result ]]; then result+='/'; fi
+        result+="$encoded"
+    done
+    # Preserve trailing / for root listing and folders.
+    [[ $path == */ && -n $result ]] && result+='/';
+    if [[ $raw == *\?* ]]; then
+        query="${raw#*\?}"
+        result+="?$query"
     fi
-    return $exit_status
+    printf '%s' "$result"
+}
+
+# Report partial application without pretending multi-request Vault changes are atomic.
+function _vcli_partial_failure(){
+    local operation="$1" completed="$2" total="$3" current="$4"
+    if (( completed > 0 )); then
+        printf 'vcli: PARTIAL %s completed=%d total=%d failed=%s; no rollback performed\n' \
+            "$operation" "$completed" "$total" "$current" >&2
+    else
+        printf 'vcli: FAILED %s completed=0 total=%d failed=%s\n' \
+            "$operation" "$total" "$current" >&2
+    fi
+    return 1
+}
+
+# Common read-only recursion for KV mounts; failures propagate to callers.
+function _vcli_absolute_path(){
+    local path="$1"
+    [[ -n $path ]] || return 1
+    [[ $path == /* ]] || path="${current_pwd%/}/$path"
+    path="/${path#/}"
+    while [[ $path == *'//'* ]]; do path="${path//\/\//\/}"; done
+    path="${path%/}"
+    [[ $path != *'/../'* && $path != *'/./'* && $path != */.. && $path != */. ]] || return 1
+    printf '%s\n' "$path"
+}
+function _vcli_children(){
+    local response
+    response=$(_curl "${1%/}/" "" LIST) || return 1
+    jq -e '(.data.keys | type) == "array"' <<< "$response" >/dev/null || return 1
+    jq -r '.data.keys[]' <<< "$response"
+}
+function _vcli_leaves(){
+    local root="$1" entries child
+    entries=$(_vcli_children "$root") || return 1
+    while IFS= read -r child; do
+        [[ -n $child ]] || continue
+        if [[ $child == */ ]]; then
+            _vcli_leaves "${root%/}/${child%/}" || return 1
+        else
+            printf '%s\n' "${root%/}/$child"
+        fi
+    done <<< "$entries"
+}
+
+# AppRole login uses the same TLS verification as ordinary Vault calls.
+# Never print role_id, secret_id or the resulting client token.
+function _vcli_login_approle(){
+    local role_id="${VAULT_ROLE_ID:-}" secret_id="${VAULT_SECRET_ID:-}" response_file payload_file code status
+    [[ -n $role_id && -n $secret_id ]] || {
+        echo "vcli: incomplete AppRole credentials" >&2; return 1;
+    }
+    response_file=$(mktemp -p "$TMP" .vcli.auth.XXXXXX) || return 1
+    payload_file=$(mktemp -p "$TMP" .vcli.auth-data.XXXXXX) || {
+        rm -f "$response_file"; return 1;
+    }
+    jq -cn --arg rid "$role_id" --arg sid "$secret_id"         '{role_id:$rid,secret_id:$sid}' > "$payload_file" || {
+        rm -f "$response_file" "$payload_file"; return 1;
+    }
+    local -a args=(--silent --show-error --connect-timeout "${VCLI_CONNECT_TIMEOUT:-2}"
+        --max-time "${VCLI_HTTP_TIMEOUT:-30}" --request POST
+        --header "Content-Type: application/json" --data-binary "@$payload_file"
+        --output "$response_file" --write-out '%{http_code}')
+    case "${VAULT_SKIP_VERIFY:-false}" in 1|true|TRUE|yes|YES) args+=(--insecure);; esac
+    [[ -n ${VAULT_CACERT:-} ]] && args+=(--cacert "$VAULT_CACERT")
+    [[ -n ${VAULT_CAPATH:-} ]] && args+=(--capath "$VAULT_CAPATH")
+    # Mutual TLS is opt-in; a half-configured pair must never silently
+    # fall back to an unauthenticated client certificate handshake.
+    if [[ -n ${VAULT_CLIENT_CERT:-} || -n ${VAULT_CLIENT_KEY:-} ]]; then
+        if [[ -z ${VAULT_CLIENT_CERT:-} || -z ${VAULT_CLIENT_KEY:-} ]]; then
+            echo "vcli: both VAULT_CLIENT_CERT and VAULT_CLIENT_KEY are required" >&2
+            rm -f "$response_file"
+            return 1
+        fi
+        args+=(--cert "$VAULT_CLIENT_CERT" --key "$VAULT_CLIENT_KEY")
+    fi
+    [[ -n ${VAULT_NAMESPACE:-} ]] && args+=(--header "X-Vault-Namespace: $VAULT_NAMESPACE")
+    status=$(curl "${args[@]}" "$protocol://$vault_host:$vault_port/v1/auth/approle/login")
+    code=$?
+    rm -f "$payload_file"
+    if (( code != 0 )) || [[ $status != 2* ]]; then
+        rm -f "$response_file"
+        echo "vcli: AppRole login failed" >&2
+        return 1
+    fi
+    vault_token=$(jq -er '.auth.client_token | select(type=="string" and length>0)' "$response_file") || {
+        rm -f "$response_file"
+        echo "vcli: invalid AppRole response" >&2
+        return 1
+    }
+    rm -f "$response_file"
+}
+function _renew_token(){
+    local increment="${1:-}" payload response
+    if [[ -n $increment && ! $increment =~ ^[0-9]+(s|m|h)?$ ]]; then
+        echo "vcli: invalid renewal increment" >&2; return 1;
+    fi
+    payload=$(mktemp -p "$TMP" .vcli.renew.XXXXXX) || return 1
+    if [[ -n $increment ]]; then
+        jq -cn --arg value "$increment" '{increment:$value}' > "$payload"
+    else
+        printf '{}\n' > "$payload"
+    fi
+    response=$(_curl "/auth/token/renew-self" "$payload" POST) || {
+        echo "vcli: token renewal failed" >&2; return 1;
+    }
+    jq -e '.auth.renewable == true' <<< "$response" >/dev/null || {
+        echo "vcli: token is not renewable" >&2; return 1;
+    }
+    echo "Vault token renewed"
 }
 
 # simplified curl function
 function _curl(){
-    local enable_f="-f"
-    local tmp
-    if [[ "$1" == "-_disable_-f_-" ]]; then
-        unset enable_f
-        shift
-    elif [[ "$1" == "-i" ]]; then
-        local ignore_http_code="true"
-        shift
-    elif [[ "$1" == "" ]]; then
-        shift
+    local ignore_http_code=no disable_fail=no
+    while :; do
+        case "${1:-}" in
+            -i) ignore_http_code=yes; shift;;
+            -_disable_-f_-) disable_fail=yes; shift;;
+            '') shift; break;;
+            *) break;;
+        esac
+    done
+    local path="${1#/}" data="${2:-}" method="${3:-GET}" cas="${4:-}"
+    local kv2=no mount rest
+    if vcli_match_kv2_mount "$path"; then
+        mount=$VCLI_KV_MOUNT
+        rest="${path#"$mount/"}"
+        # Already-explicit Vault API paths must not be wrapped a second time.
+        if [[ $rest != data/* && $rest != metadata/* && $rest != delete/* ]]; then
+            case "$method" in GET|POST|PUT|PATCH|DELETE|LIST)
+                kv2=yes
+                path=$(vcli_kv_path "$path" "$method")
+                ;;
+            esac
+        fi
     fi
-    local endpoint
-    endpoint="$(urlencode "${1#/}")" # remove initial '/' if exists
-    local data="$2"
-    local response
-    if [[ "$data" == "-_list_root_-" ]]; then
-        ROOT_QUERY="yes"
-    fi
-    # POST, GET, PUT, PATCH, DELETE
-    # http://www.restapitutorial.com/lessons/httpmethods.html
-    local method="${3:-GET}"
-    debug "curl: _curl '$1' '$2' '$3'"
-    if [[ $data ]]; then
-        if [[ "$VERBOSE" = "yes" ]]; then
-            debug "url: $protocol://$vault_host:$vault_port/v1/$endpoint\nmethod: $method\ndata:$data"
-        fi
-        mapfile -t response < <(_run "/usr/bin/curl -w \"%{http_code}\n\" -s $enable_f -k -L -X$method -H \"X-Vault-Token:$vault_token\" \
-                      -H 'Content-type: application/json' \
-                      -d @\"$data\" \
-                      \"$protocol://$vault_host:$vault_port/v1/$endpoint\"")
-        if [[ -f "$data" ]]; then
-            rm -fr "$data"
-        fi
-    else
-        if [[ "$VERBOSE" = "yes" ]]; then
-            debug "url: $protocol://$vault_host:$vault_port/v1/$endpoint\nmethod: $method"
-        fi
-        mapfile -t response < <(_run "/usr/bin/curl -w \"%{http_code}\n\" -s $enable_f -k -L -X$method -H \"X-Vault-Token:$vault_token\" \
-                      -H 'Content-type: application/json' \
-                      \"$protocol://$vault_host:$vault_port/v1/$endpoint\"")
-    fi
-    #debug "response_mapfile: ${response[0]} # ${response[1]}"
-    if [[ ! "$ignore_http_code" ]]; then
-        if [[ ! ${response[1]} ]]; then
-            http_code="${response[0]}"
-        else
-            if [[ $ROOT_QUERY ]]; then
-                echo "${response[0]}" | jq '.data | keys[]' -r
-            else
-                echo "${response[0]}" | jq '' -r
-            fi
-            http_code="${response[1]}"
-        fi
-        debug "curl: http_code=$http_code"
-        if [[ ! "$http_code" =~ ^2 ]]; then
+
+    local encoded url response_file payload_file="" payload="" status curl_status
+    encoded=$(vcli_encode_endpoint "$path") || return 1
+    url="$protocol://$vault_host:$vault_port/v1/$encoded"
+    response_file=$(mktemp -p "$TMP" .vcli.response.XXXXXX) || return 1
+    local -a args=(--silent --show-error --connect-timeout "${VCLI_CONNECT_TIMEOUT:-2}"
+                  --max-time "${VCLI_HTTP_TIMEOUT:-30}" --request "$method"
+                  --output "$response_file" --write-out '%{http_code}'
+                  --header @- --header 'Content-Type: application/json')
+    case "${VAULT_SKIP_VERIFY:-false}" in 1|true|TRUE|yes|YES) args+=(--insecure);; esac
+    [[ -n ${VAULT_CACERT:-} ]] && args+=(--cacert "$VAULT_CACERT")
+    [[ -n ${VAULT_CAPATH:-} ]] && args+=(--capath "$VAULT_CAPATH")
+    # Mutual TLS is opt-in; a half-configured pair must never silently
+    # fall back to an unauthenticated client certificate handshake.
+    if [[ -n ${VAULT_CLIENT_CERT:-} || -n ${VAULT_CLIENT_KEY:-} ]]; then
+        if [[ -z ${VAULT_CLIENT_CERT:-} || -z ${VAULT_CLIENT_KEY:-} ]]; then
+            echo "vcli: both VAULT_CLIENT_CERT and VAULT_CLIENT_KEY are required" >&2
+            rm -f "$response_file"
             return 1
         fi
+        args+=(--cert "$VAULT_CLIENT_CERT" --key "$VAULT_CLIENT_KEY")
     fi
-    unset ROOT_QUERY response
+    [[ -n ${VAULT_NAMESPACE:-} ]] && args+=(--header "X-Vault-Namespace: $VAULT_NAMESPACE")
+
+    if [[ -n $data && $data != '-_list_root_-' ]]; then
+        if [[ ! -f $data ]]; then
+            echo "vcli: request payload file missing: $data" >&2
+            rm -f "$response_file"
+            return 1
+        fi
+        payload="$data"
+        if [[ $kv2 == yes && ( $method == POST || $method == PUT || $method == PATCH ) ]]; then
+            payload_file=$(mktemp -p "$TMP" .vcli.payload.XXXXXX) || return 1
+            if [[ -n $cas ]]; then
+                if ! jq -c --argjson cas "$cas" '{data: ., options: {cas: $cas}}' "$data" > "$payload_file"; then
+                    rm -f "$response_file" "$payload_file"
+                    return 1
+                fi
+            elif ! jq -c '{data: .}' "$data" > "$payload_file"; then
+                rm -f "$response_file" "$payload_file"
+                return 1
+            fi
+            payload="$payload_file"
+        fi
+        args+=(--data-binary "@$payload")
+    fi
+    debug "request: $method $url"
+    # Supply the Vault token over stdin, not as a process-list argument.
+    # --header @- is supported by modern curl versions.
+    status=$(printf 'X-Vault-Token: %s\n' "$vault_token" | curl "${args[@]}" "$url")
+    curl_status=$?
+    [[ -n $payload_file ]] && rm -f "$payload_file"
+    [[ -n $data && $data != '-_list_root_-' && -f $data ]] && rm -f "$data"
+    if (( curl_status != 0 )); then
+        http_code="000"
+        # A write may have committed before its HTTP response was lost.
+        # Never blindly retry non-idempotent operations on transport errors.
+        if [[ $method == POST || $method == PUT || $method == PATCH || $method == DELETE ]]; then
+            printf 'vcli: OUTCOME_UNKNOWN method=%s path=/%s; verify Vault state before retrying\n' "$method" "$path" >&2
+        fi
+        [[ $ignore_http_code == no ]] && cat "$response_file" >&2
+        rm -f "$response_file"
+        return 1
+    fi
+    if [[ $ignore_http_code == no ]]; then
+        http_code="$status"
+        # A successful HTTP status is not sufficient for a read. A truncated,
+        # empty or non-object response must fail closed, not fall back to cat.
+        if [[ $status == 2* && ( $method == GET || $method == LIST ) ]]; then
+            if [[ ! -s $response_file ]] ||
+               ! jq -e 'type == "object"' "$response_file" >/dev/null 2>&1; then
+                echo "vcli: invalid or empty JSON from Vault" >&2
+                rm -f "$response_file"
+                return 1
+            fi
+        fi
+        if [[ $data == '-_list_root_-' ]]; then
+            jq -r '.data | keys[]' "$response_file" || {
+                rm -f "$response_file"; return 1;
+            }
+        elif [[ -s $response_file ]]; then
+            if [[ $kv2 == yes && $method == GET && $status == 2* && $cas != raw ]]; then
+                jq 'if (.data.data | type) == "object" then .data = .data.data else . end' "$response_file" || {
+                    rm -f "$response_file"; return 1;
+                }
+            else
+                jq '.' "$response_file" || {
+                    rm -f "$response_file"; return 1;
+                }
+            fi
+        fi
+    fi
+    rm -f "$response_file"
+    [[ $status == 2* || $disable_fail == yes ]]
 }
 
 # run command entered in CLI
@@ -652,20 +884,22 @@ function run_cmd(){
             commands_help "$cmd"
             return 1
         fi
+        local command_status=0
         case $cmd in
             cd)                     _cd "$arg1" ;;
             ls)                     _ls "$arg1" ;;
             lsrole)                 _lsrole ;;
             showrole)               _showrole "$arg1" ;;
+            renew-token)            _renew_token "$arg1" ;;
             lspol)                  _lspol ;;
             showpol)                _showpol "$arg1" ;;
-            tree)                   backIFS=$IFS; IFS=$' ' ; _tree "$arg1" ; IFS=$backIFS;;
-            find)                   backIFS=$IFS; IFS=$' ' ; _find "$arg1" "$arg2 $arg3" ; IFS=$backIFS;;
-            replace)                backIFS=$IFS; IFS=$' ' ; _replace "$arg1" "$arg2 $arg3" ; IFS=$backIFS;;
-            cptree)                 backIFS=$IFS; IFS=$' ' ; _cptree "$arg1" "$arg2" ; IFS=$backIFS;;
-            rmtree)                 backIFS=$IFS; IFS=$' ' ; _rmtree "$arg1" "$arg2"; IFS=$backIFS;;
-            backup)                 backIFS=$IFS; IFS=$' ' ; _backup "$arg1" ; IFS=$backIFS;;
-            restore)                backIFS=$IFS; IFS=$' ' ; _restore "$arg1" ; IFS=$backIFS;;
+            tree)                   backIFS=$IFS; IFS=$' ' ; _tree "$arg1"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
+            find)                   backIFS=$IFS; IFS=$' ' ; _find "$arg1" "$arg2 $arg3"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
+            replace)                backIFS=$IFS; IFS=$' ' ; _replace "$arg1" "$arg2 $arg3"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
+            cptree)                 backIFS=$IFS; IFS=$' ' ; _cptree "$arg1" "$arg2"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
+            rmtree)                 backIFS=$IFS; IFS=$' ' ; _rmtree "$arg1" "$arg2" || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
+            backup)                 backIFS=$IFS; IFS=$' ' ; _backup "$arg1"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
+            restore)                backIFS=$IFS; IFS=$' ' ; _restore "$arg1"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
             cat)                    _cat "$arg1" ;;
             put)                    _put "$arg1" "$arg2 $arg3" ;;
             addsecret)              _addsecret "$arg1" "$arg2 $arg3" ;;
@@ -704,9 +938,11 @@ function run_cmd(){
             \#*)                    return;; # ignore commented lines
             *)                      commands_help "$cmd" ; return 1 ;;
         esac
-        debug "run_cmd: $cmd $arg1 $arg2"
+        command_status=$?
+        debug "run_cmd: $cmd"
         debug "run_cmd: http_code=$http_code"
         add_cmd "$cmd $arg1 $arg2 $arg3"
+        if (( command_status != 0 )); then return "$command_status"; fi
     done< <(echo "$fullcmd")
 }
 
@@ -729,13 +965,14 @@ function _mount(){
         else
             url="/sys/mounts$url"
         fi
-        data=$(mktemp -p /dev/shm -t .put.XXXX)
-        echo "{ \"type\": \"generic\", \"description\": \"$url secret backend\" }" > "$data"
+        data=$(mktemp -p "$TMP" -t .put.XXXX)
+        jq -nc --arg d "$url secret backend" --arg v "${VAULT_KV_VERSION:-1}" '{type:"kv",description:$d,options:{version:$v}}' > "$data"
         if [[ $ignore_http_code ]]; then
             _curl -i "$url" "$data" "POST"
         else
             _curl "$url" "$data" "POST"
         fi
+        [[ ${http_code:-} == 2* ]] || return 1
         echo "mounted '$url'"
     fi
 }
@@ -822,11 +1059,11 @@ function _ls(){
         method="LIST"
     fi
     if [[ $disable_colors ]]; then
-        tmp=$(mktemp -p /dev/shm -t ls.XXXX)
+        tmp=$(mktemp -p "$TMP" -t ls.XXXX)
         _curl $ignore_http_code "$url" "" "$method" > "$tmp"
         jq '.data .keys[]' -r < "$tmp"
     else
-        tmp=$(mktemp -p /dev/shm -t ls.XXXX)
+        tmp=$(mktemp -p "$TMP" -t ls.XXXX)
         _curl $ignore_http_code "$url" "" "$method" > "$tmp"
         jq '.data .keys[]' -r < "$tmp" | sed -e "s/\//$CYAN\/$NONE/"
     fi
@@ -836,7 +1073,7 @@ function _ls(){
 # lsrole list roles
 function _lsrole(){
     local tmp
-    tmp=$(mktemp -p /dev/shm -t lsrole.XXXX)
+    tmp=$(mktemp -p "$TMP" -t lsrole.XXXX)
     _cat /auth/approle/role?list=true > "$tmp"
     jq '.data .keys[]' -r < "$tmp"
     rm "$tmp"
@@ -853,37 +1090,36 @@ function _showrole(){
         commands_help "${funcname//_/}"
         return
     fi
-    tmp=$(mktemp -p /dev/shm -t showrole.XXXX)
+    tmp=$(mktemp -p "$TMP" -t showrole.XXXX)
     _cat /auth/approle/role/"$role" > "$tmp"
     echo -n "policies: "
-    jq ".data .policies[]" -r < "$tmp"
+    jq -r '(.data.token_policies // .data.policies // [])[]' < "$tmp"
     rm "$tmp"
 }
 
 # lspol list policies
 function _lspol(){
     local tmp
-    tmp=$(mktemp -p /dev/shm -t lspol.XXXX)
-    _cat /sys/policy > "$tmp"
-    jq '.data .policies[]' -r < "$tmp"
-    rm "$tmp"
+    tmp=$(mktemp -p "$TMP" .vcli.policies.XXXXXX) || return 1
+    if ! _curl /sys/policies/acl "" LIST > "$tmp"; then
+        cat "$tmp" >&2; rm -f "$tmp"; return 1
+    fi
+    jq -r '(.data.keys // .keys // [])[]' "$tmp"
+    rm -f "$tmp"
 }
 
 # showpol list policy rules
 function _showpol(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local policy="$1"
-    local tmp
-    if [[ ! $policy ]]; then
-        echo "Error! Missing policy"
-        commands_help "${funcname//_/}"
-        return
+    local policy="$1" tmp
+    if [[ -z $policy ]]; then
+        echo "Error! Missing policy" >&2; return 1
     fi
-    tmp=$(mktemp -p /dev/shm -t showpol.XXXX)
-    _cat /sys/policy/"$policy" > "$tmp"
-    jq ".data .rules" -r < "$tmp" | tr -d '\\' | tr -s ' ' | sed -e "s/}/ }\n/g" -e "s/^[[:space:]]\+//"
-    rm "$tmp"
+    tmp=$(mktemp -p "$TMP" .vcli.policy.XXXXXX) || return 1
+    if ! _curl "/sys/policies/acl/$policy" > "$tmp"; then
+        cat "$tmp" >&2; rm -f "$tmp"; return 1
+    fi
+    jq -r '.data.policy // .policy // empty' "$tmp"
+    rm -f "$tmp"
 }
 
 function padecho(){
@@ -956,12 +1192,12 @@ function _find(){
             _find "$url/$path" "$data"
         else
             secret=$(_cat "$url/$path" | jq -M -S ".data" | tr -t '\n' ' ' | tr -s ' ')
-            debug "find: '$data' '$url'"
+            debug "find: checking candidate"
             if [[ $secret == "$data" ]]; then
-                debug "find: $secret = $data!"
+                debug "find: candidate matched"
                 padecho "$url/$path" "0" "" ""
             else
-                debug "find: $secret == $data"
+                debug "find: candidate did not match"
             fi
         fi
     done
@@ -969,340 +1205,217 @@ function _find(){
 
 # find in $1 and replace secret $2 with new secret $3
 function _replace(){
-    local url
-    if [[ ! $1 =~ ^/ ]]; then
-        url="$current_pwd$1"
-    else
-        url=${1//\/\//\/}
-    fi
-    shift
-    if [[ ! $url =~ /$ ]]; then
-        url+="/"
-    fi
-    debug "replace2: url=$url"
-    debug "replace3: rest=\"$*\""
-    local data
-    data="$(echo "${@%\{*}" | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
-    local newdata
-    newdata="$(echo "${@#*\}}" | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
-    debug "replaceX: data=${*%\{*}"
-    debug "replaceX: newdata=${*#*\}}"
-    # if $url is /
-    paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
-
-    debug "replace1: url=$url, data=\"$data\", newdata=\"$newdata\""
-    for path in $paths; do
-        if [[ $path =~ /$ ]]; then
-            _replace "$url/$path" "$data$newdata"
+    local root pairs expected replacement leaves leaf response
+    root=$(_vcli_absolute_path "$1") || { echo "Invalid replace path" >&2; return 1; }
+    pairs=$(printf '%s\n' "$2" | jq -sc 'if length == 2 and all(.[]; type == "object") then . else error("expected two objects") end') || return 1
+    expected=$(jq -c '.[0]' <<< "$pairs") || return 1
+    replacement=$(jq -c '.[1]' <<< "$pairs") || return 1
+    leaves=$(_vcli_leaves "$root") || return 1
+    while IFS= read -r leaf; do
+        [[ -n $leaf ]] || continue
+        local version=""
+        if vcli_is_kv2_path "$leaf"; then
+            response=$(_curl "$leaf" "" GET raw) || return 1
+            version=$(jq -er '.data.metadata.version' <<< "$response") || return 1
+            response=$(jq -c '{data: .data.data}' <<< "$response") || return 1
         else
-            secret=$(_cat "$url$path" | jq -M -S ".data" | tr -t '\n' ' ' | tr -s ' ')
-            debug "replace: '$data' => '$newdata' on '$url'"
-            if [[ $secret == "$data" ]]; then
-                debug "replace: $secret = $data!"
-                _put "$url$path" "$newdata"
-                padecho "$url$path" "0" "" ""
-            else
-                debug "replace: $secret == $data"
-            fi
+            response=$(_cat "$leaf") || return 1
         fi
-    done
+        if jq -e --argjson expected "$expected" '.data == $expected' <<< "$response" >/dev/null; then
+            _put "$leaf" "$replacement" "$version" || return 1
+            printf '%s\n' "$leaf"
+        fi
+    done <<< "$leaves"
 }
 
 # copy secret tree to another location
 function _cptree(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url
-    if [[ ! $1 =~ ^/ ]]; then
-        url="$current_pwd$1"
-    else
-        url=${1//\/\//\/}
+    local source dest leaves leaf relative response payload
+    source=$(_vcli_absolute_path "$1") || { echo "Invalid source" >&2; return 1; }
+    dest=$(_vcli_absolute_path "$2") || { echo "Invalid destination" >&2; return 1; }
+    [[ $source != "$dest" && $dest != "$source/"* ]] || {
+        echo "Destination must be outside source tree" >&2; return 1;
+    }
+    leaves=$(_vcli_leaves "$source") || return 1
+    # Preflight *every* destination first. In KV v2 metadata survives soft
+    # deletion, so checking /data alone could resurrect a deleted secret.
+    local target probe mount rest metadata_path
+    local -a kv_mounts=()
+    if [[ ${VAULT_KV_VERSION:-1} == 2 ]]; then
+        IFS=',' read -r -a kv_mounts <<< "${VAULT_KV_MOUNTS:-secret}"
     fi
-    local first
-    local dest="$2"
-    local depth="$3"
-    local space="$4"
-    local echo_space="$5"
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    if [[ ! $dest ]]; then
-        echo "Error! Missing destination"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    # If no "$2" was passed then this iteration is the very first one, so depth=0
-    if [[ ! $depth ]]; then
-        depth=0
-        first="yes"
-        echo -n "Copying tree from '$url' to '$dest'"
-    # other wise we increment a depth as we go deeper in the structure
-    else
-        unset first
-        let depth++
-    fi
-    debug "${echo_space}cptree: '$url', depth: $depth, space: \"$space\""
-    # if $url is /
-    #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
-    paths=$(_ls "-_disable_colors_-" "$url" | sed -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-
-    for path in $paths; do
-        debug "${echo_space}   depth: $depth => found: $paths"
-        space=${space/+/ }
-        if [[ $path =~ /$ ]]; then
-            local _path="$url/$path"
-            _path=${_path//\/\//\/}
-            _cptree "$_path" "$dest" "$depth" "$space+ " "$echo_space   " &
+    while IFS= read -r leaf; do
+        [[ -n $leaf ]] || continue
+        relative="${leaf#"$source"/}"
+        target="$dest/$relative"
+        metadata_path=""
+        for mount in "${kv_mounts[@]}"; do
+            mount="${mount#/}"; mount="${mount%/}"
+            if [[ $target == "/$mount/"* ]]; then
+                rest="${target#"/$mount/"}"
+                metadata_path="/$mount/metadata/$rest"
+                break
+            fi
+        done
+        if [[ -n $metadata_path ]]; then
+            probe="$metadata_path"
         else
-            _mount -i "$dest" > /dev/null 2>&1
-            if [[ ! $url =~ /$ ]]; then
-                url+="/"
-            fi
-            if [[ ! $dest =~ /$ ]]; then
-                dest+="/"
-            fi
-            _cp "$url$path" "$dest$path"
-            echo -n "."
+            probe="$target"
         fi
-    done
-    wait
-    if [[ $first ]]; then
-        echo " done"
-    fi
+        if _curl "$probe" >/dev/null; then
+            echo "Destination already exists: $target" >&2
+            return 1
+        elif [[ $http_code != 404 ]]; then
+            echo "Unable to verify destination: $target (HTTP $http_code)" >&2
+            return 1
+        fi
+    done <<< "$leaves"
+    local completed=0 total=0
+    while IFS= read -r leaf; do [[ -n $leaf ]] && (( total+=1 )); done <<< "$leaves"
+    while IFS= read -r leaf; do
+        [[ -n $leaf ]] || continue
+        relative="${leaf#"$source"/}"
+        response=$(_cat "$leaf") || {
+            _vcli_partial_failure cptree "$completed" "$total" "$leaf"; return 1;
+        }
+        payload=$(jq -ce '.data | select(type == "object")' <<< "$response") || {
+            _vcli_partial_failure cptree "$completed" "$total" "$leaf"; return 1;
+        }
+        if vcli_is_kv2_path "$dest/$relative"; then
+            _put "$dest/$relative" "$payload" 0
+        else
+            _put "$dest/$relative" "$payload"
+        fi || {
+            _vcli_partial_failure cptree "$completed" "$total" "$dest/$relative"; return 1;
+        }
+        (( completed+=1 ))
+    done <<< "$leaves"
+    printf "Copied tree from '%s' to '%s'\n" "$source" "$dest"
 }
 
 # removes recursively a vault path
 function _rmtree(){
-    local funcname question
-    funcname="${FUNCNAME[0]}"
-    local url
-    local question="yes"
-    if [[ "$1" == -f ]]; then
-        unset question
-        shift
+    local forced=no root leaves leaf answer
+    if [[ ${1:-} == -f ]]; then forced=yes; shift; fi
+    root=$(_vcli_absolute_path "${1:-}") || { echo "Missing or invalid tree path" >&2; return 1; }
+    case "$root" in
+        /|/sys|/sys/*|/auth|/auth/*|/identity|/identity/*|/cubbyhole|/cubbyhole/*)
+            echo "Refusing to delete a reserved Vault path" >&2; return 1;;
+    esac
+    [[ ${root#/} == */* ]] || { echo "Refusing to delete a whole mount" >&2; return 1; }
+    leaves=$(_vcli_leaves "$root") || return 1
+    if [[ $forced != yes ]]; then
+        [[ -r /dev/tty ]] || { echo "Use rmtree -f for batch mode" >&2; return 1; }
+        read -r -p "Remove secrets beneath '$root'? (yes/no): " answer </dev/tty || return 1
+        [[ $answer == yes ]] || return 1
     fi
-    if [[ ! $1 =~ ^/ ]]; then
-        url="$current_pwd$1/"
-    else
-        url=${1//\/\//\/}
-    fi
-    if [[ ! $url =~ /$ ]]; then
-        url+='/'
-    fi
-    local first
-    local depth="$2"
-    local space="$3"
-    local echo_space="$4"
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    # If no "$2" was passed then this iteration is the very first one, so depth=0
-    if [[ ! $depth ]]; then
-        depth=0
-        first="yes"
-        if [[ $question ]]; then
-            question="Do you want to remove $url? (yes/no): "
-            while read -p "$question" ANSWER </dev/tty; do
-                if [[ "$ANSWER" == "no" ]]; then
-                    return
-                elif [[ "$ANSWER" == "yes" ]]; then
-                    break
-                fi
-                question="Please type 'yes' or 'no': "
-            done
-        fi
-        echo -n "Removing recursively '$url'"
-    # other wise we increment a depth as we go deeper in the structure
-    else
-        let depth++
-    fi
-    debug "${echo_space}rmtree: '$url', depth: $depth, space: \"$space\""
-    # if $url is /
-    #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
-    paths=$(_ls "-_disable_colors_-" "$url" | sed -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-
-    for path in $paths; do
-        debug "${echo_space}   depth: $depth => found: $paths"
-        space=${space/+/ }
-        if [[ $path =~ /$ ]]; then
-            local _path="$url/$path"
-            _path=${_path//\/\//\/}
-            _rmtree "$_path" "$depth" "$space+ " "$echo_space   " &
-        else
-            _rm "/$url$path"
-            echo -n "."
-        fi
-    done
-    wait
-    if [[ $first ]]; then
-        _umount -i "$url" > /dev/null 2>&1
-        echo " done"
-    fi
+    local completed=0 total=0
+    while IFS= read -r leaf; do [[ -n $leaf ]] && (( total+=1 )); done <<< "$leaves"
+    while IFS= read -r leaf; do
+        [[ -n $leaf ]] || continue
+        _rm "$leaf" || {
+            _vcli_partial_failure rmtree "$completed" "$total" "$leaf"; return 1;
+        }
+        (( completed+=1 ))
+    done <<< "$leaves"
+    printf "Removed secrets beneath '%s'\n" "$root"
 }
 
 # backup vault
 function _backup(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url backupath
-    if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd/$1"
+    local root leaves leaf response payload dir archive relative
+    root=$(_vcli_absolute_path "${1:-}") || { echo "Missing backup path" >&2; return 1; }
+    [[ $root != / && ${root#/} == */* ]] || {
+        echo "Backup requires a path within a secrets mount" >&2; return 1;
+    }
+    dir=$(mktemp -d -p "$TMP" .vcli-backup.XXXXXX) || return 1
+    archive="$TMP/backup_vault_${root//\//-}.$(date +%s).tgz"
+    if response=$(_cat "$root" 2>/dev/null); then
+        leaves="$root"
     else
-        url="$1"
+        leaves=$(_vcli_leaves "$root") || { rm -rf -- "$dir"; return 1; }
     fi
-    url=${url//\/\//\/}
-    backupath=${url//\//-}
-    backupath=${backupath#-}
-    backupath=${backupath%-}
-    if [[ $1 == "" ]]; then
-        url="/"
+    while IFS= read -r leaf; do
+        [[ -n $leaf ]] || continue
+        response=$(_cat "$leaf") || { rm -rf -- "$dir"; return 1; }
+        payload=$(jq -ce '.data | select(type == "object")' <<< "$response") || {
+            rm -rf -- "$dir"; return 1;
+        }
+        relative="${leaf#/}"
+        mkdir -p -- "$dir/$(dirname "$relative")" || { rm -rf -- "$dir"; return 1; }
+        printf '%s\n' "$payload" > "$dir/$relative" || { rm -rf -- "$dir"; return 1; }
+    done <<< "$leaves"
+    if ! tar -czf "$archive" -C "$dir" .; then
+        rm -f -- "$archive"
+        rm -rf -- "$dir"
+        return 1
     fi
-    local first
-    local dest="$2"
-    local depth="$3"
-    local space="$4"
-    local echo_space="$5"
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    # Check for $url existence
-    if [[ "$url" == ".." ]]; then
-        debug "${echo_space}Error! '$url' doesn't exist or contains no secrets. Relative references like '..' are not supported"
-        return
-    fi
-    if [[ ! $dest ]]; then
-        if [[ $url != "/" ]]; then
-            dest="$(mktemp -d -p /dev/shm -t backup_vault_"$backupath"."$(date +%d-%m-%Y@%H:%M:%S)".XXXX)"
-            destfile="$TMP/backup_vault_$backupath.$(date +%d-%m-%Y@%H:%M:%S).tgz"
-        else
-            dest="$(mktemp -d -p /dev/shm -t backup_vault."$(date +%d-%m-%Y@%H:%M:%S)".XXXX)"
-            destfile="$TMP/backup_vault.$(date +%d-%m-%Y@%H:%M:%S).tgz"
-        fi
-    fi
-    debug "backup url=$url"
-    local old_http_code=$http_code
-    _cat "$url" > /dev/null
-    if [[ $http_code == "200" ]]; then
-        first="yes"
-        debug "backup: $url is NOT a folder"
-        mkdir -p "$(dirname "$dest/$url")"
-        echo -n "Backing up Vault to '$destfile'"
-        _cat "$url" | jq '.data' > "$dest/$url"
-    else
-        http_code=$old_http_code
-        _ls "-_disable_colors_-" "$url" > /dev/null
-        if [[ $http_code != "200" ]]; then
-            echo "'$url' does not exist"
-            return
-        fi
-        debug "backup: $url is a folder"
-        debug "${echo_space}backup: '$url', depth: $depth, dest: $dest, space: \"$space\""
-        # If no depth was passed then this iteration is the very first one, so depth=0
-        if [[ ! $depth ]]; then
-            depth=0
-            first="yes"
-            echo -n "Backing up Vault to '$destfile'"
-            if [[ $url != "/" ]]; then
-                mkdir -p "$dest/$url"
-            fi
-        # other wise we increment a depth as we go deeper in the structure
-        else
-            unset first
-            let depth++
-        fi
-        # if $url is /
-        #padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
-        paths=$(_ls "-_disable_colors_-" "$url" | sed -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-        debug "${echo_space}   depth: $depth => found: $paths"
-        for path in $paths; do
-            space=${space/+/ }
-            if [[ $path =~ /$ ]]; then
-                _backup "$url$path" "$dest" "$depth" "$space+ " "$echo_space   " &
-            else
-                mkdir -p "$dest/$url"
-                debug "${echo_space}   backup: $url$path => $dest/$url/$path"
-                _cat "$url/$path" | jq '.data' > "$dest/$url/$path"
-                echo -n "."
-            fi
-        done
-    fi
-    wait
-    if [[ $first ]]; then
-        cd "$dest" || return
-        debug "backup: $url => $destfile"
-        tar cfz "$destfile" ./* > /dev/null
-        rm -fr "$dest"
-        echo " done"
-    fi
+    rm -rf -- "$dir"
+    printf "Vault backup created: %s\n" "$archive"
 }
 
 # restore vault backup
 function _restore(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local backup folder mount _url
-    backup="$1"
-    if [[ ! -r $backup ]]; then
-        echo "Error! Missing backup file"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    local first
-    local folder="$2"
-    local _url="$3"
-    local depth="$4"
-    local space="$5"
-    local echo_space="$6"
-    # If no depth was passed then this iteration is the very first one, so depth=0
-    if [[ ! $depth ]]; then
-        depth=0
-        first="yes"
-        echo -n "Restoring Vault backup from '$backup'"
-        folder="$(mktemp -d -p /dev/shm -t backup_vault-"$(date +%d-%m-%Y@%H:%M:%S)".XXXX)"
-        cd "$folder"
-        if ! tar xfz "$backup" > /dev/null 2>&1; then
-            echo "Error while extracting backup '$backup'"
-            rm -fr "$folder"
-            return
+    local archive="${1:-}" listing entry relative payload types entry_type
+    [[ -f $archive && -r $archive ]] || { echo "Missing backup file" >&2; return 1; }
+    listing=$(tar -tzf "$archive") || return 1
+    types=$(tar -tvzf "$archive") || return 1
+    while IFS= read -r entry_type; do
+        [[ -n $entry_type ]] || continue
+        case "${entry_type:0:1}" in -|d) :;; *)
+            echo "Unsupported archive member type" >&2; return 1;;
+        esac
+    done <<< "$types"
+    # Validate every entry before writing anything; never extract to the local disk.
+    while IFS= read -r entry; do
+        [[ -n $entry ]] || continue
+        relative="${entry#./}"
+        case "$relative" in
+            ""|.|*/) continue ;;
+            /*|..|../*|*/../*|*/..|./*|*/./*|*/.)
+                echo "Unsafe archive path: $entry" >&2; return 1;;
+        esac
+        case "$relative" in
+            sys/*|auth/*|identity/*|cubbyhole/*)
+                echo "Refusing administrative path" >&2; return 1;;
+        esac
+        [[ $relative == */* && $relative != *'//'* ]] || {
+            echo "Invalid archive path: $entry" >&2; return 1;
+        }
+    done <<< "$listing"
+    # Full preflight before any write: reject duplicate paths and non-object JSON.
+    local -A seen_entries=()
+    while IFS= read -r entry; do
+        [[ -n $entry ]] || continue
+        relative="${entry#./}"
+        [[ -n $relative && $relative != . && $relative != */ ]] || continue
+        if [[ -v seen_entries["$relative"] ]]; then
+            echo "Duplicate archive member: $relative" >&2; return 1
         fi
-    # other wise we increment a depth as we go deeper in the structure
-    else
-        unset first
-        let depth++
-        cd "$folder"
-    fi
-    debug "${echo_space}restore: '$backup', folder: $folder, _url: $_url depth: $depth, space: \"$space\""
-    paths=$(find . -maxdepth 1 -not -iname "." | tr -t '\n' ' ')
-
-    debug "${echo_space}   depth: $depth => found: $paths"
-    for path in $paths; do
-        path=${path/.\/}
-        space=${space/+/ }
-        if [[ -d $path ]]; then
-            mount=$(echo "$_url" | sed -e "s/^\(\/[^/]\+\).*$/\1/")
-            if [[ $mount ]]; then
-                debug "${echo_space}   mount: $mount"
-                _mount -i "$mount" > /dev/null 2>&1
-            fi
-            _restore "$backup" "$PWD/$path" "$_url/$path" "$depth" "$space+ " "$echo_space   " &
-        else
-            debug "${echo_space}   put $_url/$path $(tr -d '\n' < "$PWD/$path" | tr -s ' ')"
-            _put "$_url/$path" "$(tr -d '\n' < "$PWD/$path" | tr -s ' ')"
-            echo -n "."
-        fi
-    done
-    wait
-    if [[ $first ]]; then
-        echo " done"
-    else
-        cd ..
-    fi
+        seen_entries["$relative"]=1
+        payload=$(tar -xOzf "$archive" "$entry") || return 1
+        jq -e 'type == "object"' <<< "$payload" >/dev/null || {
+            echo "Invalid JSON object in archive: $relative" >&2; return 1;
+        }
+    done <<< "$listing"
+    local completed=0 total=0
+    while IFS= read -r entry; do
+        relative="${entry#./}"
+        [[ -n $relative && $relative != . && $relative != */ ]] && (( total+=1 ))
+    done <<< "$listing"
+    while IFS= read -r entry; do
+        [[ -n $entry ]] || continue
+        relative="${entry#./}"
+        [[ -n $relative && $relative != . && $relative != */ ]] || continue
+        payload=$(tar -xOzf "$archive" "$entry") || {
+            _vcli_partial_failure restore "$completed" "$total" "$relative"; return 1;
+        }
+        _put "/$relative" "$payload" || {
+            _vcli_partial_failure restore "$completed" "$total" "$relative"; return 1;
+        }
+        (( completed+=1 ))
+    done <<< "$listing"
+    printf "Vault backup restored: %s\n" "$archive"
 }
 
 # cat function
@@ -1338,50 +1451,38 @@ function _cat(){
 
 # addsecret function
 function _addsecret(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd$url"
+    local url="$1" additions="$2" snapshot version merged current
+    url=$(_vcli_absolute_path "$url") || return 1
+    [[ -n $additions ]] || { echo "Missing secret data" >&2; return 1; }
+    if vcli_is_kv2_path "$url"; then
+        snapshot=$(_curl "$url" "" GET raw) || return 1
+        version=$(jq -er '.data.metadata.version | select(type=="number")' <<< "$snapshot") || return 1
+        current=$(jq -ce '.data.data | select(type=="object")' <<< "$snapshot") || return 1
+    else
+        snapshot=$(_cat "$url") || return 1
+        current=$(jq -ce '.data | select(type=="object")' <<< "$snapshot") || return 1
+        version=""
     fi
-    local data="$2"
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    if [[ ! $data ]]; then
-        echo "Error! Missing secret data"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    secret=$(_cat "$url" | jq ".data" | tr -d '\n')
-    data="${secret/\}},${data/\{}"
-    debug "addsecret: url=$url $secret => $data"
-    _put "$url" "$data"
+    merged=$(jq -cn --argjson cur "$current" --argjson add "$additions" '$cur + $add') || return 1
+    _put "$url" "$merged" "$version"
 }
 
 # delsecret function
 function _delsecret(){
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd$url"
+    local url="$1" key="$2" snapshot version current updated
+    url=$(_vcli_absolute_path "$url") || return 1
+    [[ -n $key ]] || { echo "Missing key" >&2; return 1; }
+    if vcli_is_kv2_path "$url"; then
+        snapshot=$(_curl "$url" "" GET raw) || return 1
+        version=$(jq -er '.data.metadata.version | select(type=="number")' <<< "$snapshot") || return 1
+        current=$(jq -ce '.data.data | select(type=="object")' <<< "$snapshot") || return 1
+    else
+        snapshot=$(_cat "$url") || return 1
+        current=$(jq -ce '.data | select(type=="object")' <<< "$snapshot") || return 1
+        version=""
     fi
-    local key="$2"
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    if [[ ! $key ]]; then
-        echo "Error! Missing key"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    secret=$(_cat "$url" | jq ".data|del(.\"$key\")" | tr -d '\n')
-    debug "delsecret: url=$url $key"
-    _put "$url" "$secret"
+    updated=$(jq -cn --argjson obj "$current" --arg key "$key" '$obj | del(.[$key])') || return 1
+    _put "$url" "$updated" "$version"
 }
 
 # cp function
@@ -1408,55 +1509,110 @@ function _cp(){
     fi
     debug "cp: url=$url dest=$dest"
     secret=$(_cat "$url" | jq ".data" )
-    debug "$secret"
-    _put "$dest" "$secret"
+    debug "cp: payload redacted"
+    if vcli_is_kv2_path "$dest"; then
+        _put "$dest" "$secret" 0
+    else
+        _put "$dest" "$secret"
+    fi
 }
 
 # mv function
 function _mv(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    local dest="$2"
-    if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd$url"
+    local source destination snapshot source_version payload dest_result latest latest_version
+    source=$(_vcli_absolute_path "${1:-}") || return 1
+    destination=$(_vcli_absolute_path "${2:-}") || return 1
+    [[ $source != "$destination" ]] || { echo "Cannot move to same path" >&2; return 1; }
+
+    # KV v1 has no version-specific delete; retain historical behavior.
+    if ! vcli_is_kv2_path "$source"; then
+        _cp "$source" "$destination" && _rm "$source"
+        return $?
     fi
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "${funcname//_/}"
-        return
+
+    # Snapshot the exact version to be copied, including nested KV2 mounts.
+    snapshot=$(_curl "$source" "" GET raw) || return 1
+    source_version=$(jq -er '.data.metadata.version | select(type=="number")' <<< "$snapshot") || return 1
+    payload=$(jq -ce '.data.data | select(type=="object")' <<< "$snapshot") || return 1
+
+    # Moving between engines is permitted; KV2 destination uses create-only CAS.
+    if vcli_is_kv2_path "$destination"; then
+        _put "$destination" "$payload" 0 || return 1
+    else
+        _put "$destination" "$payload" || return 1
     fi
-    if [[ ! $dest =~ ^/ ]]; then
-        dest="$current_pwd$dest"
+
+    # After the copy, re-read the origin to detect an intervening writer.
+    latest=$(_curl "$source" "" GET raw) || {
+        _vcli_partial_failure mv 1 2 "$source"; return 1;
+    }
+    latest_version=$(jq -er '.data.metadata.version | select(type=="number")' <<< "$latest") || {
+        _vcli_partial_failure mv 1 2 "$source"; return 1;
+    }
+    if [[ $latest_version != "$source_version" ]]; then
+        echo "vcli: source changed during move; destination contains copied version" >&2
+        _vcli_partial_failure mv 1 2 "$source"
+        return 1
     fi
-    if [[ ! $dest ]]; then
-        echo "Error! Missing destination"
-        commands_help "${funcname//_/}"
-        return
+
+    # KV2 /delete only marks the given version, NEVER a later current version.
+    # This cannot be made atomic with the destination write.
+    local mount metadata path_file delete_path
+    metadata=$(vcli_kv2_metadata_path "$source") || {
+        _vcli_partial_failure mv 1 2 "$source"; return 1;
+    }
+    delete_path="${metadata/\/metadata\//\/delete\/}"
+    path_file=$(mktemp -p "$TMP" .vcli-delete.XXXXXX) || {
+        _vcli_partial_failure mv 1 2 "$source"; return 1;
+    }
+    printf '{"versions":[%s]}\n' "$source_version" > "$path_file"
+    _curl "$delete_path" "$path_file" POST || {
+        _vcli_partial_failure mv 1 2 "$source"; return 1;
+    }
+    # A newer version may have been created immediately before the deletion.
+    # Detect it; never claim the whole move was successful in that case.
+    local after after_version
+    after=$(_curl "$metadata") || {
+        _vcli_partial_failure mv 1 2 "$source"; return 1;
+    }
+    after_version=$(jq -er '.data.current_version | select(type=="number")' <<< "$after") || {
+        _vcli_partial_failure mv 1 2 "$source"; return 1;
+    }
+    if [[ $after_version != "$source_version" ]]; then
+        echo "vcli: source advanced during version-specific deletion" >&2
+        _vcli_partial_failure mv 1 2 "$source"
+        return 1
     fi
-    debug "mv: url=$url dest=$dest"
-    _cp "$url" "$dest" && _rm "$url"
+    printf "Moved version %s from '%s' to '%s'\n" "$source_version" "$source" "$destination"
 }
 
 # rm function
 function _rm(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd$1"
+    local path snapshot version metadata delete_path payload after after_version
+    path=$(_vcli_absolute_path "${1:-}") || return 1
+    if ! vcli_is_kv2_path "$path"; then
+        _curl "$path" "" DELETE
+        return $?
     fi
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "${funcname//_/}"
-        return
+    # Read the live version, not the whole metadata history.
+    snapshot=$(_curl "$path" "" GET raw) || return 1
+    version=$(jq -er '.data.metadata.version | select(type=="number")' <<< "$snapshot") || return 1
+    metadata=$(vcli_kv2_metadata_path "$path") || return 1
+    delete_path="${metadata/\/metadata\//\/delete\/}"
+    payload=$(mktemp -p "$TMP" .vcli-delete.XXXXXX) || return 1
+    printf '{"versions":[%s]}\n' "$version" > "$payload"
+    _curl "$delete_path" "$payload" POST || return 1
+    after=$(_curl "$metadata") || return 1
+    after_version=$(jq -er '.data.current_version | select(type=="number")' <<< "$after") || return 1
+    if [[ $after_version != "$version" ]]; then
+        printf 'vcli: source advanced during version-specific delete: %s\n' "$path" >&2
+        return 1
     fi
-    debug "rm: url=$url"
-    _curl "$url" "" "DELETE"
 }
 
 # put function
 function _put(){
+    local cas="${3:-}"
     local funcname
     funcname="${FUNCNAME[0]}"
     local url="$1"
@@ -1464,9 +1620,13 @@ function _put(){
         url="$current_pwd$1"
     fi
     debug "put: url=$url"
-    debug "data: data=$2"
-    data=$(mktemp -p /dev/shm -t .put.XXXX)
-    echo "$2" | envsubst > "$data"
+    debug "put: payload redacted"
+    data=$(mktemp -p "$TMP" -t .put.XXXX)
+    if command -v envsubst >/dev/null 2>&1; then
+        printf '%s\n' "$2" | envsubst > "$data"
+    else
+        printf '%s\n' "$2" > "$data"
+    fi
     if [[ ! $url ]]; then
         echo "Error! Missing secret path"
         commands_help "${funcname//_/}"
@@ -1478,592 +1638,444 @@ function _put(){
         return
     fi
     url="${url/\/\//\/}"
-    debug "$data"
-    debug "uploading '$data' to '$url'"
-    _curl "$url" "$data" "POST"
+    debug "put: request prepared"
+    debug "put: submitting prepared request"
+    if [[ -z $cas ]] && vcli_is_kv2_path "$url"; then
+        local metadata metadata_file
+        metadata=$(vcli_kv2_metadata_path "$url") || return 1
+        metadata_file=$(mktemp -p "$TMP" .vcli.metadata.XXXXXX) || return 1
+        # Preserve _curl's HTTP status in this shell (not a subshell).
+        if _curl "$metadata" > "$metadata_file"; then
+            cas=$(jq -er '.data.current_version | select(type=="number")' "$metadata_file") || {
+                rm -f "$metadata_file"; return 1;
+            }
+        elif [[ $http_code == 404 ]]; then
+            cas=0
+        else
+            rm -f "$metadata_file"
+            echo "vcli: unable to read KV v2 metadata before write" >&2
+            return 1
+        fi
+        rm -f "$metadata_file"
+    fi
+    _curl "$url" "$data" "POST" "$cas"
 }
 
 # validate and show principals and keytab info
 function _krbinfo(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    local tmp tmp2 _keys
-    # Get principals and store them in ${princs[@]}
-    declare -A princs
-    if [[ ! $url ]]; then
-        echo "Error! Missing keytab path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    tmp=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
-    _cat "$url" > "$tmp"
-    eval "$(jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" -r < "$tmp" | sed -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
-    backIFS=$IFS
-    IFS=$' '
-    _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
-    for _key in $_keys ; do
-        local value=${princs[$_key]}
-        _key="\"${_key}_keytab\""
-        tmp2=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
-        jq ".data .${_key}" -r < "$tmp" | base64 -d > "$tmp2"
-        echo -en "\n${BOLD}principal$NONE: $CYAN${value//\"/}$NONE"
-        if ! klist -kt "$tmp2" | grep -v "Keytab name:" | grep -q "$value"; then
-            echo -e " ${RED}NOT FOUND${NONE} ${BOLD}in keytab!${NONE}"
-        else
-            echo
-        fi
-        klist -kte "$tmp2" | grep -v "Keytab name:"
-        rm -f "$tmp2"
+    local data stem principal
+    data=$(_vcli_pki_json "${1:-}") || return 1
+    _vcli_krb_pairs "$data" || return 1
+    local -a stems
+    mapfile -t stems < <(jq -r 'keys[] | select(endswith("_principal")) | .[:-10]' <<< "$data")
+    for stem in "${stems[@]}"; do
+        principal=$(jq -er --arg k "${stem}_principal" '.[$k]' <<< "$data") || return 1
+        printf 'principal: %s\n' "$principal" "$1"
     done
-    rm -f "$tmp"
-    IFS=$backIFS
 }
 
 # download keytab to /tmp
-function _getkrb(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    local tmp tmp2 _keys
-    # Get principals and store them in ${princs[@]}
-    declare -A princs
-    if [[ ! $url ]]; then
-        echo "Error! Missing keytab path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    tmp=$(mktemp -p /dev/shm -t .getkrb.XXXX)
-    _cat "$url" > "$tmp"
-    eval "$(jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" -r < "$tmp" | sed -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
-    backIFS=$IFS
-    IFS=$' '
-    _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
-    echo "Exporting keytabs..."
-    for _key in $_keys ; do
-        value=${princs[$_key]}
-        value=${value//\"/}
-        _key="\"${_key}_keytab\""
-        tmp2=$(mktemp -p /dev/shm -t .getkrb.XXXX)
-        jq ".data .${_key}" -r < "$tmp" | base64 -d > "$tmp2"
-        echo "  - ${value} exported to '$TMP/${value//\//_}.keytab'"
-        cp "$tmp2" "$TMP/${value//\//_}.keytab"
-        rm -f "$tmp2"
+function _vcli_krb_pairs(){
+    local data="$1" stem principal encoded file
+    local -a stems
+    mapfile -t stems < <(jq -r 'keys[] | select(endswith("_principal")) | .[:-10]' <<< "$data")
+    (( ${#stems[@]} )) || return 1
+    for stem in "${stems[@]}"; do
+        [[ $stem =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $stem != *..* ]] || return 1
+        principal=$(jq -er --arg k "${stem}_principal" '.[$k] | select(type=="string")' <<< "$data") || return 1
+        [[ $principal =~ ^[A-Za-z0-9._/-]+@[A-Za-z0-9._-]+$ && $principal != *..* ]] || return 1
+        encoded=$(jq -er --arg k "${stem}_keytab" '.[$k] | select(type=="string")' <<< "$data") || return 1
+        file=$(mktemp -p "$TMP" .vcli-krb.XXXXXX) || return 1
+        if ! printf '%s' "$encoded" | base64 --decode > "$file" 2>/dev/null ||
+           ! klist -kt "$file" 2>/dev/null | grep -Fq "$principal"; then
+            rm -f "$file"
+            echo "vcli: invalid keytab or principal" >&2
+            return 1
+        fi
+        rm -f "$file"
     done
-    echo "done."
-    rm -f "$tmp"
-    IFS=$backIFS
+    (( $(jq '[keys[] | select(endswith("_keytab"))] | length' <<< "$data") == ${#stems[@]} ))
 }
+function _getkrb() (
+    local data stem principal encoded stage="" i=0 destination
+    # A dedicated subshell owns the staging directory. EXIT runs on normal
+    # failure and on catchable TERM/INT, including errors during decoding.
+    trap '[[ -z ${stage:-} ]] || rm -rf -- "$stage"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    data=$(_vcli_pki_json "${1:-}") || return 1
+    _vcli_krb_pairs "$data" || return 1
+    local -a stems destinations=()
+    mapfile -t stems < <(jq -r 'keys[] | select(endswith("_principal")) | .[:-10]' <<< "$data")
+    for stem in "${stems[@]}"; do
+        principal=$(jq -er --arg k "${stem}_principal" '.[$k]' <<< "$data") || return 1
+        destinations+=("$TMP/${principal//\//_}.keytab")
+    done
+    _vcli_export_preflight "${destinations[@]}" || return 1
 
+    stage=$(mktemp -d -- "${TMP%/}/.vcli-export.XXXXXXXX") || return 1
+    for stem in "${stems[@]}"; do
+        encoded=$(jq -er --arg k "${stem}_keytab" '.[$k]' <<< "$data") || {
+            rm -rf -- "$stage"; return 1;
+        }
+        # Decode into a private staged inode, never into the final pathname.
+        if ! (set -o pipefail; printf '%s' "$encoded" |
+              base64 --decode > "$stage/$i"); then
+            rm -rf -- "$stage"
+            echo "vcli: keytab staging failed" >&2
+            return 1
+        fi
+        i=$((i+1))
+    done
+    _vcli_export_publish "$stage" "${destinations[@]}" || return 1
+    for destination in "${destinations[@]}"; do
+        printf 'Exported %s\n' "$destination"
+    done
+)
 # validate that crt and key match and show certificate info
 function _certinfo(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    local _CRT _KEY
-    if [[ ! $url ]]; then
-        echo "Error! Missing cert path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    local _certs _cert shacrt _keys _key shakey
-    tmp=$(mktemp -p /dev/shm -t .certinfo.XXXX)
-    _cat "$url" > "$tmp"
-    backIFS=$IFS
-    IFS=$' '
-    _certs=( $(jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
-    _keys=( $(jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
-    for ((n=0;n<${#_certs[@]};n++)); do
-        _cert=${_certs[$n]}
-        _key=${_keys[$n]}
-        debug "jq .data .$_cert -r < $tmp"
-        _CRT=$(jq ".data .$_cert" -r < "$tmp" | \
-                      sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
-                          -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
-                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
-        debug "jq .data .$_key -r < $tmp"
-        _KEY=$(jq ".data .$_key" -r < "$tmp" | \
-                      sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
-                          -e 's/-----BEGIN PRIVATE KEY-----/-----BEGIN PRIVATE KEY-----\n/g' \
-                          -e 's/-----END PRIVATE KEY-----/\n-----END PRIVATE KEY-----/g' \
-                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
-        shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
-        shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
-        echo -en "\n${BOLD}certificate${NONE}: $CYAN${_cert//\"/}${NONE}"
-        if [[ "$shacrt" != "$shakey" ]]; then
-            echo -e " ${RED}DOESN'T MATCH${NONE} ${BOLD}${_key//\"/}${NONE}"
-        else
-            echo
-        fi
-        echo -e "$_CRT" | openssl x509 -text -noout
+    local data stem crt
+    data=$(_vcli_pki_json "${1:-}") || return 1
+    _vcli_cert_pairs "$data" || return 1
+    local -a stems
+    mapfile -t stems < <(jq -r 'keys[] | select(endswith("_crt")) | .[:-4]' <<< "$data")
+    for stem in "${stems[@]}"; do
+        crt=$(jq -er --arg k "${stem}_crt" '.[$k]' <<< "$data") || return 1
+        printf '%s\n' "$crt" | openssl x509 -text -noout || return 1
     done
-    rm -f "$tmp"
-    IFS=$backIFS
 }
 
 # print principal of kerberos secret
 function _getprinc(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    local tmp tmp2 _keys
-    # Get principals and store them in ${princs[@]}
-    declare -A princs
-    if [[ ! $url ]]; then
-        echo "Error! Missing keytab path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    tmp=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
-    _cat "$url" > "$tmp"
-    eval "$(jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" -r < "$tmp" | sed -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
-    backIFS=$IFS
-    IFS=$' '
-    _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
-    for _key in $_keys ; do
-        local value=${princs[$_key]}
-        _key="\"${_key}_keytab\""
-        tmp2=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
-        jq ".data .${_key}" -r < "$tmp" | base64 -d > "$tmp2"
-        echo -en "${value}"
-        if ! klist -kt "$tmp2" | grep -v "Keytab name:" | grep -q "$value"; then
-            echo -e " ${RED}NOT FOUND${NONE} ${BOLD}in keytab!${NONE}"
-        else
-            echo
-        fi
-        rm -f "$tmp2"
-    done | sort -u
-    rm -f "$tmp"
-    IFS=$backIFS
+    local data stem principal
+    data=$(_vcli_pki_json "${1:-}") || return 1
+    _vcli_krb_pairs "$data" || return 1
+    local -a stems
+    mapfile -t stems < <(jq -r 'keys[] | select(endswith("_principal")) | .[:-10]' <<< "$data")
+    for stem in "${stems[@]}"; do
+        principal=$(jq -er --arg k "${stem}_principal" '.[$k]' <<< "$data") || return 1
+        printf '%s\n' "$principal"
+    done
 }
 
 # print CN and SAN of certificate secret
 function _getsan(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    local _CRT _KEY
-    if [[ ! $url ]]; then
-        echo "Error! Missing cert path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    local _certs _cert shacrt _keys _key shakey
-    tmp=$(mktemp -p /dev/shm -t .certinfo.XXXX)
-    _cat "$url" > "$tmp"
-    backIFS=$IFS
-    IFS=$' '
-    _certs=( $(jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
-    _keys=( $(jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
-    for ((n=0;n<${#_certs[@]};n++)); do
-        _cert=${_certs[$n]}
-        _key=${_keys[$n]}
-        debug "jq .data .$_cert -r < $tmp"
-        _CRT=$(jq ".data .$_cert" -r < "$tmp" | \
-                      sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
-                          -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
-                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
-        debug "jq .data .$_key -r < $tmp"
-        _KEY=$(jq ".data .$_key" -r < "$tmp" | \
-                      sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
-                          -e 's/-----BEGIN PRIVATE KEY-----/-----BEGIN PRIVATE KEY-----\n/g' \
-                          -e 's/-----END PRIVATE KEY-----/\n-----END PRIVATE KEY-----/g' \
-                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
-        shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
-        shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
-        echo -en "CN:"
-        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject:.*CN.*=[[:space:]]*" | sed -e "s/^.*CN.*=[[:space:]]*//" | tr -d '\n'
-        echo -en ", "
-        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject Alternative Name" -A1 | tail -1 | sed -e "s/^\s*//"
+    local data stem crt
+    data=$(_vcli_pki_json "${1:-}") || return 1
+    _vcli_cert_pairs "$data" || return 1
+    local -a stems
+    mapfile -t stems < <(jq -r 'keys[] | select(endswith("_crt")) | .[:-4]' <<< "$data")
+    for stem in "${stems[@]}"; do
+        crt=$(jq -er --arg k "${stem}_crt" '.[$k]' <<< "$data") || return 1
+        printf '%s\n' "$crt" | openssl x509 -noout -subject -ext subjectAltName || return 1
     done
-    rm -f "$tmp"
-    IFS=$backIFS
 }
 
 # recover krb.list from certificates path
- function _getkrblist(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    local tmp tmp2 _keys _princ
-    # Get principals and store them in ${princs[@]}
-    declare -A princs
-    if [[ ! $url ]]; then
-        echo "Error! Missing keytab path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    tmp=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
-    _cat "$url" > "$tmp"
-    eval "$(jq ".data | to_entries | map(select(.key | match(\"$pri_suffix\"))) | map(\"princs[\(.key)]=\\\"\(.value|tostring)\\\"\") | .[] | @sh" -r < "$tmp" | sed -e "s/^'//" -e "s/'$//" -e "s/$pri_suffix//")"
-    backIFS=$IFS
-    IFS=$' '
-    _keys=$(echo "${!princs[@]}" | tr -t ' ' '\n' | sort | tr -t '\n' ' ')
-    for _key in $_keys ; do
-        local value=${princs[$_key]}
-        _key="\"${_key}_keytab\""
-        tmp2=$(mktemp -p /dev/shm -t .krbinfo.XXXX)
-        jq ".data .${_key}" -r < "$tmp" | base64 -d > "$tmp2"
-        value="${value//@*/}"
-        if [[ $value =~ / ]]; then
-            _princ="${value//\/*/}"
-            _domain="${value//*\//}"
-        else
-            _princ="${value//\/*/}"
-            _domain=""
-        fi
-        echo "$_princ | $_domain | $url"
-        rm -f "$tmp2"
-    done | sort -u
-    rm -f "$tmp"
-    IFS=$backIFS
- }
+function _getkrblist(){
+    local data stem principal
+    data=$(_vcli_pki_json "${1:-}") || return 1
+    _vcli_krb_pairs "$data" || return 1
+    local -a stems
+    mapfile -t stems < <(jq -r 'keys[] | select(endswith("_principal")) | .[:-10]' <<< "$data")
+    for stem in "${stems[@]}"; do
+        principal=$(jq -er --arg k "${stem}_principal" '.[$k]' <<< "$data") || return 1
+        printf '%s | %s\n' "$principal" "$1"
+    done
+}
 
 # recover certs.list from certificates path
 function _getcertlist(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    local _CRT _KEY _client _server
-    if [[ ! $url ]]; then
-        echo "Error! Missing cert path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    local _certs _cert shacrt _keys _key shakey
-    tmp=$(mktemp -p /dev/shm -t .certinfo.XXXX)
-    _cat "$url" > "$tmp"
-    backIFS=$IFS
-    IFS=$' '
-    _certs=( $(jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
-    _keys=( $(jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
-    for ((n=0;n<${#_certs[@]};n++)); do
-        _cert=${_certs[$n]}
-        _key=${_keys[$n]}
-        debug "jq .data .$_cert -r < $tmp"
-        _CRT=$(jq ".data .$_cert" -r < "$tmp" | \
-                      sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
-                          -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
-                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
-        debug "jq .data .$_key -r < $tmp"
-        _KEY=$(jq ".data .$_key" -r < "$tmp" | \
-                      sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
-                          -e 's/-----BEGIN PRIVATE KEY-----/-----BEGIN PRIVATE KEY-----\n/g' \
-                          -e 's/-----END PRIVATE KEY-----/\n-----END PRIVATE KEY-----/g' \
-                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
-        shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
-        shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
-        if echo -e "$_CRT" | openssl x509 -text -noout | grep -q "TLS Web Client Authentication"; then
-            _client=yes
-        fi
-        if echo -e "$_CRT" | openssl x509 -text -noout | grep -q "TLS Web Server Authentication"; then
-            _server=yes
-        fi
-        _cert=${_cert//\"/}
-        echo -en "${_cert%%_crt}"
-        echo -en " | \""
-
-        echo -en "$_CRT" | openssl x509 -text -noout | grep "Subject Alternative Name" -A1 | tail -1 | sed -e "s/^\s*//" | tr -d ' ' | tr -d '\n' | tr -t ',' '\n' | sort -u | tr -t '\n' ',' | sed -e "s/,$//"
-        echo -en "\" | "
-        if [[ $_client ]] && [[ $_server ]]; then
-            echo -en "client-server"
-        elif [[ $_server ]]; then
-            echo -en "server"
-        elif [[ $_client ]]; then
-            echo -en "client"
-        fi
-        echo -e " | $url"
-        unset _client _server
+    local data stem crt sans
+    data=$(_vcli_pki_json "${1:-}") || return 1
+    _vcli_cert_pairs "$data" || return 1
+    local -a stems
+    mapfile -t stems < <(jq -r 'keys[] | select(endswith("_crt")) | .[:-4]' <<< "$data")
+    for stem in "${stems[@]}"; do
+        crt=$(jq -er --arg k "${stem}_crt" '.[$k]' <<< "$data") || return 1
+        sans=$(printf '%s\n' "$crt" | openssl x509 -noout -ext subjectAltName 2>/dev/null) || return 1
+        printf '%s | %s | %s\n' "$stem" "$sans" "$1"
     done
-    rm -f "$tmp"
-    IFS=$backIFS
 }
 
 # returns expiration date for specified certificates secret
 function _getcertexpiration(){
-    local url funcname date expiration_date expiration_date_human warning_date critical_date diff omit_ok omit_warn omit_crit _CRT _KEY _client _server
-    funcname="${FUNCNAME[0]}"
-    # If -o specified ok certs are omitted
-    case $1 in
-        -oo)    omit_ok="yes"   ; shift ;;
-        -ow)    omit_warn="yes" ; shift ;;
-        -oc)    omit_crit="yes" ; shift ;;
-        -*)     shift                   ;;
-    esac
-    if [[ ! $1 =~ ^/ ]]; then
-        url="$current_pwd$1"
-    else
-        url=${1//\/\//\/}
-    fi
-    url=${url//\/\//\/}
-    if [[ ! $url ]]; then
-        echo "Error! Missing cert path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    shift
-    # If -o specified ok certs are omitted
-    case $1 in
-        -oo)    omit_ok="yes"   ;;
-        -ow)    omit_warn="yes" ;;
-        -oc)    omit_crit="yes" ;;
-        -*)     shift           ;;
-    esac
-
-    if [[ ! $url ]]; then
-        echo "Error! Missing cert path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    debug "${funcname//_/}: omit_ok: $omit_ok, omit_warn: $omit_warn, omit_crit: $omit_crit"
-    local _certs _cert shacrt _keys _key shakey
-    tmp=$(mktemp -p /dev/shm -t .certinfo.XXXX)
-    _cat "$url" > "$tmp"
-    backIFS=$IFS
-    IFS=$' '
-    _certs=( $(jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
-    _keys=( $(jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
-    for ((n=0;n<${#_certs[@]};n++)); do
-        _cert=${_certs[$n]}
-        _key=${_keys[$n]}
-        debug "jq .data .$_cert -r < $tmp"
-        _CRT=$(jq ".data .$_cert" -r < "$tmp" | \
-                      sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
-                          -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
-                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
-        debug "jq .data .$_key -r < $tmp"
-        _KEY=$(jq ".data .$_key" -r < "$tmp" | \
-                      sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
-                          -e 's/-----BEGIN PRIVATE KEY-----/-----BEGIN PRIVATE KEY-----\n/g' \
-                          -e 's/-----END PRIVATE KEY-----/\n-----END PRIVATE KEY-----/g' \
-                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
-        shacrt=$(echo -e "$_CRT" | openssl x509 -pubkey -noout -outform pem | sha256sum)
-        shakey=$(echo -e "$_KEY" | openssl pkey -pubout -outform pem | sha256sum)
-
-        expiration_date_human=$(date -R -d "$(echo -e "$_CRT" | openssl x509 -noout -enddate | cut -d '=' -f2)")
-        _cert=${_cert//\"/}
-        _cert="${_cert%%_crt}:"
-        warning_date=$(date -d "$expiration_date_human -$cert_warning_threshold days" +%s)
-        critical_date=$(date -d "$expiration_date_human -$cert_critical_threshold days" +%s)
-        expiration_date=$(date -d"$expiration_date_human" +%s)
-        date=$(date +%s)
-        diff=$(echo "($expiration_date-$date)/(60*60*24)" | bc)
-        debug "${funcname//_/}: omit_ok: $omit_ok, omit_warn: $omit_warn, omit_crit: $omit_crit"
-        if [[ "$date" -ge "$critical_date" || "$diff" -lt 0 ]]; then
-            if [[ ! $omit_crit ]]; then
-                echo -e "$_cert ($url)\n   $RED$diff$NONE days to renew certificate ($expiration_date_human)"
-            fi
-        elif [[ "$date" -ge "$warning_date" ]]; then
-            if [[ ! $omit_warn ]]; then
-                echo -e "$_cert ($url)\n   $YELLOW$diff$NONE days to renew certificate ($expiration_date_human)"
-            fi
-        elif [[ ! $omit_ok ]]; then
-            echo -e "$_cert ($url)\n   $GREEN$diff$NONE days to renew certificate ($expiration_date_human)"
-        fi
-        unset _client _server date expiration_date expiration_date_human
+    local path="" option="" arg data stem crt end days now expiration
+    for arg in "$@"; do
+        case "$arg" in -oo|-ow|-oc) option="$arg";; -*) return 1;; "") ;; *) path="$arg";; esac
     done
-    rm -f "$tmp"
-    IFS=$backIFS
-
+    [[ -n $path ]] || return 1
+    data=$(_vcli_pki_json "$path") || return 1
+    _vcli_cert_pairs "$data" || return 1
+    local -a stems
+    mapfile -t stems < <(jq -r 'keys[] | select(endswith("_crt")) | .[:-4]' <<< "$data")
+    now=$(date +%s)
+    for stem in "${stems[@]}"; do
+        crt=$(jq -er --arg k "${stem}_crt" '.[$k]' <<< "$data") || return 1
+        end=$(printf '%s\n' "$crt" | openssl x509 -noout -enddate 2>/dev/null) || return 1
+        expiration=$(date -d "${end#notAfter=}" +%s) || return 1
+        days=$(( (expiration-now)/86400 ))
+        [[ $option == -oo && $days -gt 30 ]] && continue
+        [[ $option == -ow && $days -le 30 && $days -gt 7 ]] && continue
+        [[ $option == -oc && $days -le 7 ]] && continue
+        printf '%s (%s): %d days to renew certificate\n' "$stem" "$path" "$days"
+    done
 }
 
 # recovers krb.list with all keytabs found under the specified folder
 function _getallkrblist(){
-    local funcname IFS backIFS
-    funcname="${FUNCNAME[0]}"
-    local url
-    if [[ ! $1 =~ ^/ ]]; then
-        url="$current_pwd$1"
-    else
-        url=${1//\/\//\/}
-    fi
-    if [[ ! $url ]]; then
-        echo "Error! Missing keytabs path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    local depth="$2"
-    local space="$3"
-    local echo_space="$4"
-    # If no "$2" was passed then this iteration is the very first one, so depth=0
-    if [[ ! $depth ]]; then
-        depth=0
-    # other wise we increment a depth as we go deeper in the structure
-    else
-        let depth++
-    fi
-    backIFS=$IFS
-    IFS=$' '
-    debug "${echo_space}_getallkrblist: '$url', depth: $depth, space: \"$space\""
-    # if $url is /
-    paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
-    debug "${echo_space}_getallkrblist: $paths"
-    for path in $paths; do
-        debug "${echo_space}   depth: $depth => found: $paths"
-        space=${space/+/ }
-        if [[ $path =~ /$ ]]; then
-            _getallkrblist "$url/$path" "$depth" "$space+ " "$echo_space   "
-        else
-            _getkrblist "$url/$path"
-        fi
-    done
-    IFS=$backIFS
+    local root leaves path
+    root=$(_vcli_absolute_path "${1:-}") || return 1
+    leaves=$(_vcli_leaves "$root") || return 1
+    while IFS= read -r path; do
+        [[ -n $path ]] || continue
+        local data
+        data=$(_vcli_pki_json "$path") || return 1
+        jq -e 'any(keys[]; endswith("_principal"))' <<< "$data" >/dev/null || continue
+        _getkrblist "$path" || return 1
+    done <<< "$leaves"
 }
 
 # recovers cert.list with all certificates found under the specified folder
 function _getallcertlist(){
-    local funcname IFS backIFS
-    funcname="${FUNCNAME[0]}"
-    local url
-    if [[ ! $1 =~ ^/ ]]; then
-        url="$current_pwd$1"
-    else
-        url=${1//\/\//\/}
-    fi
-    if [[ $url =~ /$ ]]; then
-        url=${url: -${#url}:$((${#url}-1))}
-    fi
-    if [[ ! $url ]]; then
-        echo "Error! Missing certs path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    local depth="$2"
-    local space="$3"
-    local echo_space="$4"
-    # If no "$2" was passed then this iteration is the very first one, so depth=0
-    if [[ ! $depth ]]; then
-        depth=0
-    # other wise we increment a depth as we go deeper in the structure
-    else
-        let depth++
-    fi
-    backIFS=$IFS
-    IFS=$' '
-    debug "${echo_space}_getallcertlist: '$url', depth: $depth, space: \"$space\""
-    # if $url is /
-    paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
-    debug "${echo_space}_getallcertlist: $paths"
-    for path in $paths; do
-        debug "${echo_space}   depth: $depth => found: $paths"
-        space=${space/+/ }
-        if [[ $path =~ /$ ]]; then
-            _getallcertlist "$url/$path" "$depth" "$space+ " "$echo_space   "
-        else
-            _getcertlist "$url/$path"
-        fi
-    done
-    IFS=$backIFS
+    local root leaves path
+    root=$(_vcli_absolute_path "${1:-}") || return 1
+    leaves=$(_vcli_leaves "$root") || return 1
+    while IFS= read -r path; do
+        [[ -n $path ]] || continue
+        local data
+        data=$(_vcli_pki_json "$path") || return 1
+        jq -e 'any(keys[]; endswith("_crt"))' <<< "$data" >/dev/null || continue
+        _getcertlist "$path" || return 1
+    done <<< "$leaves"
 }
 
 
 # shows all certificate's expiration dates
 function _getallcertexpiration(){
-    local url funcname arg IFS backIFS
-    funcname="${FUNCNAME[0]}"
-    if [[ $1 =~ ^-o[owc]+$ ]]; then
-        arg="$1"
-        shift
-    elif [[ $1 =~ ^- ]]; then
-        shift
-    elif [[ ! $1 ]]; then
-        shift
-    fi
-    if [[ ! $1 =~ ^/ ]]; then
-        url="$current_pwd$1"
-    else
-        url=${1//\/\//\/}
-    fi
-    url=${url//\/\//\/}
-    url=${url%%\/}
-    if [[ $2 =~ ^-o[owc]+$ ]]; then
-        arg="$2"
-        shift
-    fi
-    debug "${echo_space}$funcname: URL=$url, args=$arg"
-    if [[ ! $url ]]; then
-        echo "Error! Missing certs path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    local depth="$2"
-    local space="$3"
-    local echo_space="$4"
-    # If no "$2" was passed then this iteration is the very first one, so depth=0
-    if [[ ! $depth ]]; then
-        depth=0
-    # other wise we increment a depth as we go deeper in the structure
-    else
-        let depth++
-    fi
-    backIFS=$IFS
-    IFS=$' '
-    debug "${echo_space}_$: '$url', depth: $depth, space: \"$space\""
-    # if $url is /
-    paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
-    debug "${echo_space}$funcname: $paths"
-    for path in $paths; do
-        path=${path//\/\//\/}
-        debug "${echo_space}   depth: $depth => found: $paths"
-        space=${space/+/ }
-        if [[ $path =~ /$ ]]; then
-            debug "$funcname: _getallcertexpiration $arg $url/$path $depth"
-            _getallcertexpiration "$arg" "$url/$path" "$depth" "$space+ " "$echo_space   "
-        else
-            debug "$funcname: _getcertexpiration $url/$path $arg"
-            _getcertexpiration "$url/$path" "$arg"
-        fi
-    done
-    IFS=$backIFS
+    local root leaves path option=""
+    if [[ ${1:-} == -o* ]]; then option="$1"; shift; fi
+    root=$(_vcli_absolute_path "${1:-}") || return 1
+    [[ ${2:-} == -o* ]] && option="$2"
+    leaves=$(_vcli_leaves "$root") || return 1
+    while IFS= read -r path; do
+        [[ -n $path ]] || continue
+        local data
+        data=$(_vcli_pki_json "$path") || return 1
+        jq -e 'any(keys[]; endswith("_crt"))' <<< "$data" >/dev/null || continue
+        _getcertexpiration "$path" "$option" || return 1
+    done <<< "$leaves"
 }
 
 # download certificates crt and key
-function _getcert(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    local _CRT _KEY
-    if [[ ! $url ]]; then
-        echo "Error! Missing cert path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    local _certs _cert _keys _key
-    tmp=$(mktemp -p /dev/shm -t .getcert.XXXX)
-    _cat "$url" > "$tmp"
-    backIFS=$IFS
-    IFS=$' '
-    _certs=( $(jq ".data | to_entries | map(select(.key | match(\"$crt_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
-    _keys=( $(jq ".data | to_entries | map(select(.key | match(\"$key_suffix\"))) | .[] .key" < "$tmp" | tr -t '\n' ' ' | sort) )
-    echo "Exporting certificates..."
-    for ((n=0;n<${#_certs[@]};n++)); do
-        _cert=${_certs[$n]}
-        _key=${_keys[$n]}
-        debug "jq .data .$_cert -r < $tmp"
-        _CRT=$(jq ".data .$_cert" -r < "$tmp" | \
-                      sed -e 's/-----BEGIN CERTIFICATE-----/-----BEGIN CERTIFICATE-----\n/g' \
-                          -e 's/-----END CERTIFICATE-----/\n-----END CERTIFICATE-----/g' \
-                          -e 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----/g' | fold -64)
-        debug "jq .data .$_key -r < $tmp"
-        _KEY=$(jq ".data .$_key" -r < "$tmp" | \
-                      sed -e 's/-----BEGIN RSA PRIVATE KEY-----/-----BEGIN RSA PRIVATE KEY-----\n/g' \
-                          -e 's/-----BEGIN PRIVATE KEY-----/-----BEGIN PRIVATE KEY-----\n/g' \
-                          -e 's/-----END PRIVATE KEY-----/\n-----END PRIVATE KEY-----/g' \
-                          -e 's/-----END RSA PRIVATE KEY-----/\n-----END RSA PRIVATE KEY-----/g' | fold -64)
-        _cert=${_cert//\"/}
-        _key=${_key//\"/}
-        echo -e "  - ${_cert} exported to '$TMP/${_cert//_crt/}.crt'"
-        echo -e "$_CRT" > "$TMP/${_cert//_crt/}.crt"
-        echo -e "  - ${_key} exported to '$TMP/${_key//_key/}.key'"
-        echo -e "$_KEY" > "$TMP/${_key//_key/}.key"
+function _vcli_pki_json(){
+    local response
+    response=$(_cat "$1") || return 1
+    jq -ce '.data | select(type=="object")' <<< "$response"
+}
+function _vcli_cert_pairs(){
+    local data="$1" stem crt key certpub keypub
+    local -a stems
+    mapfile -t stems < <(jq -r 'keys[] | select(endswith("_crt")) | .[:-4]' <<< "$data")
+    (( ${#stems[@]} > 0 )) || { echo "vcli: no certificates" >&2; return 1; }
+    for stem in "${stems[@]}"; do
+        [[ $stem =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ && $stem != .* && $stem != *..* ]] || return 1
+        crt=$(jq -er --arg k "${stem}_crt" '.[$k] | select(type=="string")' <<< "$data") || return 1
+        key=$(jq -er --arg k "${stem}_key" '.[$k] | select(type=="string")' <<< "$data") || return 1
+        certpub=$(printf '%s\n' "$crt" | openssl x509 -pubkey -noout 2>/dev/null) || return 1
+        keypub=$(printf '%s\n' "$key" | openssl pkey -pubout 2>/dev/null) || return 1
+        [[ $certpub == "$keypub" ]] || { echo "vcli: certificate/private key mismatch" >&2; return 1; }
     done
-    IFS=$backIFS
-    rm -f "$tmp"
-    echo "done."
+    (( $(jq '[keys[] | select(endswith("_key"))] | length' <<< "$data") == ${#stems[@]} )) || return 1
+}
+function _vcli_export_preflight(){
+    local path
+    for path in "$@"; do
+        [[ ! -e $path && ! -L $path ]] || {
+            echo "vcli: export destination already exists" >&2; return 1;
+        }
+    done
 }
 
+# Stage all secret bytes privately before publishing them. Hard links create
+# each destination exclusively (never truncate, replace, or follow symlinks).
+# GNU ln -T is intentional: a raced-in directory cannot become a destination.
+# Multi-file exports are not transactions, but partial publishes are rolled back.
+function _vcli_export_publish() (
+    local stage="$1"; shift
+    local -a destinations=("$@") linked=()
+    local i committed=no
+    trap 'if [[ $committed != yes ]]; then
+              for i in "${linked[@]}"; do
+                  if [[ ${destinations[i]} -ef "$stage/$i" ]]; then
+                      rm -f -- "${destinations[i]}"
+                  fi
+              done
+          fi
+          rm -rf -- "$stage"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+
+    # Verify ln is safe, not merely that its help claims -T support.
+    # A vendor implementation ignoring -T might link *inside* a directory,
+    # exposing a secret. Check both positive and negative behavior privately.
+    local probe_link="$stage/.vcli-ln-probe" probe_dir="$stage/.vcli-ln-dir"
+    if ! ln -T -- "$stage/0" "$probe_link" 2>/dev/null ||
+       [[ ! "$probe_link" -ef "$stage/0" ]]; then
+        echo "vcli: secure export requires ln -T no-target-directory support" >&2
+        return 1
+    fi
+    rm -f -- "$probe_link"
+    mkdir -- "$probe_dir" || return 1
+    if ln -T -- "$stage/0" "$probe_dir" 2>/dev/null ||
+       [[ -e $probe_dir/0 || -L $probe_dir/0 ]]; then
+        echo "vcli: unsafe ln implementation (directory target accepted)" >&2
+        return 1
+    fi
+    rmdir -- "$probe_dir" || return 1
+
+    for (( i=0; i<${#destinations[@]}; i++ )); do
+        if ! ln -T -- "$stage/$i" "${destinations[i]}"; then
+            printf 'vcli: export destination occupied or publication failed: %s\n' \
+                "${destinations[i]}" >&2
+            return 1
+        fi
+        linked+=("$i")
+    done
+    committed=yes
+)
+
+function _getcert() (
+    local data stem crt key stage="" i=0 destination
+    # A dedicated subshell owns the staging directory. EXIT runs on normal
+    # failure and on catchable TERM/INT, including errors during decoding.
+    trap '[[ -z ${stage:-} ]] || rm -rf -- "$stage"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    data=$(_vcli_pki_json "${1:-}") || return 1
+    _vcli_cert_pairs "$data" || return 1
+    local -a stems destinations=()
+    mapfile -t stems < <(jq -r 'keys[] | select(endswith("_crt")) | .[:-4]' <<< "$data")
+    for stem in "${stems[@]}"; do destinations+=("$TMP/$stem.crt" "$TMP/$stem.key"); done
+    _vcli_export_preflight "${destinations[@]}" || return 1
+
+    stage=$(mktemp -d -- "${TMP%/}/.vcli-export.XXXXXXXX") || return 1
+    for stem in "${stems[@]}"; do
+        crt=$(jq -er --arg k "${stem}_crt" '.[$k]' <<< "$data") || {
+            rm -rf -- "$stage"; return 1;
+        }
+        key=$(jq -er --arg k "${stem}_key" '.[$k]' <<< "$data") || {
+            rm -rf -- "$stage"; return 1;
+        }
+        if ! printf '%s\n' "$crt" > "$stage/$i"; then
+            rm -rf -- "$stage"; return 1
+        fi
+        i=$((i+1))
+        if ! printf '%s\n' "$key" > "$stage/$i"; then
+            rm -rf -- "$stage"; return 1
+        fi
+        i=$((i+1))
+    done
+    _vcli_export_publish "$stage" "${destinations[@]}" || return 1
+    for destination in "${destinations[@]}"; do
+        printf 'Exported %s\n' "$destination"
+    done
+)
 # main function
+# Forward delete is only generated by CSI 3~, never by a literal tilde.
+function vcli_delete_forward(){
+    if [[ $len != 0 ]] && [[ $pos -lt $((len+1)) ]]; then
+        vcli_tput ech 1
+        len=$((len-1))
+        cmd="${cmd:0:$((pos-1))}${cmd:${pos}}"
+        vcli_tput el
+        restcmd="${cmd:$((pos-1))}"
+        printf '%s' "$restcmd"
+        [[ -n $restcmd ]] && vcli_tput cub "${#restcmd}"
+        debug "delete: pos=$pos, len=$len"
+    fi
+}
+
+# Read one bounded ANSI CSI sequence through its final byte (0x40-0x7E).
+# Unknown sequences must be consumed without reaching the line editor.
+function vcli_read_csi(){
+    local byte count
+    csi_sequence=""
+    for (( count=0; count<16; count++ )); do
+        if ! IFS= read -rsn1 -t 0.2 byte; then
+            csi_sequence=""
+            return 1
+        fi
+        csi_sequence+="$byte"
+        if [[ $byte == [@-~] ]]; then
+            return 0
+        fi
+        case $byte in
+            [0-9]|';'|':'|'?'|' ') ;;
+            *) csi_sequence=""; return 1 ;;
+        esac
+    done
+    csi_sequence=""
+    return 1
+}
+
+# Handle navigation keys common to ANSI CSI and SS3 (application mode).
+# Unsupported function keys and modifiers must never enter the command buffer.
+function vcli_apply_navigation(){
+    case $1 in
+        A) get_prev_cmd ;;
+        B) get_next_cmd ;;
+        C) # Right
+            if (( pos < len+1 )); then
+                vcli_tput cuf 1
+                pos=$((pos+1))
+            fi
+        ;;
+        D) # Left
+            if (( pos > 1 )); then
+                vcli_tput cub 1
+                pos=$((pos-1))
+            fi
+        ;;
+        F|4~|8~) # End (including xterm numeric variants)
+            (( len == 0 )) || vcli_tput cuf $((len-pos+1))
+            pos=$((len+1))
+        ;;
+        H|1~|7~) # Home (including xterm numeric variants)
+            (( pos == 1 )) || vcli_tput cub $((pos-1))
+            pos=1
+        ;;
+        3~) vcli_delete_forward ;;
+    esac
+}
+
+# Ctrl+C and Ctrl+U must discard the entire edit/navigation/search state.
+function vcli_clear_editor(){
+    cmd=""
+    len=0
+    pos=1
+    history_index=-1
+    unset history_draft SEARCHIST search_cmd tmp_history pending_key ENDHIST
+}
+
+# Keep consuming the paste after an interrupt until its closing marker.
+# Otherwise a pasted newline after Ctrl+C could execute a Vault command.
+function vcli_interrupt_editor(){
+    vcli_clear_editor
+    if [[ $vcli_paste_mode == yes ]]; then
+        vcli_paste_bad=yes
+    else
+        vcli_paste_mode=""
+        vcli_paste_bad=""
+    fi
+    printf '\n'
+    prompt
+}
+
 function main(){
+    # Track bracketed paste explicitly so an embedded newline cannot execute
+    # a Vault command before the user confirms the pasted input.
+    local vcli_paste_mode="" vcli_paste_bad=""
     # First of all: check command dependencies
     check_dependency "$DEPENDENCIES"
     local msg info
@@ -2087,30 +2099,35 @@ function main(){
             t) vault_token=$OPTARG ;;      ### GLOBAL VARIABLES ###
             n) disable_prompt=yes ;;
             i) protocol="http";;
-            h|*) help ; exit 1; ;;
+            h) help; exit 0 ;;
+            *) help; exit 2 ;;
         esac
     done
 
     # check for new versions
     if new_version && [[ ! $disable_prompt ]]; then sleep 2 ; echo; fi
 
-    # Use VAULT_ADDR as the primary default as it is the most common setting.
-    # If VAULT_ADDR is set it will overwrite VAULT_HOST and VAULT_PORT
-    if [[ $VAULT_ADDR ]] && [[ $VAULT_ADDR =~ ^http[s]*://[a-zA-Z0-9.-]+:[0-9]+ ]]; then
-        protocol=${VAULT_ADDR%%:*}
-        local host_port=${VAULT_ADDR#*//}
-        VAULT_HOST=${host_port%:*}
-        VAULT_PORT=${host_port#*:}
+    # VAULT_ADDR overrides VAULT_HOST / VAULT_PORT when configured.
+    if [[ -n ${VAULT_ADDR:-} ]]; then
+        local address="${VAULT_ADDR%/}"
+        if [[ $address =~ ^(https?)://(\[[^]]+\]|[^:/]+)(:([0-9]+))?$ ]]; then
+            protocol="${BASH_REMATCH[1]}"
+            vault_host="${BASH_REMATCH[2]}"
+            vault_port="${BASH_REMATCH[4]:-8200}"
+        else
+            echo "Invalid VAULT_ADDR: $VAULT_ADDR" >&2
+            exit 1
+        fi
     fi
-
-    # Use environment variables VAULT_HOST VAULT_TOKEN and VAULT_PORT if defined
-    vault_port=${VAULT_PORT:-"$vault_port"}
-    vault_port=${vault_port:-"8200"} # Define Vault default port if not specified
-    vault_host=${VAULT_HOST:-$vault_host}
-    vault_token=${VAULT_TOKEN:-$vault_token}
+    vault_port="${vault_port:-${VAULT_PORT:-8200}}"
+    vault_host="${vault_host:-${VAULT_HOST:-}}"
+    vault_token="${vault_token:-${VAULT_TOKEN:-}}"
 
     # Check for correct arguments
     check_arg "$vault_host" "Vault host"
+    if [[ -z $vault_token ]]; then
+        _vcli_login_approle || exit 1
+    fi
     check_arg "$vault_token" "Vault token"
 
     # Check connectivity
@@ -2122,14 +2139,8 @@ function main(){
     pos=1
     history_index=-1
 
-    # try to get vault health status
-    _put secret/-_test_- '{ "key": "value" }'
-    if ! _cat secret/-_test_- > /dev/null 2>&1 ; then
-        echo -e "Cannot access vault's secrets!\nCheck vault_token: '$vault_token'"
-        exit 1
-    else
-        _rm secret/-_test_-
-    fi
+    # Never write or delete a secret merely to start vcli.
+    # Vault permissions are checked when individual commands are executed.
 
     # load vcli history
     load_history
@@ -2140,52 +2151,81 @@ function main(){
     # print prompt
     prompt
 
-    # Disable Ctrl+c
-    trap : INT
+    # Batch mode is line-oriented: do not use the interactive one-byte reader.
+    # Propagate failed CLI command status even when no HTTP request was sent.
+    if [[ ${disable_prompt:-} == yes ]]; then
+        local batch_line batch_result=0
+        while IFS= read -r batch_line || [[ -n $batch_line ]]; do
+            [[ -z ${batch_line//[[:space:]]/} ]] && continue
+            if ! run_cmd "$batch_line"; then batch_result=1; fi
+        done
+        save_history
+        exit "$batch_result"
+    fi
+
+    # Ctrl+C clears the editing buffer without terminating the session.
+    trap 'vcli_interrupt_editor' INT
 
     # Begin iteration
     IFS=
     while true; do
         lastkey=$_key
         # read key and process
-        read -r -sN1 _key
+        if [[ ${pending_key+x} ]]; then
+            _key=$pending_key
+            unset pending_key
+        elif ! read -r -sN1 _key; then
+            # An interrupted read is recoverable; EOF should exit.
+            if [[ -t 0 ]]; then
+                continue
+            fi
+            clean_n_exit
+        fi
+        # Bracketed paste must never execute embedded newlines or control keys.
+        # Once unsafe input is seen, drop the rest until the closing CSI 201~.
+        if [[ $vcli_paste_mode == yes && $_key != $'\x1b' ]]; then
+            if [[ $_key == [[:cntrl:]] ]]; then
+                if [[ $vcli_paste_bad != yes ]]; then
+                    vcli_paste_bad=yes
+                    vcli_clear_editor
+                    printf '\r'
+                    prompt
+                    vcli_tput el
+                fi
+                continue
+            fi
+            [[ $vcli_paste_bad == yes ]] && continue
+        fi
         case $_key in
-            $'\x1b')
-                read -rsn1 -t 0.001 _key # flush read
-                if [[ $_key == "[" ]]; then # CURSORS & SPECIAL CHARS
-                    read -rsn1 -t 0.001 _key # flush read again
-                    case $_key in
-                        $'\x41') # up cursor: older history
-                            get_prev_cmd
-                        ;;
-                        $'\x42') # down cursor: newer history
-                            get_next_cmd
-                        ;;
-                        $'\x43') # right cursor
-                            if [[ $pos -lt $((len+1)) ]]; then # if anything was typed allow to move cursor left
-                                tput cuf 1 # move cursor right
-                                let pos+=1 # increment cursor position
-                                debug "pos: $pos right"
-                            fi
-                        ;;
-                        $'\x44') # left cursor
-                            if [[ $pos -gt 1 ]]; then # if anything was typed and position>0 allow to move cursor left
-                                tput cub 1 # move cursor left
-                                let pos-=1 # decrement cursor position
-                                debug "pos: $pos left"
-                            fi
-                        ;;
-                        $'\x46') # END
-                                debug "END pressed"
-                                [[ $len != 0 ]] && tput cuf $((len-pos+1)) # move cursor right to the end
-                                let pos=len+1
-                        ;;
-                        $'\x48') # HOME
-                                debug "HOME pressed"
-                                [[ $len != 0 ]] && tput cub $((pos-1)) # move cursor left to the beginning
-                                let pos=1
-                        ;;
-                    esac
+            $'\x1b') # Escape, optionally followed by an ANSI CSI sequence
+                if IFS= read -rsn1 -t 0.2 _key; then
+                    if [[ $_key == "[" ]]; then
+                        if vcli_read_csi; then
+                            case $csi_sequence in
+                                200~) vcli_paste_mode=yes ;;
+                                201~)
+                                    if [[ $vcli_paste_bad == yes ]]; then
+                                        printf '\nvcli: bracketed paste discarded (control/newline data)\n'
+                                        prompt
+                                    fi
+                                    vcli_paste_mode=""
+                                    vcli_paste_bad=""
+                                ;;
+                                *) [[ $vcli_paste_mode == yes ]] ||
+                                       vcli_apply_navigation "$csi_sequence" ;;
+                            esac
+                        fi
+                    elif [[ $_key == "O" ]]; then # SS3 (application cursor mode)
+                        # Some terminals use ESC O H/F/A/B/C/D rather than CSI.
+                        # Consume unsupported SS3 keys (e.g. F1=ESC O P) whole.
+                        if IFS= read -rsn1 -t 0.2 _ss3_key; then
+                            [[ $vcli_paste_mode == yes ]] ||
+                                vcli_apply_navigation "$_ss3_key"
+                        fi
+                    else
+                        # Preserve the ordinary/control key after a lone ESC.
+                        pending_key=$_key
+                    fi
                 fi
                 unset ENDHIST
             ;;
@@ -2196,7 +2236,7 @@ function main(){
                 [[ ! $disable_prompt ]] && echo
                 if [[ $cmd ]] && [[ ! "$cmd" =~ ^[[:space:]]+$ ]]; then
                     cmd=$(echo "$cmd" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')
-                    run_cmd "$cmd"
+                    if ! run_cmd "$cmd"; then exit_status=1; fi
                 fi
             ;;
             $'\x7f') # BACKSPACE
@@ -2208,29 +2248,12 @@ function main(){
                     tmpmsg="${#cmd}: \"$cmd\""
                     # remove $_key in $((pos-1))
                     cmd="${cmd:0:$((pos-1))}${cmd:$((pos)):${#cmd}}"
-                    tput el # clean to the end of the line
+                    vcli_tput el # clean to the end of the line
                     restcmd="${cmd:$((pos-1)):${#cmd}}"
                     echo -n "$restcmd"
                     # reposition cursor after backspace only if we moved chars
-                    if [[ ${#restcmd} != 0 ]]; then tput cub ${#restcmd} ; fi
-                    debug "$tmpmsg => ${#cmd}: \"$cmd\""
-                    debug "pos: $pos, len: $len"
-                fi
-            ;;
-            $'\x7e') # ERASE
-                unset ENDHIST
-                if [[ $len != 0 ]] && [[ $pos -lt $((len+1)) ]]; then # if anything was typed and position>0 allow to delete
-                    tput ech 1 # erase 1 character at $pos
-                    let len-=1
-                    tmpmsg="${#cmd}: \"$cmd\""
-                    cmd=${cmd:0:$((pos-1))}${cmd:${pos}:$((${#cmd}-1))}
-                    tput el # clean to the end of the line
-                    #cmd=${cmd::-1} # delete last character
-                    restcmd="${cmd:$((pos-1)):$((${#cmd}))}"
-                    echo -n "$restcmd"
-                    # reposition cursor after backspace only if we moved chars
-                    if [[ ${#restcmd} != 0 ]]; then tput cub ${#restcmd} ; fi
-                    debug "$tmpmsg => ${#cmd}: \"$cmd\""
+                    if [[ ${#restcmd} != 0 ]]; then vcli_tput cub ${#restcmd} ; fi
+                    debug "editor: backspace"
                     debug "pos: $pos, len: $len"
                 fi
             ;;
@@ -2240,23 +2263,23 @@ function main(){
 
                 if [[ $exit_status == 0 ]]; then
                     # move the cursor to the beginning to print the command selected
-                    [[ $pos != 1 ]] && tput cub $((pos-1)) # move cursor left to the beginning
+                    [[ $pos != 1 ]] && vcli_tput cub $((pos-1)) # move cursor left to the beginning
 
                     # print the command found in history
                     len=0
                     pos=1
-                    tput el # clean to the end of the line
+                    vcli_tput el # clean to the end of the line
                     echo -n "$cmd"
-                    tput el # clean to the end of the line
+                    vcli_tput el # clean to the end of the line
                     let len=${#cmd}
                     let pos=len+1
                 else
                     # print the command found in history
                     len=0
                     pos=1
-                    tput el # clean to the end of the line
+                    vcli_tput el # clean to the end of the line
                     echo -n "$cmd"
-                    tput el # clean to the end of the line
+                    vcli_tput el # clean to the end of the line
                     let len=${#cmd}
                     let pos=len+1
                 fi
@@ -2269,29 +2292,41 @@ function main(){
                     is_command="true"
                 else
                     rotate_found_cmds "$cmd"
-                    debug "search_cmd: $search_cmd, \$SEARCHIST: $SEARCHIST"
+                    debug "history: reverse search state"
 
 
                     # move the cursor to the beginning to print the command selected
-                    [[ $pos != 1 ]] && tput cub $((pos-1)) # move cursor left to the beginning
+                    [[ $pos != 1 ]] && vcli_tput cub $((pos-1)) # move cursor left to the beginning
 
                     # print the command found in history
                     echo -n "$cmd"
 
-                    tput el # clean to the end of the line
+                    vcli_tput el # clean to the end of the line
                     let pos=$((${#cmd}+1))
                     let len=${#cmd}
                 fi
             ;;
-            $'\x04') # Ctrl+d behaviour is exit
-                clean_n_exit
+            
+            $'\x15') # Ctrl+U
+                vcli_clear_editor
+                printf '\r'
+                prompt
+                vcli_tput el
+            ;;
+            
+            $'\x04') # Ctrl+D
+                if [[ -n $cmd ]]; then
+                    vcli_delete_forward
+                else
+                    clean_n_exit
+                fi
             ;;
             $'')
                 clean_n_exit
             ;;
             $'\x20'|*) # NORMAL CHARS
                 if [[ ! $disable_prompt ]]; then
-                    tput ich 1 # insert chars rather than overwriting them
+                    vcli_tput ich 1 # insert chars rather than overwriting them
                     echo -n "$_key" #| hexdump -C
                 fi
                 let len+=1
@@ -2299,7 +2334,7 @@ function main(){
                 tmpmsg="${#cmd}: \"$cmd\""
                 # insert $_key in $pos within $cmd string
                 cmd="${cmd:0:$((pos-2))}$_key${cmd:$((pos-2)):${#cmd}}"
-                debug " => ${#cmd}: \"$cmd\""
+                debug "editor: inserted character"
                 debug "pos: $pos, len: $len"
             ;;
         esac
@@ -2308,9 +2343,9 @@ function main(){
             debug "exiting history search mode"
             unset SEARCHIST search_cmd tmp_history
         fi
-        [[ $DEBUG_HEXDUMP == "yes" ]] && debug "\nhexdump: \n $(echo -n "$_key" | hexdump -C)"
+        [[ $DEBUG_HEXDUMP == "yes" ]] && debug "hexdump: key event redacted"
         # print prompt if commadn was run
-        if [[ $is_command ]]; then prompt ; unset is_command cmd pos len ; history_index=-1 ; pos=1; fi
+        if [[ $is_command ]]; then prompt ; unset is_command cmd pos len history_draft ; history_index=-1 ; pos=1; fi
     done < /dev/stdin
 }
 

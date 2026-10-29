@@ -1,0 +1,201 @@
+name: VCLI trunk validation
+
+on:
+  pull_request:
+  # Trunk-based: no duplicate builds on feature branch push.
+  push:
+    branches: [master]
+    tags: ['v0.7.*']
+  workflow_dispatch:
+  schedule:
+    - cron: '23 5 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vcli-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  static:
+    name: Syntax, source invariants and isolated tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Ensure quality tools
+        run: |
+          missing=()
+          for cmd in jq curl shellcheck; do
+            command -v "$cmd" >/dev/null || missing+=("$cmd")
+          done
+          if (( ${#missing[@]} )); then
+            sudo apt-get update -qq -o Acquire::Retries=2 -o Acquire::http::Timeout=10
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
+          fi
+          for cmd in jq curl shellcheck; do command -v "$cmd"; done
+      - name: CLI contract and E2E matrix parity (no Vault required)
+        run: python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_ci_matrix tests.cli.test_command_coverage
+      - name: Bash syntax and ShellCheck
+        run: |
+          bash -n ./vcli ./scripts/playground.sh ./scripts/playground-seed.sh ./tests/playground/smoke.sh
+          shellcheck --severity=error ./vcli ./scripts/playground.sh ./scripts/playground-seed.sh ./tests/playground/smoke.sh
+      - name: Security invariants
+        run: python3 tests/integration/test_source_guards.py ./vcli
+
+  minimal:
+    name: Minimal Linux ${{ matrix.distro }} CLI
+    needs: static
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: alpine
+            image: alpine:3.22
+          - distro: debian
+            image: debian:bookworm-slim
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Test candidate inside minimal distro
+        env:
+          IMAGE: ${{ matrix.image }}
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          docker run --rm \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/repo,readonly" \
+            --workdir /repo \
+            --env "VCLI_DISTRO=$DISTRO" \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            "$IMAGE" /bin/sh -ec '
+              case "$VCLI_DISTRO" in
+                alpine) apk add --no-cache bash curl jq coreutils python3 ca-certificates ;;
+                debian)
+                  apt-get update -qq
+                  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+                    bash curl jq coreutils python3 ca-certificates
+                ;;
+                *) echo "Unknown distro: $VCLI_DISTRO" >&2; exit 1 ;;
+              esac
+              bash -n ./vcli
+              python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_portability
+              python3 tests/cli/bench_startup.py
+            '
+      - name: Real Vault HTTPS and live-read benchmark in minimal distro
+        env:
+          VCLI_TEST_MINIMAL_IMAGE: ${{ matrix.image }}
+          VCLI_TEST_MINIMAL_DISTRO: ${{ matrix.distro }}
+          VCLI_TEST_VAULT_TAG: '2.1.1'
+        run: bash tests/integration/run.sh
+
+  integration:
+    name: Vault ${{ matrix.vault }} integration
+    needs: static
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        vault: ['1.20.4', '1.21.4', '2.0.4', '2.1.1']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Ensure runtime dependencies
+        run: |
+          missing=()
+          for cmd in jq curl openssl klist; do
+            command -v "$cmd" >/dev/null || missing+=("$cmd")
+          done
+          if (( ${#missing[@]} )); then
+            for i in "${!missing[@]}"; do
+              [[ ${missing[i]} == klist ]] && missing[i]=krb5-user
+            done
+            sudo apt-get update -qq -o Acquire::Retries=2 -o Acquire::http::Timeout=10
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
+          fi
+          for cmd in jq curl openssl klist; do command -v "$cmd"; done
+      - name: Validate production candidate
+        run: bash -n ./vcli
+      - name: Test against real Vault
+        env:
+          VCLI_TEST_VAULT_TAG: ${{ matrix.vault }}
+        run: bash tests/integration/run.sh
+
+  playground:
+    name: Real Vault TLS playground acceptance
+    needs: static
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install playground dependencies
+        run: |
+          missing=()
+          for cmd in jq curl openssl klist; do
+            command -v "$cmd" >/dev/null || missing+=("$cmd")
+          done
+          if (( ${#missing[@]} )); then
+            for i in "${!missing[@]}"; do
+              [[ ${missing[i]} == klist ]] && missing[i]=krb5-user
+            done
+            sudo apt-get update -qq -o Acquire::Retries=2
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
+          fi
+          docker compose version
+      - name: Lifecycle, full synthetic catalog and real VCLI smoke
+        run: bash tests/playground/smoke.sh
+
+  gate:
+    name: Required CI gate
+    needs: [static, integration, minimal, playground]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail unless all mandatory jobs succeeded
+        env:
+          STATIC_RESULT: ${{ needs.static.result }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
+          MINIMAL_RESULT: ${{ needs.minimal.result }}
+          PLAYGROUND_RESULT: ${{ needs.playground.result }}
+        run: |
+          test "$STATIC_RESULT" = success
+          test "$INTEGRATION_RESULT" = success
+          test "$MINIMAL_RESULT" = success
+          test "$PLAYGROUND_RESULT" = success
+
+  package_candidate:
+    name: Produce release candidate artifact
+    if: startsWith(github.ref, 'refs/tags/v0.7.')
+    needs: gate
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+      - name: Verify release candidate
+        run: bash -n ./vcli
+      - name: Build checksum-verified artifact
+        run: |
+          mkdir -p dist/vcli
+          cp vcli README.md LICENSE dist/vcli/
+          tar -C dist -czf "vcli-${GITHUB_REF_NAME}.tar.gz" vcli
+          sha256sum "vcli-${GITHUB_REF_NAME}.tar.gz" > "vcli-${GITHUB_REF_NAME}.tar.gz.sha256"
+      - name: Upload manual-release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vcli-${{ github.ref_name }}
+          path: |
+            vcli-${{ github.ref_name }}.tar.gz
+            vcli-${{ github.ref_name }}.tar.gz.sha256
+          if-no-files-found: error
