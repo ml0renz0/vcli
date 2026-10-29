@@ -204,7 +204,7 @@ declare -A vcli_commands_help=(
 function is_cmd(){
     local command=${1%% *}
     local args
-    [[ -v "vcli_commands[$command]" ]] || return 1
+    [[ -n $command && ${vcli_commands[$command]+present} ]] || return 1
     args=${1#"$command"}
     # Only noarg commands reject additional non-whitespace arguments.
     [[ ${vcli_commands[$command]} != noarg || -z ${args//[[:space:]]/} ]]
