@@ -70,5 +70,22 @@ class SessionCommandContracts(unittest.TestCase):
         self.assertIn("Available commands:", result.stdout)
 
 
+    def test_07_debug_does_not_persist_secret_payloads(self):
+        with TemporaryDirectory(prefix="vcli-debug-secret-") as directory:
+            logfile = Path(directory) / "trace.log"
+            marker = f"DO-NOT-LOG-{uuid4().hex}"
+            path = f"kv1/vcli-debug-{uuid4().hex[:12]}/payload"
+            result, history = invoke(
+                f'enable-debug\\nput {path} {{"password":"{marker}"}}\\ncat {path}',
+                env_extra={"VCLI_DEBUGFILE": str(logfile)},
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(api("GET", path)["data"]["password"], marker)
+            self.assertTrue(logfile.exists(), "debug mode did not produce a log")
+            self.assertNotIn(marker, logfile.read_text(),
+                             "Debug trace must never store secret values")
+            self.assertNotIn(marker, history,
+                             "The default history must not store secret values")
+
 if __name__ == "__main__":
     unittest.main()
