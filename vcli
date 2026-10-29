@@ -570,58 +570,50 @@ function _run(){
 
 # Map legacy paths to KV v2 HTTP paths when opted in.
 # VAULT_KV_VERSION=2 VAULT_KV_MOUNTS=secret,teams/config
-function vcli_is_kv2_path(){
+# Resolve the longest configured KV v2 mount; nested mounts take precedence.
+# Writes the match to VCLI_KV_MOUNT in the calling shell, avoiding subshell state.
+function vcli_match_kv2_mount(){
+    VCLI_KV_MOUNT=""
     [[ ${VAULT_KV_VERSION:-1} == 2 ]] || return 1
-    local path="/${1#/}" mount
+    local path="${1#/}" mount
     local -a mounts
     IFS=',' read -r -a mounts <<< "${VAULT_KV_MOUNTS:-secret}"
     for mount in "${mounts[@]}"; do
         mount="${mount#/}"; mount="${mount%/}"
-        [[ -n $mount && $path == "/$mount/"* ]] && return 0
-    done
-    return 1
-}
-function vcli_kv2_metadata_path(){
-    local path="/${1#/}" mount rest
-    local -a mounts
-    IFS=',' read -r -a mounts <<< "${VAULT_KV_MOUNTS:-secret}"
-    for mount in "${mounts[@]}"; do
-        mount="${mount#/}"; mount="${mount%/}"
-        if [[ -n $mount && $path == "/$mount/"* ]]; then
-            rest="${path#"/$mount/"}"
-            printf '/%s/metadata/%s\n' "$mount" "$rest"
-            return 0
+        [[ -n $mount && $path == "$mount/"* ]] || continue
+        if (( ${#mount} > ${#VCLI_KV_MOUNT} )); then
+            VCLI_KV_MOUNT=$mount
         fi
     done
-    return 1
+    [[ -n $VCLI_KV_MOUNT ]]
 }
+
+function vcli_is_kv2_path(){
+    vcli_match_kv2_mount "$1"
+}
+
+function vcli_kv2_metadata_path(){
+    local mount rest
+    vcli_match_kv2_mount "$1" || return 1
+    mount=$VCLI_KV_MOUNT
+    rest="${1#/}"
+    rest="${rest#"$mount/"}"
+    printf '/%s/metadata/%s\n' "$mount" "$rest"
+}
+
 function vcli_kv_path(){
     local path="${1#/}" method="$2" mount rest
-    VCLI_KV2_ACTIVE=no
-    if [[ ${VAULT_KV_VERSION:-1} != 2 ]]; then
-        printf '%s' "$path"
-        return
-    fi
-    local mounts="${VAULT_KV_MOUNTS:-secret}"
-    local -a mount_array
-    IFS=',' read -r -a mount_array <<< "$mounts"
-    for mount in "${mount_array[@]}"; do
-        mount="${mount#/}"; mount="${mount%/}"
-        if [[ -z $mount || $path != "$mount/"* ]]; then continue; fi
-        rest="${path#"$mount/"}"
-        case "$rest" in
-            data/*|metadata/*|delete/*) printf '%s' "$path"; return;;
-        esac
-        case "$method" in
-            LIST) printf '%s/metadata/%s' "$mount" "$rest" ;;
-            GET|POST|PUT|PATCH|DELETE) printf '%s/data/%s' "$mount" "$rest" ;;
-            *) printf '%s' "$path"; return;;
-        esac
-        # This function can be used in command substitutions; the caller must
-        # separately decide whether this is a KV v2 request.
-        return
-    done
-    printf '%s' "$path"
+    vcli_match_kv2_mount "$path" || { printf '%s' "$path"; return; }
+    mount=$VCLI_KV_MOUNT
+    rest="${path#"$mount/"}"
+    case "$rest" in
+        data/*|metadata/*|delete/*) printf '%s' "$path"; return;;
+    esac
+    case "$method" in
+        LIST) printf '%s/metadata/%s' "$mount" "$rest" ;;
+        GET|POST|PUT|PATCH|DELETE) printf '%s/data/%s' "$mount" "$rest" ;;
+        *) printf '%s' "$path";;
+    esac
 }
 
 # Encode path components but do not encode / or the query delimiter ?.
@@ -767,20 +759,17 @@ function _curl(){
     done
     local path="${1#/}" data="${2:-}" method="${3:-GET}" cas="${4:-}"
     local kv2=no mount rest
-    if [[ ${VAULT_KV_VERSION:-1} == 2 ]]; then
-        local mounts="${VAULT_KV_MOUNTS:-secret}"
-        local -a mount_array
-        IFS=',' read -r -a mount_array <<< "$mounts"
-        for mount in "${mount_array[@]}"; do
-            mount="${mount#/}"; mount="${mount%/}"
-            [[ -z $mount || $path != "$mount/"* ]] && continue
-            rest="${path#"$mount/"}"
-            [[ $rest == data/* || $rest == metadata/* || $rest == delete/* ]] && break
+    if vcli_match_kv2_mount "$path"; then
+        mount=$VCLI_KV_MOUNT
+        rest="${path#"$mount/"}"
+        # Already-explicit Vault API paths must not be wrapped a second time.
+        if [[ $rest != data/* && $rest != metadata/* && $rest != delete/* ]]; then
             case "$method" in GET|POST|PUT|PATCH|DELETE|LIST)
-                kv2=yes; path=$(vcli_kv_path "$path" "$method");;
+                kv2=yes
+                path=$(vcli_kv_path "$path" "$method")
+                ;;
             esac
-            break
-        done
+        fi
     fi
 
     local encoded url response_file payload_file="" payload="" status curl_status
