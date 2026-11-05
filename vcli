@@ -618,22 +618,16 @@ function vcli_kv_path(){
 
 # Encode path components but do not encode / or the query delimiter ?.
 function vcli_encode_endpoint(){
-    local raw="${1#/}" path query seg result="" encoded
-    path="${raw%%\?*}"
-    local -a segments
-    IFS='/' read -r -a segments <<< "$path"
-    for seg in "${segments[@]}"; do
-        encoded=$(urlencode "$seg") || return 1
-        if [[ -n $result ]]; then result+='/'; fi
-        result+="$encoded"
-    done
-    # Preserve trailing / for root listing and folders.
-    [[ $path == */ && -n $result ]] && result+='/';
-    if [[ $raw == *\?* ]]; then
-        query="${raw#*\?}"
-        result+="?$query"
+    local raw="${1#/}" path query encoded
+    path="${raw%%\\?*}"
+    # A single jq call encodes each segment independently while preserving /
+    # separators, empty segments and a caller-supplied Vault query string.
+    encoded=$(jq -nr --arg p "$path" '$p | split("/") | map(@uri) | join("/")') || return 1
+    if [[ $raw == *\\?* ]]; then
+        query="${raw#*\\?}"
+        encoded+="?$query"
     fi
-    printf '%s' "$result"
+    printf '%s' "$encoded"
 }
 
 # Report partial application without pretending multi-request Vault changes are atomic.
