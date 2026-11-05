@@ -88,6 +88,59 @@ class KV2AdvancedTests(unittest.TestCase):
         self.assertEqual(self.get("cross/dest/a",mount="team/config"),{"x":1})
         self.assertEqual(self.get("cross/dest/deep/b",mount="team/config"),{"x":2})
 
+    def test_11_cptree_preflight_checks_nested_mount_metadata_before_writing(self):
+        """An existing target under team/config aborts the *entire* copy."""
+        source = "kv2/" + self.p + "/overlap-copy/src"
+        target = "team/config/" + self.p + "/overlap-copy/dest"
+        self.put("overlap-copy/src/a", {"candidate": "a"})
+        self.put("overlap-copy/src/z", {"candidate": "z"})
+        self.put("overlap-copy/dest/z", {"existing": True}, mount="team/config")
+
+        result, _ = invoke(
+            f"cptree {source} {target}",
+            version=2,
+            mounts="team,team/config,kv2",
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Destination already exists", result.stdout + result.stderr)
+        with self.assertRaises(error.HTTPError) as caught:
+            self.get("overlap-copy/dest/a", mount="team/config")
+        self.assertEqual(caught.exception.code, 404)
+        self.assertEqual(
+            self.get("overlap-copy/dest/z", mount="team/config"),
+            {"existing": True},
+        )
+        self.assertEqual(
+            self.meta("overlap-copy/dest/z", mount="team/config")["current_version"],
+            1,
+        )
+
+    def test_12_cptree_refuses_soft_deleted_nested_mount_target(self):
+        """Soft-deleted KV v2 metadata still counts as occupied."""
+        source = "kv2/" + self.p + "/overlap-soft/src"
+        target = "team/config/" + self.p + "/overlap-soft/dest"
+        self.put("overlap-soft/src/a", {"candidate": "a"})
+        self.put("overlap-soft/src/z", {"candidate": "z"})
+        self.put("overlap-soft/dest/z", {"previous": True}, mount="team/config")
+        api("DELETE", "team/config/data/" + self.p + "/overlap-soft/dest/z")
+
+        result, _ = invoke(
+            f"cptree {source} {target}",
+            version=2,
+            mounts="team,team/config,kv2",
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Destination already exists", result.stdout + result.stderr)
+        for leaf in ("a", "z"):
+            with self.subTest(leaf=leaf):
+                with self.assertRaises(error.HTTPError) as caught:
+                    self.get("overlap-soft/dest/" + leaf, mount="team/config")
+                self.assertEqual(caught.exception.code, 404)
+        self.assertEqual(
+            self.meta("overlap-soft/dest/z", mount="team/config")["current_version"],
+            1,
+        )
+
     def test_09_nested_mount_wins_over_prefix_independent_of_order(self):
         """A configured 'team' prefix must not steal team/config requests."""
         leaf = "routing/longest-prefix"
