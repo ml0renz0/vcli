@@ -619,12 +619,12 @@ function vcli_kv_path(){
 # Encode path components but do not encode / or the query delimiter ?.
 function vcli_encode_endpoint(){
     local raw="${1#/}" path query encoded
-    path="${raw%%\\?*}"
+    path="${raw%%\?*}"
     # A single jq call encodes each segment independently while preserving /
     # separators, empty segments and a caller-supplied Vault query string.
     encoded=$(jq -nr --arg p "$path" '$p | split("/") | map(@uri) | join("/")') || return 1
-    if [[ $raw == *\\?* ]]; then
-        query="${raw#*\\?}"
+    if [[ $raw == *\?* ]]; then
+        query="${raw#*\?}"
         encoded+="?$query"
     fi
     printf '%s' "$encoded"
