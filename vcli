@@ -1233,26 +1233,15 @@ function _cptree(){
     leaves=$(_vcli_leaves "$source") || return 1
     # Preflight *every* destination first. In KV v2 metadata survives soft
     # deletion, so checking /data alone could resurrect a deleted secret.
-    local target probe mount rest metadata_path
-    local -a kv_mounts=()
-    if [[ ${VAULT_KV_VERSION:-1} == 2 ]]; then
-        IFS=',' read -r -a kv_mounts <<< "${VAULT_KV_MOUNTS:-secret}"
-    fi
+    local target probe
     while IFS= read -r leaf; do
         [[ -n $leaf ]] || continue
         relative="${leaf#"$source"/}"
         target="$dest/$relative"
-        metadata_path=""
-        for mount in "${kv_mounts[@]}"; do
-            mount="${mount#/}"; mount="${mount%/}"
-            if [[ $target == "/$mount/"* ]]; then
-                rest="${target#"/$mount/"}"
-                metadata_path="/$mount/metadata/$rest"
-                break
-            fi
-        done
-        if [[ -n $metadata_path ]]; then
-            probe="$metadata_path"
+        # Inspect metadata, not data: a soft-deleted KV v2 secret still
+        # occupies its destination. Reuse longest-prefix mount resolution.
+        if vcli_is_kv2_path "$target"; then
+            probe=$(vcli_kv2_metadata_path "$target") || return 1
         else
             probe="$target"
         fi
