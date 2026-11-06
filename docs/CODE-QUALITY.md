@@ -1,6 +1,6 @@
 # Fase 04-Q — Calidad, refactorización y eficiencia
 
-**Estado: planificada, pendiente de ejecución.** Hito obligatorio de la
+**Estado: en ejecución incremental; cierre y comparativa pendientes.** Hito obligatorio de la
 recuperación de `vcli`, después de la cobertura funcional y del playground
 con Vault real, y **antes de la auditoría y release candidate v0.7**.
 No modifica por sí solo el comportamiento del CLI ni declara optimizaciones
@@ -109,3 +109,27 @@ obligatoria para ejecutar `vcli`.
 Fases 00–03 (contratos y funcionalidad) → fase 04 (robustez, portabilidad,
 playground) → **04-Q (calidad y eficiencia)** → fase 05 (auditoría final y
 release candidate v0.7) → evolución funcional declarativa posterior.
+
+## Avance medible: recorridos recursivos
+
+- `_vcli_children` combina validación de `data.keys` y extracción en **una**
+  invocación de `jq` en lugar de dos por listado. Los contratos aislados
+  comprueban listados correctos, vacíos, error HTTP y respuesta inválida.
+- Benchmark **opt-in** `tests/integration/bench_recursive.py`: mide
+  `tree`, `find`, `cptree` y `backup` contra el Vault HTTPS desechable,
+  verificando el resultado de cada operación. Los datos de origen se guardan
+  en un montaje temporal y se eliminan desmontándolo incluso si hay errores.
+- Ejecución manual desde la raíz:
+  ```bash
+  VCLI_TEST_VAULT_TAG=2.1.1 VCLI_BENCH_RECURSIVE=1 \\
+    VCLI_BENCH_SIZES=10,100 VCLI_BENCH_REPEATS=3 \\
+    bash tests/integration/run.sh
+  ```
+  El runner primero ejecuta las suites completas de integración; el
+  benchmark solo se lanza al solicitarlo. Para incluir 1000 secretos,
+  establecer `VCLI_BENCH_SIZES=10,100,1000`, aumentar
+  `VCLI_BENCH_TIMEOUT` si fuese necesario y reservar tiempo suficiente.
+  Una comparativa por parejas admite `VCLI_BENCH_BASELINE=/ruta/vcli-anterior`
+  junto con `VCLI_BENCH_CANDIDATE=/ruta/vcli-candidato`. Ambos deben ser
+  ejecutables Bash que acepten `-n`. Las métricas p50/p95 no constituyen
+  todavía una comparación publicada ni un objetivo de regresión.
