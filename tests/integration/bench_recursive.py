@@ -94,7 +94,7 @@ def run_set(mount: str, size: int, candidate: Path, baseline: Path | None) -> No
         for operation in ("tree", "find", "cptree", "backup"):
             samples = []
             for rep in range(REPEATS):
-                target = f"{mount}/destination-{label}-{rep}"
+                target = f"{mount}/destination-{size}-{label}-{rep}"
                 if operation == "tree":
                     cmd = f"tree {mount}/tree"
                 elif operation == "find":
