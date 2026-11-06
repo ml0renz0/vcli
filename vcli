@@ -657,8 +657,8 @@ function _vcli_absolute_path(){
 function _vcli_children(){
     local response
     response=$(_curl "${1%/}/" "" LIST) || return 1
-    jq -e '(.data.keys | type) == "array"' <<< "$response" >/dev/null || return 1
-    jq -r '.data.keys[]' <<< "$response"
+    # Validate and emit in one jq process; an empty array is a valid listing.
+    jq -r 'if (.data.keys | type) == "array" then .data.keys[] else error("invalid Vault LIST response") end' <<< "$response"
 }
 function _vcli_leaves(){
     local root="$1" entries child
