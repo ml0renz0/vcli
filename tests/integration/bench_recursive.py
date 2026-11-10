@@ -6,8 +6,8 @@ Never print credentials or secret payloads. No production Vault is permitted.
 """
 from __future__ import annotations
 
-import json
 import math
+import re
 import os
 from pathlib import Path
 import statistics
@@ -30,13 +30,13 @@ def validate_fixture() -> None:
             and os.getenv("VAULT_CACERT")
             and os.getenv("VAULT_TOKEN") == ROOT_TOKEN):
         raise SystemExit("Refusing benchmark outside disposable HTTPS Vault")
-    if not SIZES or any(n < 1 or n > 1000 for n in SIZES):
-        raise SystemExit("VCLI_BENCH_SIZES must contain numbers from 1 to 1000")
+    if not SIZES or len(set(SIZES)) != len(SIZES) or any(n < 1 or n > 1000 for n in SIZES):
+        raise SystemExit("VCLI_BENCH_SIZES must contain distinct numbers from 1 to 1000")
     if REPEATS < 2 or REPEATS > 20:
         raise SystemExit("VCLI_BENCH_REPEATS must be within 2..20")
 
 
-def run_cli(binary: Path, command: str, root: str) -> tuple[float, str, Path]:
+def run_cli(binary: Path, command: str, expected_count: int) -> tuple[float, str]:
     with tempfile.TemporaryDirectory(prefix="vcli-recursive-bench-") as home:
         env = os.environ.copy()
         env.update({
@@ -66,9 +66,9 @@ def run_cli(binary: Path, command: str, root: str) -> tuple[float, str, Path]:
                 raise AssertionError("Backup did not create exactly one archive")
             with tarfile.open(files[0], "r:gz") as archive:
                 members = [m for m in archive if m.isfile()]
-                if len(members) != int(root):
-                    raise AssertionError(f"Backup count: {len(members)} != {root}")
-        return ms, result.stdout, Path(home)
+                if len(members) != expected_count:
+                    raise AssertionError(f"Backup count: {len(members)} != {expected_count}")
+        return ms, result.stdout
 
 
 def report(label: str, samples: list[float]) -> None:
@@ -82,39 +82,58 @@ def report(label: str, samples: list[float]) -> None:
 
 
 def run_set(mount: str, size: int, candidate: Path, baseline: Path | None) -> None:
-    secrets = [f"tree/branch{i % 10:02d}/secret{i:04d}" for i in range(size)]
-    for i, key in enumerate(secrets):
-        api("POST", f"{mount}/{key}", {"marker": "matched" if i == 0 else "other", "index": i})
+    # Isolate each cardinality: 100 -> 10 must really measure ten, not 100.
+    source = f"{mount}/tree-size-{size}"
+    for i in range(size):
+        key = f"branch{i % 10:02d}/secret{i:04d}"
+        api("POST", f"{source}/{key}", {
+            "marker": "matched" if i == 0 else "other", "index": i,
+        })
 
-    binaries = [("candidate", candidate)]
-    if baseline is not None:
-        binaries.insert(0, ("baseline", baseline))
+    for operation in ("tree", "find", "cptree", "backup"):
+        samples = {"candidate": []}
+        if baseline is not None:
+            samples["baseline"] = []
+        for rep in range(REPEATS):
+            # Alternate A/B order on the same dataset to limit warm-cache
+            # and runner drift; destination paths are unique per attempt.
+            binaries = [("candidate", candidate)]
+            if baseline is not None:
+                binaries.append(("baseline", baseline))
+                if rep % 2 == 0:
+                    binaries.reverse()
 
-    for label, binary in binaries:
-        for operation in ("tree", "find", "cptree", "backup"):
-            samples = []
-            for rep in range(REPEATS):
+            for label, binary in binaries:
                 target = f"{mount}/destination-{size}-{label}-{rep}"
                 if operation == "tree":
-                    cmd = f"tree {mount}/tree"
+                    cmd = f"tree {source}"
                 elif operation == "find":
-                    cmd = f'find {mount}/tree {{"marker":"matched","index":0}}'
+                    cmd = f'find {source} {{"marker":"matched","index":0}}'
                 elif operation == "cptree":
-                    cmd = f"cptree {mount}/tree {target}"
+                    cmd = f"cptree {source} {target}"
                 else:
-                    cmd = f"backup {mount}/tree"
+                    cmd = f"backup {source}"
 
-                elapsed, stdout, _ = run_cli(binary, cmd, str(size))
-                if operation == "tree" and "secret0000" not in stdout:
-                    raise AssertionError("Tree output omitted first secret")
+                elapsed, stdout = run_cli(binary, cmd, size)
+                if operation == "tree":
+                    # A successful exit is not proof that the whole tree was read.
+                    found = re.findall(r"secret[0-9]{4}", stdout)
+                    if len(found) != size or len(set(found)) != size:
+                        raise AssertionError(
+                            f"{label}: tree showed {len(found)} unique leaves, expected {size}"
+                        )
                 if operation == "find" and "secret0000" not in stdout:
                     raise AssertionError("Find output omitted expected secret")
                 if operation == "cptree":
-                    check = api("GET", f"{target}/branch00/secret0000")
-                    if check["data"]["index"] != 0:
-                        raise AssertionError("Copied secret was not preserved")
-                samples.append(elapsed)
-            report(f"size={size} {label}/{operation}", samples)
+                    for index in (0, size - 1):
+                        leaf = f"branch{index % 10:02d}/secret{index:04d}"
+                        check = api("GET", f"{target}/{leaf}")
+                        if check["data"]["index"] != index:
+                            raise AssertionError("Copied secret was not preserved")
+                samples[label].append(elapsed)
+
+        for label, durations in samples.items():
+            report(f"size={size} {label}/{operation}", durations)
 
 
 def main() -> None:
