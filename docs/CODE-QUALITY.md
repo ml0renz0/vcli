@@ -115,6 +115,10 @@ release candidate v0.7) → evolución funcional declarativa posterior.
 - `_vcli_children` combina validación de `data.keys` y extracción en **una**
   invocación de `jq` en lugar de dos por listado. Los contratos aislados
   comprueban listados correctos, vacíos, error HTTP y respuesta inválida.
+- El benchmark aísla cada cardinalidad en `tree-size-N`, alterna el orden
+  referencia/candidato por muestra y verifica que `tree` enumera exactamente
+  N secretos. `tests/cli/test_recursive_benchmark.py` protege la metodología
+  sin levantar Vault ni consumir los minutos de integración.
 - Benchmark **opt-in** `tests/integration/bench_recursive.py`: mide
   `tree`, `find`, `cptree` y `backup` contra el Vault HTTPS desechable,
   verificando el resultado de cada operación. Los datos de origen se guardan
