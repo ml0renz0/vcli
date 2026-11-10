@@ -81,7 +81,7 @@ class ExtendedVaultContracts(unittest.TestCase):
         })
         output = self.command(
             f'find kv1/{self.prefix}/find-json '
-            '{"value":"a  b","nested":{"a":1,"b":2}}'
+            '{"value":"a\\u0020\\u0020b","nested":{"a":1,"b":2}}'
         )
         self.assertIn("exact", output)
         self.assertNotIn("different", output)
