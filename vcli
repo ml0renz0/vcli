@@ -1140,7 +1140,7 @@ function _tree(){
     if [[ ${1:-} != /* ]]; then
         url="$current_pwd${1:-}"
     else
-        url="${1//\\/\\//\\/}"
+        url="$1"
     fi
     [[ -n ${2:-} ]] && ((depth+=1))
     debug "tree: visiting directory"
