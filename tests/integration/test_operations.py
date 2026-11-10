@@ -69,6 +69,27 @@ class ExtendedVaultContracts(unittest.TestCase):
         self.assertIn("alpha", matches)
         self.assertNotIn("beta", matches)
 
+    def test_10_find_compares_json_values_without_whitespace_collapse(self):
+        """JSON string whitespace and nested object key order must be respected."""
+        self.put("find-json/exact", {
+            "nested": {"b": 2, "a": 1},
+            "value": "a  b",
+        })
+        self.put("find-json/different", {
+            "nested": {"a": 1, "b": 2},
+            "value": "a b",
+        })
+        output = self.command(
+            f'find kv1/{self.prefix}/find-json '
+            '{"value":"a  b","nested":{"a":1,"b":2}}'
+        )
+        self.assertIn("exact", output)
+        self.assertNotIn("different", output)
+
+    def test_11_find_invalid_json_is_rejected(self):
+        result, _ = invoke(f"find kv1/{self.prefix}/find-json not-json")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_03_replace_changes_only_matching_secrets(self):
         self.put("replace/a", {"state": "old"})
         self.put("replace/deep/b", {"state": "old"})
