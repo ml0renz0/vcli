@@ -238,6 +238,26 @@ class InterruptedOperations(unittest.TestCase):
         self.assertEqual(self.stored("backup/z"), {"id": "z"})
 
 
+    def test_10_find_does_not_suppress_failed_leaf_read(self):
+        """A failed HTTPS read during search must not masquerade as no matches."""
+        self.store("find-failure/a", {"needle": "absent"})
+        self.store("find-failure/z", {"needle": "present"})
+        prefix = f"/v1/{self.path('find-failure')}/"
+        with self.proxy(fail_method="GET", fail_prefix=prefix) as (url, observed):
+            out = self.cli(
+                f'find {self.path("find-failure")} {{"needle":"present"}}',
+                url,
+            )
+        reads = [(method, code) for method, path, code in observed
+                 if method == "GET" and path.startswith(prefix)]
+        self.assertEqual(len(reads), 2, observed)
+        self.assertEqual(reads[0][1], 200, reads)
+        self.assertEqual(reads[1][1], 503, reads)
+        self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertNotIn("find-failure/z", out.stdout,
+                         "A failed leaf must not be reported as a match")
+        self.assertEqual(self.stored("find-failure/z"), {"needle": "present"})
+
     def create_limited_token(self):
         policy = "vcli-revoke-" + uuid4().hex[:12]
         api("PUT", f"sys/policies/acl/{policy}", {
