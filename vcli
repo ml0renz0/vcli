@@ -1136,35 +1136,27 @@ function padecho(){
 
 # display the vault's secret tree
 function _tree(){
-    local url
-    if [[ ! $1 =~ ^/ ]]; then
-        url="$current_pwd$1"
+    local url depth="${2:-0}" space="${3:-}" echo_space="${4:-}" paths path
+    if [[ ${1:-} != /* ]]; then
+        url="$current_pwd${1:-}"
     else
-        url=${1//\/\//\/}
+        url="${1//\\/\\//\\/}"
     fi
-    local depth="$2"
-    local space="$3"
-    local echo_space="$4"
-    # If no "$2" was passed then this iteration is the very first one, so depth=0
-    if [[ ! $depth ]]; then
-        depth=0
-    # other wise we increment a depth as we go deeper in the structure
-    else
-        let depth++
-    fi
-    debug "${echo_space}tree: '$url', depth: $depth, space: \"$space\""
-    # if $url is /
+    [[ -n ${2:-} ]] && ((depth+=1))
+    debug "tree: visiting directory"
     padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
-    paths=$(_ls "-_disable_colors_-" "$url" | tr -t '\n' ' ' | tr -s ' ')
-    for path in $paths; do
-        debug "${echo_space}   depth: $depth => found: $paths"
+    # Use the shared LIST validator. Failed subtrees must abort traversal,
+    # rather than silently produce an incomplete successful tree.
+    paths=$(_vcli_children "$url") || return 1
+    while IFS= read -r path; do
+        [[ -n $path ]] || continue
         space=${space/+/ }
-        if [[ $path =~ /$ ]]; then
-            _tree "$url/$path" "$depth" "$space+ " "$echo_space   "
+        if [[ $path == */ ]]; then
+            _tree "$url/$path" "$depth" "$space+ " "$echo_space   " || return 1
         else
             padecho "$path" "$((depth+1))" "$space\` " "$echo_space   "
         fi
-    done
+    done <<< "$paths"
 }
 
 # find secret in the vault's tree
