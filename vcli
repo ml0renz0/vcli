@@ -1169,32 +1169,21 @@ function _tree(){
 
 # find secret in the vault's tree
 function _find(){
-    local url
-    if [[ ! $1 =~ ^/ ]]; then
-        url="$current_pwd/$1"
-    else
-        url=${1//\/\//\/}
-    fi
-    shift
-    local data
-    data="$(echo "$@" | jq . -M -S | tr -t '\n' ' ' | tr -s ' ')"
-    # if $url is /
-    paths=$(_ls "-_disable_colors_-" "$url" | sed -e "s/,//" | tr -t '\n' ' ' | tr -s ' ')
-    for path in $paths; do
-        debug "${echo_space}find: '$url' => found: $paths"
-        if [[ $path =~ /$ ]]; then
-            _find "$url/$path" "$data"
-        else
-            secret=$(_cat "$url/$path" | jq -M -S ".data" | tr -t '\n' ' ' | tr -s ' ')
-            debug "find: checking candidate"
-            if [[ $secret == "$data" ]]; then
-                debug "find: candidate matched"
-                padecho "$url/$path" "0" "" ""
-            else
-                debug "find: candidate did not match"
-            fi
+    local root expected leaves leaf response actual
+    root=$(_vcli_absolute_path "${1:-}") || {
+        echo "Invalid find path" >&2; return 1;
+    }
+    # Compare canonical JSON objects, not whitespace-normalized shell text.
+    expected=$(printf '%s\n' "${2:-}" | jq -ceS 'select(type == "object")') || return 1
+    leaves=$(_vcli_leaves "$root") || return 1
+    while IFS= read -r leaf; do
+        [[ -n $leaf ]] || continue
+        response=$(_cat "$leaf") || return 1
+        actual=$(jq -ceS '.data | select(type == "object")' <<< "$response") || return 1
+        if [[ $actual == "$expected" ]]; then
+            padecho "$leaf" "0" "" ""
         fi
-    done
+    done <<< "$leaves"
 }
 
 # find in $1 and replace secret $2 with new secret $3
