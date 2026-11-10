@@ -258,6 +258,24 @@ class InterruptedOperations(unittest.TestCase):
                          "A failed leaf must not be reported as a match")
         self.assertEqual(self.stored("find-failure/z"), {"needle": "present"})
 
+    def test_11_tree_propagates_nested_list_failure(self):
+        """LIST 503 in a child directory must not look like an empty tree."""
+        self.store("tree-failure/branch/leaf", {"marker": "intact"})
+        self.store("tree-failure/sibling", {"marker": "safe"})
+        failing_path = f"/v1/{self.path('tree-failure/branch')}/"
+        with self.proxy(
+            fail_method="LIST", fail_prefix=failing_path, fail_index=1,
+        ) as (url, observed):
+            out = self.cli(f"tree {self.path('tree-failure')}", url)
+        failures = [(method, status) for method, path, status in observed
+                    if method == "LIST" and path == failing_path]
+        self.assertEqual(failures, [("LIST", 503)], observed)
+        self.assertNotEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertNotIn("leaf", out.stdout)
+        self.assertEqual(
+            self.stored("tree-failure/branch/leaf"), {"marker": "intact"}
+        )
+
     def create_limited_token(self):
         policy = "vcli-revoke-" + uuid4().hex[:12]
         api("PUT", f"sys/policies/acl/{policy}", {
