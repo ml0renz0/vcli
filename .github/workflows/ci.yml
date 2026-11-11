@@ -7,6 +7,23 @@ on:
     branches: [master]
     tags: ['v0.7.*']
   workflow_dispatch:
+    inputs:
+      recursive_benchmark:
+        description: 'Run one-Vault paired recursive benchmark instead of full E2E matrix'
+        type: boolean
+        default: false
+      baseline_ref:
+        description: 'Git commit to compare against (must contain vcli)'
+        type: string
+        default: '4f96cf2091be1d6c70a5e3df3bf214d6dfb4c67e'
+      sizes:
+        description: 'Distinct numbers of synthetic secrets (1..1000)'
+        type: string
+        default: '10,100'
+      repeats:
+        description: 'Paired samples (2..20)'
+        type: string
+        default: '4'
   schedule:
     - cron: '23 5 * * 1'
 
@@ -51,6 +68,7 @@ jobs:
 
   minimal:
     name: Minimal Linux ${{ matrix.distro }} CLI
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.recursive_benchmark) }}
     needs: static
     runs-on: ubuntu-24.04
     timeout-minutes: 14
@@ -98,6 +116,7 @@ jobs:
 
   integration:
     name: Vault ${{ matrix.vault }} integration
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.recursive_benchmark) }}
     needs: static
     runs-on: ubuntu-24.04
     timeout-minutes: 18
@@ -131,6 +150,7 @@ jobs:
 
   playground:
     name: Real Vault TLS playground acceptance
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.recursive_benchmark) }}
     needs: static
     runs-on: ubuntu-24.04
     timeout-minutes: 12
@@ -157,7 +177,7 @@ jobs:
   gate:
     name: Required CI gate
     needs: [static, integration, minimal, playground]
-    if: always()
+    if: ${{ always() && !(github.event_name == 'workflow_dispatch' && inputs.recursive_benchmark) }}
     runs-on: ubuntu-24.04
     steps:
       - name: Fail unless all mandatory jobs succeeded
@@ -171,6 +191,35 @@ jobs:
           test "$INTEGRATION_RESULT" = success
           test "$MINIMAL_RESULT" = success
           test "$PLAYGROUND_RESULT" = success
+
+  recursive_benchmark:
+    name: Paired recursion benchmark (one disposable TLS Vault)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.recursive_benchmark }}
+    needs: static
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout full history for the baseline reference
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Ensure benchmark runtime
+        run: |
+          missing=()
+          for cmd in jq curl openssl; do
+            command -v "$cmd" >/dev/null || missing+=("$cmd")
+          done
+          if (( ${#missing[@]} )); then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
+          fi
+      - name: Compare CLI revisions with real Vault
+        env:
+          BENCH_REF: ${{ inputs.baseline_ref }}
+          BENCH_SIZES: ${{ inputs.sizes }}
+          BENCH_REPEATS: ${{ inputs.repeats }}
+        run: |
+          bash scripts/bench-compare.sh "$BENCH_REF" "$BENCH_SIZES" "$BENCH_REPEATS"
 
   package_candidate:
     name: Produce release candidate artifact
