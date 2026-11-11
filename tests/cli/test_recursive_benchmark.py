@@ -37,7 +37,8 @@ class RecursiveBenchmarkDesignTests(TestCase):
                 return 1.0, "secret0000\n"
             return 1.0, "ok\n"
 
-        with patch.object(bench, "api", side_effect=fake_api), \
+        with patch.dict(os.environ, {"VAULT_TOKEN": "isolated-test-token"}), \
+             patch.object(bench, "api", side_effect=fake_api), \
              patch.object(bench, "run_cli", side_effect=fake_run), \
              patch.object(bench, "report",
                           side_effect=lambda label, samples: reported.append(label)), \
@@ -113,7 +114,8 @@ class RecursiveBenchmarkDesignTests(TestCase):
         def fake_api(method, path, data=None, token=None):
             return {}
 
-        with patch.object(bench, "api", side_effect=fake_api), \
+        with patch.dict(os.environ, {"VAULT_TOKEN": "isolated-test-token"}), \
+             patch.object(bench, "api", side_effect=fake_api), \
              patch.object(bench, "run_cli", return_value=(1.0, "secret0000")), \
              patch.object(bench, "REPEATS", 2):
             with self.assertRaisesRegex(AssertionError, "expected 3"):
