@@ -9,7 +9,7 @@ case "${VCLI_BENCH_STORAGE:-}" in
 esac
 [[ ${VCLI_BENCH_ONLY:-0} == 1 && ${VCLI_BENCH_RECURSIVE:-0} == 1 ]] || exit 2
 : "${VCLI_TEST_VAULT_TAG:?Pin a Vault version}"
-[[ $VCLI_TEST_VAULT_TAG =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 2
+[[ $VCLI_TEST_VAULT_TAG =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 2
 for tool in docker openssl jq curl; do command -v "$tool" >/dev/null || exit 2; done
 [[ -z ${DOCKER_HOST:-} || $DOCKER_HOST == unix://* ]] || exit 2
 if [[ -n ${DOCKER_CONTEXT:-} ]]; then
@@ -95,7 +95,7 @@ export VAULT_TOKEN
 VAULT_TOKEN=$(jq -er '.root_token' "$tmp/init.json")
 export VAULT_CACERT="$tmp/config/ca.pem"
 port=$(docker port "$network-vault-1" 8200/tcp)
-[[ $port =~ ^127\.0\.0\.1:[0-9]+$ ]] || exit 1
+[[ $port =~ ^127[.]0[.]0[.]1:[0-9]+$ ]] || exit 1
 export VAULT_ADDR="https://$port"
 unset VAULT_SKIP_VERIFY
 if curl -fsS --max-time 2 "$VAULT_ADDR/v1/sys/health" >/dev/null 2>&1; then
