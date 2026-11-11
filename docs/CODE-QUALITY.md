@@ -151,3 +151,41 @@ release candidate v0.7) → evolución funcional declarativa posterior.
   junto con `VCLI_BENCH_CANDIDATE=/ruta/vcli-candidato`. Ambos deben ser
   ejecutables Bash que acepten `-n`. Las métricas p50/p95 no constituyen
   todavía una comparación publicada ni un objetivo de regresión.
+
+## Almacenamiento integrado: perfiles Raft opcionales
+
+El CI funcional sigue utilizando **siete Vault de desarrollo TLS efímeros**
+sobre `inmem`. Los perfiles Raft están restringidos al benchmark manual;
+**no son una simulación de latencia de producción**, ya que los nodos del
+perfil HA comparten la misma máquina Docker, y las medidas de disco/red de
+GitHub Actions no representan discos ni zonas de disponibilidad reales.
+
+| Perfil | Instancias | Objetivo |
+| --- | ---: | --- |
+| `inmem` | 1 | Aislar el coste del cliente y los procesos |
+| `raft-1` | 1 | Persistencia integrada en disco, sin replicación |
+| `raft-3` | 3 | Consenso Raft con quórum 2/3 y replicación local |
+
+`tests/integration/run-raft.sh` crea una red y certificados TLS privados
+de vida corta, configura una ruta de datos independiente por nodo, inicializa
+Vault con Shamir (una participación por ser un entorno efímero), une y
+desprecinta los seguidores y **verifica los votantes y un solo líder** antes
+de medir. Se elimina el clúster completo al salir. No conserva datos,
+credenciales o llaves tras la prueba. Requiere Docker local y se niega
+a usar un daemon remoto. El perfil no es una receta de configuración segura
+de Vault para producción.
+
+Desde GitHub Actions → **VCLI trunk validation** → **Run workflow**:
+activar `recursive_benchmark`, seleccionar la rama de la PR y elegir
+`storage_backend=inmem`, `raft-1` o `raft-3`. Los tres perfiles utilizan
+el mismo benchmark y su misma comparación A/B. Para probar localmente:
+
+```bash
+VCLI_BENCH_STORAGE=raft-1 bash scripts/bench-compare.sh 4f96cf2091be1d6c70a5e3df3bf214d6dfb4c67e 10,100 4
+VCLI_BENCH_STORAGE=raft-3 bash scripts/bench-compare.sh 4f96cf2091be1d6c70a5e3df3bf214d6dfb4c67e 10,100 4
+```
+
+**Pendiente de verificación:** ejecutar los perfiles Raft con Docker real
+antes de dar por completada esta parte del plan. Los contratos estáticos
+verifican el selector, la topología esperada y los rechazos de perfiles
+inconsistentes, pero no sustituyen una prueba funcional real.
