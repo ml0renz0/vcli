@@ -63,5 +63,21 @@ class VaultMatrixParity(unittest.TestCase):
         )
 
 
+    def test_manual_benchmark_does_not_repeat_full_vault_matrix(self):
+        workflow = (RUNNER.parents[1] / ".github" / "workflows" / "ci.yml").read_text()
+        condition = "!(github.event_name == 'workflow_dispatch' && inputs.recursive_benchmark)"
+        self.assertEqual(workflow.count("if: ${{ " + condition + " }}"), 3)
+        self.assertIn(
+            "if: ${{ always() && " + condition + " }}", workflow
+        )
+        self.assertIn("name: Paired recursion benchmark (one disposable TLS Vault)", workflow)
+        self.assertIn("needs: static", workflow)
+        self.assertIn("bash scripts/bench-compare.sh", workflow)
+        runner = RUNNER.read_text(encoding="utf-8")
+        self.assertIn("if [[ ${VCLI_BENCH_ONLY:-0} == 1 ]]; then", runner)
+        self.assertIn("python3 -m tests.integration.bench_recursive", runner)
+
+
+
 if __name__ == "__main__":
     unittest.main()
