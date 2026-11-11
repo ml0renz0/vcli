@@ -16,6 +16,11 @@ on:
         description: 'Git commit to compare against (must contain vcli)'
         type: string
         default: '4f96cf2091be1d6c70a5e3df3bf214d6dfb4c67e'
+      storage_backend:
+        description: 'Disposable Vault storage profile'
+        type: choice
+        options: ['inmem', 'raft-1', 'raft-3']
+        default: 'inmem'
       sizes:
         description: 'Distinct numbers of synthetic secrets (1..1000)'
         type: string
@@ -61,8 +66,8 @@ jobs:
         run: python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_ci_matrix tests.cli.test_command_coverage tests.cli.test_endpoint_encoding tests.cli.test_recursive_listing tests.cli.test_recursive_benchmark
       - name: Bash syntax and ShellCheck
         run: |
-          bash -n ./vcli ./scripts/playground.sh ./scripts/playground-seed.sh ./scripts/bench-compare.sh ./tests/playground/smoke.sh
-          shellcheck --severity=error ./vcli ./scripts/playground.sh ./scripts/playground-seed.sh ./scripts/bench-compare.sh ./tests/playground/smoke.sh
+          bash -n ./vcli ./scripts/playground.sh ./scripts/playground-seed.sh ./scripts/bench-compare.sh ./tests/integration/run-raft.sh ./tests/playground/smoke.sh
+          shellcheck --severity=error ./vcli ./scripts/playground.sh ./scripts/playground-seed.sh ./scripts/bench-compare.sh ./tests/integration/run-raft.sh ./tests/playground/smoke.sh
       - name: Security invariants
         run: python3 tests/integration/test_source_guards.py ./vcli
 
@@ -216,6 +221,7 @@ jobs:
       - name: Compare CLI revisions with real Vault
         env:
           BENCH_REF: ${{ inputs.baseline_ref }}
+          VCLI_BENCH_STORAGE: ${{ inputs.storage_backend }}
           BENCH_SIZES: ${{ inputs.sizes }}
           BENCH_REPEATS: ${{ inputs.repeats }}
         run: |
