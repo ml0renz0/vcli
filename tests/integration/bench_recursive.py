@@ -25,11 +25,29 @@ TIMEOUT = int(os.getenv("VCLI_BENCH_TIMEOUT", "300"))
 
 
 def validate_fixture() -> None:
-    if not (VAULT.startswith("https://127.0.0.1:")
+    backend = os.getenv("VCLI_BENCH_STORAGE", "inmem")
+    token = os.getenv("VAULT_TOKEN", "")
+    ca = os.getenv("VAULT_CACERT", "")
+    if not (re.fullmatch(r"https://127\.0\.0\.1:[0-9]{2,5}", VAULT)
             and os.getenv("VCLI_TEST_READONLY_TOKEN")
-            and os.getenv("VAULT_CACERT")
-            and os.getenv("VAULT_TOKEN") == ROOT_TOKEN):
+            and os.path.isfile(ca) and token):
         raise SystemExit("Refusing benchmark outside disposable HTTPS Vault")
+    if backend == "inmem":
+        if token != ROOT_TOKEN:
+            raise SystemExit("Unexpected token for the ephemeral dev Vault")
+    elif backend in ("raft-1", "raft-3"):
+        if token == ROOT_TOKEN:
+            raise SystemExit("Raft must use its own freshly initialized token")
+        # Verify the actual leader and voters rather than trusting env flags.
+        config = api("GET", "sys/storage/raft/configuration", token=token)
+        peers = config["data"]["config"]["servers"]
+        voters = int(backend[-1])
+        if (len(peers) != voters or
+                sum(bool(p.get("voter")) for p in peers) != voters or
+                sum(bool(p.get("leader")) for p in peers) != 1):
+            raise SystemExit("Raft peer/voter topology does not match benchmark profile")
+    else:
+        raise SystemExit("Unknown VCLI_BENCH_STORAGE")
     if not SIZES or len(set(SIZES)) != len(SIZES) or any(n < 1 or n > 1000 for n in SIZES):
         raise SystemExit("VCLI_BENCH_SIZES must contain distinct numbers from 1 to 1000")
     if REPEATS < 2 or REPEATS > 20:
@@ -58,7 +76,7 @@ def run_cli(binary: Path, command: str, expected_count: int) -> tuple[float, str
                 f"{binary.name}: {command.split()[0]} exited {result.returncode}; "
                 f"stderr={result.stderr[-300:]}"
             )
-        if ROOT_TOKEN in result.stdout + result.stderr:
+        if env["VAULT_TOKEN"] in result.stdout + result.stderr:
             raise AssertionError("Credential leaked by CLI output")
         if command.startswith("backup "):
             files = list(Path(home).glob("backup_vault*.tgz"))
@@ -88,7 +106,7 @@ def run_set(mount: str, size: int, candidate: Path, baseline: Path | None) -> No
         key = f"branch{i % 10:02d}/secret{i:04d}"
         api("POST", f"{source}/{key}", {
             "marker": "matched" if i == 0 else "other", "index": i,
-        })
+        }, token=os.environ["VAULT_TOKEN"])
 
     for operation in ("tree", "find", "cptree", "backup"):
         samples = {"candidate": []}
@@ -127,7 +145,7 @@ def run_set(mount: str, size: int, candidate: Path, baseline: Path | None) -> No
                 if operation == "cptree":
                     for index in (0, size - 1):
                         leaf = f"branch{index % 10:02d}/secret{index:04d}"
-                        check = api("GET", f"{target}/{leaf}")
+                        check = api("GET", f"{target}/{leaf}", token=os.environ["VAULT_TOKEN"])
                         if check["data"]["index"] != index:
                             raise AssertionError("Copied secret was not preserved")
                 samples[label].append(elapsed)
@@ -147,13 +165,13 @@ def main() -> None:
     api("POST", f"sys/mounts/{mount}", {
         "type": "kv", "options": {"version": "1"},
         "description": "throwaway recursive benchmark",
-    })
+    }, token=os.environ["VAULT_TOKEN"])
     try:
         for size in SIZES:
             print(f"Recursive benchmark ({size} secrets, {REPEATS} samples)", flush=True)
             run_set(mount, size, candidate, baseline)
     finally:
-        api("DELETE", f"sys/mounts/{mount}")
+        api("DELETE", f"sys/mounts/{mount}", token=os.environ["VAULT_TOKEN"])
 
 
 if __name__ == "__main__":
