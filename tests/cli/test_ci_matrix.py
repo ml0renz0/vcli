@@ -63,6 +63,20 @@ class VaultMatrixParity(unittest.TestCase):
         )
 
 
+    def test_label_flags_are_explicit_and_never_run_on_synchronize(self):
+        workflow = (RUNNER.parents[2] / ".github" / "workflows" / "benchmark-labels.yml").read_text()
+        self.assertIn("types: [opened, reopened, synchronize, labeled]", workflow)
+        self.assertIn("name: Provision benchmark flag labels", workflow)
+        self.assertIn("issues: write", workflow)
+        self.assertIn("github.event.action != 'labeled'", workflow)
+        self.assertIn("gh api --method POST", workflow)
+        for label in ("bench:inmem", "bench:raft-1", "bench:raft-3"):
+            self.assertIn("github.event.label.name == '" + label + "'", workflow)
+            self.assertIn("          " + label + "|", workflow)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", workflow)
+        self.assertIn("cancel-in-progress: true", workflow)
+        self.assertIn("bash scripts/bench-compare.sh", workflow)
+        self.assertNotIn("pull_request_target:", workflow)
     def test_manual_benchmark_does_not_repeat_full_vault_matrix(self):
         workflow = (RUNNER.parents[2] / ".github" / "workflows" / "ci.yml").read_text()
         condition = "!(github.event_name == 'workflow_dispatch' && inputs.recursive_benchmark)"
