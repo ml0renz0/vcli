@@ -64,7 +64,7 @@ class VaultMatrixParity(unittest.TestCase):
 
 
     def test_manual_benchmark_does_not_repeat_full_vault_matrix(self):
-        workflow = (RUNNER.parents[1] / ".github" / "workflows" / "ci.yml").read_text()
+        workflow = (RUNNER.parents[2] / ".github" / "workflows" / "ci.yml").read_text()
         condition = "!(github.event_name == 'workflow_dispatch' && inputs.recursive_benchmark)"
         self.assertEqual(workflow.count("if: ${{ " + condition + " }}"), 3)
         self.assertIn(
