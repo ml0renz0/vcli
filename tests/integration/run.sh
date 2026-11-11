@@ -6,6 +6,19 @@ set -Eeuo pipefail
 cd "$(dirname "$0")/../.."
 : "${VCLI_TEST_VAULT_TAG:?Set a pinned HashiCorp Vault image tag}"
 
+# Raft is intentionally benchmark-only; normal E2E jobs stay on dev TLS.
+case "${VCLI_BENCH_STORAGE:-inmem}" in
+  inmem) ;;
+  raft-1|raft-3)
+    [[ ${VCLI_BENCH_ONLY:-0} == 1 && ${VCLI_BENCH_RECURSIVE:-0} == 1 ]] || {
+      echo 'Raft profiles require the opt-in recursive benchmark' >&2
+      exit 2
+    }
+    exec bash tests/integration/run-raft.sh
+    ;;
+  *) echo 'Unknown VCLI_BENCH_STORAGE' >&2; exit 2 ;;
+esac
+
 container="vcli-ci-vault-${RANDOM}-$$"
 root_token='local-ci-root-only'
 tls_dir=$(mktemp -d "${TMPDIR:-/tmp}/vcli-ci-tls.XXXXXX")
