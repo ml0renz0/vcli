@@ -141,12 +141,21 @@ if [[ -n ${VCLI_TEST_MINIMAL_IMAGE:-} ]]; then
   exit 0
 fi
 
-python3 -m unittest -v tests.integration.test_vault tests.integration.test_operations tests.integration.test_kv2_advanced tests.integration.test_security tests.integration.test_fault_injection tests.integration.test_partial_failures tests.integration.test_cas_concurrency tests.integration.test_auth_lifecycle tests.integration.test_tls tests.integration.test_tls_advanced tests.integration.test_pki_kerberos tests.integration.test_repl tests.integration.test_session_commands
-
-# Explicit opt-in only: recursive workloads can take minutes and must not
-# spend CI minutes in the normal per-version integration matrix.
-if [[ ${VCLI_BENCH_RECURSIVE:-0} == 1 ]]; then
+# Manual benchmark-only mode still provisions a fresh, verified-TLS Vault,
+# but skips the full E2E matrix to avoid redundant CI minutes.
+if [[ ${VCLI_BENCH_ONLY:-0} == 1 ]]; then
+  [[ ${VCLI_BENCH_RECURSIVE:-0} == 1 ]] || {
+    echo 'VCLI_BENCH_ONLY requires VCLI_BENCH_RECURSIVE=1' >&2
+    exit 2
+  }
   python3 -m tests.integration.bench_recursive
+else
+  python3 -m unittest -v tests.integration.test_vault tests.integration.test_operations tests.integration.test_kv2_advanced tests.integration.test_security tests.integration.test_fault_injection tests.integration.test_partial_failures tests.integration.test_cas_concurrency tests.integration.test_auth_lifecycle tests.integration.test_tls tests.integration.test_tls_advanced tests.integration.test_pki_kerberos tests.integration.test_repl tests.integration.test_session_commands
+
+  # Opt-in profiling after the full tests is also available locally.
+  if [[ ${VCLI_BENCH_RECURSIVE:-0} == 1 ]]; then
+    python3 -m tests.integration.bench_recursive
+  fi
 fi
 
 # Destructive last-stage test: seal the actual ephemeral Vault only after all
