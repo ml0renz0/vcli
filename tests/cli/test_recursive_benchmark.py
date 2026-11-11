@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from collections import Counter
+import os
+import tempfile
 from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
@@ -63,6 +65,49 @@ class RecursiveBenchmarkDesignTests(TestCase):
             ],
         )
         self.assertEqual(len(reported), 16)
+
+    def test_raft_profiles_require_verified_voters_and_single_leader(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ca = Path(tmp) / "ca.pem"
+            ca.write_text("fixture-only")
+            for voters in (1, 3):
+                with self.subTest(voters=voters):
+                    topology = {
+                        "data": {"config": {"servers": [
+                            {"voter": True, "leader": i == 0}
+                            for i in range(voters)
+                        ]}}
+                    }
+                    env = {
+                        "VAULT_ADDR": "https://127.0.0.1:18000",
+                        "VAULT_CACERT": str(ca),
+                        "VAULT_TOKEN": "test-dynamic-raft-token",
+                        "VCLI_TEST_READONLY_TOKEN": "test-readonly",
+                        "VCLI_BENCH_STORAGE": f"raft-{voters}",
+                    }
+                    with patch.dict(os.environ, env), \
+                         patch.object(bench, "VAULT", env["VAULT_ADDR"]), \
+                         patch.object(bench, "api", return_value=topology):
+                        bench.validate_fixture()
+                        topology["data"]["config"]["servers"][-1]["voter"] = False
+                        with self.assertRaisesRegex(SystemExit, "topology"):
+                            bench.validate_fixture()
+
+    def test_rejects_raft_profile_without_actual_raft_api(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ca = Path(tmp) / "ca.pem"
+            ca.write_text("fixture-only")
+            env = {
+                "VAULT_CACERT": str(ca),
+                "VAULT_TOKEN": "test-dynamic-raft-token",
+                "VCLI_TEST_READONLY_TOKEN": "test-readonly",
+                "VCLI_BENCH_STORAGE": "raft-3",
+            }
+            with patch.dict(os.environ, env), \
+                 patch.object(bench, "VAULT", "https://127.0.0.1:18000"), \
+                 patch.object(bench, "api", side_effect=RuntimeError("not raft")):
+                with self.assertRaisesRegex(RuntimeError, "not raft"):
+                    bench.validate_fixture()
 
     def test_rejects_incomplete_tree_output(self):
         def fake_api(method, path, data=None, token=None):
