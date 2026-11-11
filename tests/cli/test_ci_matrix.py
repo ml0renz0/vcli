@@ -73,6 +73,12 @@ class VaultMatrixParity(unittest.TestCase):
         self.assertIn("name: Paired recursion benchmark (one disposable TLS Vault)", workflow)
         self.assertIn("needs: static", workflow)
         self.assertIn("bash scripts/bench-compare.sh", workflow)
+        for profile in ("inmem", "raft-1", "raft-3"):
+            self.assertIn("'" + profile + "'", workflow)
+        self.assertIn("tests/integration/run-raft.sh", workflow)
+        runner = RUNNER.read_text(encoding="utf-8")
+        self.assertIn("exec bash tests/integration/run-raft.sh", runner)
+
         runner = RUNNER.read_text(encoding="utf-8")
         self.assertIn("if [[ ${VCLI_BENCH_ONLY:-0} == 1 ]]; then", runner)
         self.assertIn("python3 -m tests.integration.bench_recursive", runner)
