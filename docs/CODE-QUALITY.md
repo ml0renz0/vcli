@@ -133,6 +133,20 @@ release candidate v0.7) → evolución funcional declarativa posterior.
   benchmark solo se lanza al solicitarlo. Para incluir 1000 secretos,
   establecer `VCLI_BENCH_SIZES=10,100,1000`, aumentar
   `VCLI_BENCH_TIMEOUT` si fuese necesario y reservar tiempo suficiente.
+  Para comparar dos commits con **un solo Vault TLS** y omitir la matriz
+  E2E durante la medición, ejecutar desde la raíz:
+  ```bash
+  bash scripts/bench-compare.sh 4f96cf2091be1d6c70a5e3df3bf214d6dfb4c67e 10,100 4
+  ```
+  Se puede utilizar GitHub Actions → **VCLI trunk validation** → **Run
+  workflow**, seleccionar la rama de la PR y activar
+  `recursive_benchmark`. Los inputs `baseline_ref`, `sizes` y
+  `repeats` controlan el experimento. Ese despacho deja fuera
+  `integration`, `minimal`, `playground` y `gate`; ejecuta la
+  validación estática y un job independiente de benchmark con un único Vault
+  desechable. El CI normal de PR y push mantiene los siete Vault. La acción
+  manual requiere que GitHub permita despachar el workflow desde la rama
+  seleccionada; no se ha ejecutado todavía una comparativa de rendimiento.
   Una comparativa por parejas admite `VCLI_BENCH_BASELINE=/ruta/vcli-anterior`
   junto con `VCLI_BENCH_CANDIDATE=/ruta/vcli-candidato`. Ambos deben ser
   ejecutables Bash que acepten `-n`. Las métricas p50/p95 no constituyen
