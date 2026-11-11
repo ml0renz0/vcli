@@ -189,3 +189,22 @@ VCLI_BENCH_STORAGE=raft-3 bash scripts/bench-compare.sh 4f96cf2091be1d6c70a5e3df
 antes de dar por completada esta parte del plan. Los contratos estáticos
 verifican el selector, la topología esperada y los rechazos de perfiles
 inconsistentes, pero no sustituyen una prueba funcional real.
+
+## Flags de benchmark en pull requests
+
+Las etiquetas de repositorio `bench:inmem`, `bench:raft-1` y `bench:raft-3`
+seleccionan respectivamente un Vault de desarrollo, Raft en disco con un nodo
+y Raft HA con tres votantes. `.github/workflows/benchmark-labels.yml`
+crea las etiquetas ausentes cuando se abre o actualiza una PR del propio
+repositorio, **sin aplicarlas**. Añadir manualmente una etiqueta a una PR
+lanza únicamente el benchmark seleccionado; cambiar archivos, abrir la PR
+o añadir otras etiquetas **no** dispara ese benchmark. La ejecución por etiqueta
+se mantiene separada del CI obligatorio y del lanzamiento manual existente.
+
+Se utiliza una revisión base fijada y cargas `10,100` con cuatro muestras
+por operación; cada etiqueta desencadena una prueba una vez cuando se añade,
+no en cada commit posterior. Para repetir la misma prueba, retirar la etiqueta
+y volver a aplicarla. La creación de etiquetas necesita que Actions tenga
+permiso `issues: write` en el job de aprovisionamiento, no en el job de
+benchmark. Por motivos de seguridad, el flujo por etiqueta solo ejecuta PR
+cuyo repositorio de origen coincide con el de destino (no forks).
