@@ -15,7 +15,7 @@ class RecursiveBenchmarkDesignTests(TestCase):
         calls = []
         reported = []
 
-        def fake_api(method, path, data=None):
+        def fake_api(method, path, data=None, token=None):
             if method == "POST":
                 writes.append(path)
                 return {}
@@ -65,7 +65,7 @@ class RecursiveBenchmarkDesignTests(TestCase):
         self.assertEqual(len(reported), 16)
 
     def test_rejects_incomplete_tree_output(self):
-        def fake_api(method, path, data=None):
+        def fake_api(method, path, data=None, token=None):
             return {}
 
         with patch.object(bench, "api", side_effect=fake_api), \
