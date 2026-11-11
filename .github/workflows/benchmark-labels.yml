@@ -14,9 +14,9 @@ concurrency:
 
 jobs:
   benchmark:
-    name: Benchmark ${{{ github.event.label.name }}
+    name: Benchmark ${{ github.event.label.name }}
     if: >-
-      ${{{
+      ${{
         github.event.pull_request.head.repo.full_name == github.repository &&
         (
           github.event.label.name == 'bench:inmem' ||
@@ -47,7 +47,7 @@ jobs:
           fi
       - name: Compare against pinned pre-refactor revision
         env:
-          VCLI_BENCH_STORAGE: ${{{ github.event.label.name == 'bench:raft-3' && 'raft-3' || github.event.label.name == 'bench:raft-1' && 'raft-1' || 'inmem' }}
+          VCLI_BENCH_STORAGE: ${{ github.event.label.name == 'bench:raft-3' && 'raft-3' || github.event.label.name == 'bench:raft-1' && 'raft-1' || 'inmem' }}
         run: |
           bash scripts/bench-compare.sh \
             4f96cf2091be1d6c70a5e3df3bf214d6dfb4c67e 10,100 4
