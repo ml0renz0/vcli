@@ -64,7 +64,7 @@ launch(){
   local i=$1 name="$network-vault-$1"
   local -a expose=()
   if ((i==1)); then expose=(--publish '127.0.0.1::8200'); fi
-  docker run --detach --rm --name "$name"     --user "$(id -u):$(id -g)" --network "$network"     --network-alias "vault-$i" "${expose[@]}"     --mount "type=bind,source=$tmp/config,target=/vault/config,readonly"     --mount "type=bind,source=$tmp/data-$i,target=/vault/data"     "hashicorp/vault:$VCLI_TEST_VAULT_TAG"     server -config="/vault/config/node-$i.hcl" >/dev/null
+  docker run --detach --name "$name"     --user "$(id -u):$(id -g)" --network "$network"     --network-alias "vault-$i" "${expose[@]}"     --mount "type=bind,source=$tmp/config,target=/vault/config,readonly"     --mount "type=bind,source=$tmp/data-$i,target=/vault/data"     "hashicorp/vault:$VCLI_TEST_VAULT_TAG"     server -config="/vault/config/node-$i.hcl" >/dev/null
   containers+=("$name")
 }
 v(){
