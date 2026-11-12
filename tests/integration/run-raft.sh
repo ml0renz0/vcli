@@ -63,7 +63,8 @@ docker network create "$network" >/dev/null
 launch(){
   local i=$1 name="$network-vault-$1"
   local -a expose=()
-  if ((i==1)); then expose=(--publish '127.0.0.1::8200'); fi
+  # Each node needs its own private loopback endpoint for API unseal.
+  expose=(--publish '127.0.0.1::8200')
   docker run --detach --name "$name"     --user "$(id -u):$(id -g)" --network "$network"     --network-alias "vault-$i" "${expose[@]}"     --mount "type=bind,source=$tmp/config,target=/vault/config,readonly"     --mount "type=bind,source=$tmp/data-$i,target=/vault/data"     --entrypoint vault "hashicorp/vault:$VCLI_TEST_VAULT_TAG"     server -config="/vault/config/node-$i.hcl" >/dev/null
   containers+=("$name")
 }
@@ -89,11 +90,19 @@ wait_node(){
   return 1
 }
 unseal(){
-  local i=$1
-  # The unseal key is only transmitted via stdin.
-  jq -r '.unseal_keys_b64[0]' "$tmp/init.json" |
-    docker exec -i --env 'VAULT_ADDR=https://127.0.0.1:8200'     --env 'VAULT_CACERT=/vault/config/ca.pem'     "$network-vault-$i" vault operator unseal -format=json |
-    jq -e '.sealed==false' >/dev/null
+  local i=$1 binding
+  binding=$(docker port "$network-vault-$i" 8200/tcp)
+  [[ $binding =~ ^127[.]0[.]0[.]1:[0-9]+$ ]] || {
+    echo 'Unseal endpoint is not loopback-only' >&2
+    return 1
+  }
+  # Read the Shamir key from the private JSON file; never put it in argv.
+  jq -nc --slurpfile initialized "$tmp/init.json" \
+    '{key: $initialized[0].unseal_keys_b64[0]}' |
+    curl --silent --show-error --fail --cacert "$tmp/config/ca.pem" \
+      --header 'Content-Type: application/json' --data-binary @- \
+      "https://$binding/v1/sys/unseal" |
+    jq -e '.sealed == false' >/dev/null
 }
 launch 1
 wait_node 1
