@@ -76,6 +76,7 @@ class VaultMatrixParity(unittest.TestCase):
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", workflow)
         self.assertIn("cancel-in-progress: true", workflow)
         self.assertIn("bash scripts/bench-compare.sh", workflow)
+        self.assertIn("none 10,100 4", workflow)
         self.assertNotIn("pull_request_target:", workflow)
     def test_manual_benchmark_does_not_repeat_full_vault_matrix(self):
         workflow = (RUNNER.parents[2] / ".github" / "workflows" / "ci.yml").read_text()
