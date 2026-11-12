@@ -59,7 +59,7 @@ def run_cli(binary: Path, command: str, expected_count: int) -> tuple[float, str
         env = os.environ.copy()
         env.update({
             "HOME": home, "TMPDIR": home, "TERM": "dumb",
-            "VAULT_ADDR": VAULT, "VAULT_TOKEN": ROOT_TOKEN,
+            "VAULT_ADDR": VAULT, "VAULT_TOKEN": os.environ["VAULT_TOKEN"],
             "VAULT_CACERT": os.environ["VAULT_CACERT"],
             "VAULT_KV_VERSION": "1",
             "VAULT_KV_MOUNTS": "kv2,team/config",
