@@ -74,6 +74,10 @@ v(){
 wait_node(){
   local i=$1 status
   for ((retry=0; retry<60; retry++)); do
+    if [[ $(docker inspect --format '{{.State.Running}}' "$network-vault-$i") != true ]]; then
+      echo "Raft container $i exited before readiness" >&2
+      break
+    fi
     status=$(v "$i" status -format=json 2>/dev/null) || true
     if jq -e '(.initialized | type)=="boolean"' <<< "$status" >/dev/null 2>&1; then return 0; fi
     sleep 1
