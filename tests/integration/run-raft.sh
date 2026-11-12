@@ -90,19 +90,22 @@ wait_node(){
   return 1
 }
 unseal(){
-  local i=$1 binding
+  local i=$1 binding result
   binding=$(docker port "$network-vault-$i" 8200/tcp)
   [[ $binding =~ ^127[.]0[.]0[.]1:[0-9]+$ ]] || {
     echo 'Unseal endpoint is not loopback-only' >&2
     return 1
   }
-  # Read the Shamir key from the private JSON file; never put it in argv.
-  jq -nc --slurpfile initialized "$tmp/init.json" \
+  # Read the private Shamir share from JSON, never a process argument.
+  result=$(jq -nc --slurpfile initialized "$tmp/init.json" \
     '{key: $initialized[0].unseal_keys_b64[0]}' |
     curl --silent --show-error --fail --cacert "$tmp/config/ca.pem" \
       --header 'Content-Type: application/json' --data-binary @- \
-      "https://$binding/v1/sys/unseal" |
-    jq -e '.sealed == false' >/dev/null
+      "https://$binding/v1/sys/unseal") || return 1
+  if ! jq -e '.sealed == false' <<< "$result" >/dev/null; then
+    echo "Raft node $i did not unseal: $(jq -c '{initialized, sealed, progress, t}' <<< "$result")" >&2
+    return 1
+  fi
 }
 launch 1
 wait_node 1
@@ -145,7 +148,9 @@ for ((i=2; i<=nodes; i++)); do
       sed "s/${VAULT_TOKEN}/[REDACTED]/g" >&2 || true
     exit 1
   fi
+  echo "Raft follower $i join accepted; attempting unseal" >&2
   unseal "$i"
+  echo "Raft follower $i unsealed" >&2
 done
 ready=no
 for ((retry=0; retry<90; retry++)); do
