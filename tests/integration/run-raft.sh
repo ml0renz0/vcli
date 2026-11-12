@@ -121,7 +121,23 @@ fi
 for ((i=2; i<=nodes; i++)); do
   launch "$i"
   wait_node "$i"
-  v "$i" operator raft join -leader-ca-cert=/vault/config/ca.pem     'https://vault-1:8200' >/dev/null
+  joined=no
+  for attempt in 1 2 3; do
+    if v "$i" operator raft join -leader-ca-cert=/vault/config/ca.pem \
+      'https://vault-1:8200' >/dev/null 2>&1; then
+      joined=yes
+      break
+    fi
+    sleep 2
+  done
+  if [[ $joined != yes ]]; then
+    echo "Raft follower $i could not join the leader" >&2
+    docker logs "$network-vault-1" --tail 45 2>&1 |
+      sed "s/${VAULT_TOKEN}/[REDACTED]/g" >&2 || true
+    docker logs "$network-vault-$i" --tail 45 2>&1 |
+      sed "s/${VAULT_TOKEN}/[REDACTED]/g" >&2 || true
+    exit 1
+  fi
   unseal "$i"
 done
 ready=no
