@@ -1142,6 +1142,8 @@ function _tree(){
     else
         url="$1"
     fi
+    # A trailing slash is accepted from callers, but never doubled in recursion.
+    [[ $url == / ]] || url=${url%/}
     [[ -n ${2:-} ]] && ((depth+=1))
     debug "tree: visiting directory"
     padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
