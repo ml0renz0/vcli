@@ -121,10 +121,17 @@ fi
 for ((i=2; i<=nodes; i++)); do
   launch "$i"
   wait_node "$i"
+  # The Raft join API expects PEM *contents*, not the certificate path.
+  # --rawfile puts the CA in the HTTPS body, never in argv or shell logs.
+  binding=$(docker port "$network-vault-$i" 8200/tcp)
+  [[ $binding =~ ^127[.]0[.]0[.]1:[0-9]+$ ]] || exit 1
   joined=no
   for attempt in 1 2 3; do
-    if v "$i" operator raft join -leader-ca-cert=/vault/config/ca.pem \
-      'https://vault-1:8200' >/dev/null 2>&1; then
+    if jq -nc --rawfile ca "$tmp/config/ca.pem" \
+      '{leader_api_addr:"https://vault-1:8200", leader_ca_cert:$ca}' |
+      curl --silent --show-error --fail --cacert "$tmp/config/ca.pem" \
+        --header 'Content-Type: application/json' --data-binary @- \
+        "https://$binding/v1/sys/storage/raft/join" >/dev/null; then
       joined=yes
       break
     fi
