@@ -124,7 +124,7 @@ def run_set(mount: str, size: int, candidate: Path, baseline: Path | None) -> No
             for label, binary in binaries:
                 target = f"{mount}/destination-{size}-{label}-{rep}"
                 if operation == "tree":
-                    cmd = f"tree {source}"
+                    cmd = f"tree {source}/"
                 elif operation == "find":
                     cmd = f'find {source} {{"marker":"matched","index":0}}'
                 elif operation == "cptree":
