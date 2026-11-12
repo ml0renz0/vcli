@@ -177,18 +177,20 @@ de Vault para producción.
 
 Desde GitHub Actions → **VCLI trunk validation** → **Run workflow**:
 activar `recursive_benchmark`, seleccionar la rama de la PR y elegir
-`storage_backend=inmem`, `raft-1` o `raft-3`. Los tres perfiles utilizan
-el mismo benchmark y su misma comparación A/B. Para probar localmente:
+`storage_backend=inmem`, `raft-1` o `raft-3`. Los tres perfiles utilizan el mismo benchmark; con un commit de referencia
+se comparan dos CLI (A/B) y con `none` se mide exclusivamente el candidato. Para probar localmente:
 
 ```bash
 VCLI_BENCH_STORAGE=raft-1 bash scripts/bench-compare.sh 4f96cf2091be1d6c70a5e3df3bf214d6dfb4c67e 10,100 4
 VCLI_BENCH_STORAGE=raft-3 bash scripts/bench-compare.sh 4f96cf2091be1d6c70a5e3df3bf214d6dfb4c67e 10,100 4
 ```
 
-**Pendiente de verificación:** ejecutar los perfiles Raft con Docker real
-antes de dar por completada esta parte del plan. Los contratos estáticos
-verifican el selector, la topología esperada y los rechazos de perfiles
-inconsistentes, pero no sustituyen una prueba funcional real.
+**Validación funcional real completada:** [inmem #43138509881](https://github.com/ml0renz0/vcli/actions/runs/43138509881),
+[raft-1 #43137292992](https://github.com/ml0renz0/vcli/actions/runs/43137292992) y
+[raft-3 #43138179058](https://github.com/ml0renz0/vcli/actions/runs/43138179058).
+En Raft-3 el runner verificó un líder y **tres votantes**, y el bootstrap
+Shamir/TLS terminó correctamente. Los resultados de cada operación se
+contrastaron con el estado de Vault, no solo con el exit code de vcli.
 
 ## Flags de benchmark en pull requests
 
@@ -201,10 +203,42 @@ lanza únicamente el benchmark seleccionado; cambiar archivos, abrir la PR
 o añadir otras etiquetas **no** dispara ese benchmark. La ejecución por etiqueta
 se mantiene separada del CI obligatorio y del lanzamiento manual existente.
 
-Se utiliza una revisión base fijada y cargas `10,100` con cuatro muestras
-por operación; cada etiqueta desencadena una prueba una vez cuando se añade,
+Las etiquetas miden **solo el candidato actual** (sin baseline histórica),
+con cargas `10,100` y cuatro muestras por operación; cada etiqueta desencadena una prueba una vez cuando se añade,
 no en cada commit posterior. Para repetir la misma prueba, retirar la etiqueta
 y volver a aplicarla. La creación de etiquetas necesita que Actions tenga
 permiso `issues: write` en el job de aprovisionamiento, no en el job de
 benchmark. Por motivos de seguridad, el flujo por etiqueta solo ejecuta PR
 cuyo repositorio de origen coincide con el de destino (no forks).
+
+## Resultados reales: perfiles inmem / Raft, 2026-11-12
+
+Los tres workflows etiquetados usan **Vault 2.1.1**, TLS verificado,
+el mismo `vcli` candidato y 4 muestras por combinación de tamaño y
+operación; los resultados se validan funcionalmente. Las cifras están
+redondeadas a una décima de milisegundo y son **medianas**, no percentiles
+p95 ni mejoras de versiones.
+
+| Secretos | Operación | inmem (ms) | raft-1 (ms) | raft-3 (ms) |
+| ---: | --- | ---: | ---: | ---: |
+| 10 | tree | 248,6 | 339,2 | 380,8 |
+| 10 | find | 442,3 | 603,1 | 674,4 |
+| 10 | cptree | 750,1 | 1.063,6 | 1.187,5 |
+| 10 | backup | 470,3 | 630,9 | 729,3 |
+| 100 | tree | 254,2 | 316,3 | 385,1 |
+| 100 | find | 2.247,7 | 2.817,1 | 3.474,6 |
+| 100 | cptree | 5.438,1 | 7.097,7 | 8.614,9 |
+| 100 | backup | 2.424,0 | 3.131,4 | 3.753,6 |
+
+**Interpretación:** estos perfiles se ejecutaron en runners efímeros
+distintos de GitHub Actions. Las diferencias observadas **no aíslan**
+el efecto del backend o del número de nodos porque también pueden reflejar
+variabilidad de CPU, disco, carga y red local de cada runner. Raft-3 usa
+tres contenedores en **un único host**, no tres zonas de disponibilidad.
+Estas medidas tampoco representan la latencia de un despliegue de producción.
+
+**Pendiente de la fase 04-Q:** comparativa A/B con dos revisiones que pasen
+la misma validación funcional, muestreo mayor y medición de procesos/HTTP.
+El commit de referencia anterior `4f96cf2` no es un baseline válido para
+todos los casos de árbol y se rechazó explícitamente por devolver resultados
+incompletos. No se publican mejoras respecto a ese commit.
