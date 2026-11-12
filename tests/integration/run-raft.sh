@@ -78,7 +78,11 @@ wait_node(){
     if jq -e '(.initialized | type)=="boolean"' <<< "$status" >/dev/null 2>&1; then return 0; fi
     sleep 1
   done
-  echo "Raft node $i failed startup" >&2; return 1
+  echo "Raft node $i failed startup (status and container logs):" >&2
+  docker inspect --format '{{.State.Status}}: exit={{.State.ExitCode}}' \
+    "$network-vault-$i" >&2 || true
+  docker logs "$network-vault-$i" --tail 35 >&2 || true
+  return 1
 }
 unseal(){
   local i=$1
