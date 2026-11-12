@@ -65,6 +65,10 @@ class ExtendedVaultContracts(unittest.TestCase):
         tree = self.command(f"tree kv1/{self.prefix}/browse")
         self.assertIn("alpha", tree)
         self.assertIn("beta", tree)
+        # A directory-style trailing slash must not create // in child LIST URLs.
+        trailing = self.command(f"tree kv1/{self.prefix}/browse/")
+        self.assertIn("alpha", trailing)
+        self.assertIn("beta", trailing)
         matches = self.command(f'find kv1/{self.prefix}/browse {{"marker":"match"}}')
         self.assertIn("alpha", matches)
         self.assertNotIn("beta", matches)
