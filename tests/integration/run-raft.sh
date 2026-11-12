@@ -136,5 +136,7 @@ done
 curl -fsS --cacert "$VAULT_CACERT" "$VAULT_ADDR/v1/sys/health" >/dev/null
 export VCLI_TEST_READONLY_TOKEN
 VCLI_TEST_READONLY_TOKEN=$(v 1 token create -policy=default -orphan -field=token)
+# Use the same known KV1 mount as the normal integration matrix.
+v 1 secrets enable -path=kv1 -version=1 kv >/dev/null
 echo "Raft fixture ready: $nodes voters (TLS, disk)" >&2
 python3 -m tests.integration.bench_recursive
