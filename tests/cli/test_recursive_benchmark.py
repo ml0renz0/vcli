@@ -67,6 +67,27 @@ class RecursiveBenchmarkDesignTests(TestCase):
         )
         self.assertEqual(len(reported), 16)
 
+    def test_cli_subprocess_uses_the_active_fixture_token(self):
+        """Raft's initialized root token must reach the real CLI, not dev token."""
+        observed = {}
+        token = "fixture-dynamic-raft-token"
+
+        def fake_subprocess(argv, **kwargs):
+            observed["token"] = kwargs["env"]["VAULT_TOKEN"]
+            return type("Completed", (), {
+                "returncode": 0, "stdout": "secret0000", "stderr": ""
+            })()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ca = Path(tmp) / "ca.pem"
+            ca.write_text("fixture-only")
+            with patch.dict(os.environ, {
+                "VAULT_TOKEN": token, "VAULT_CACERT": str(ca),
+            }), patch.object(bench.subprocess, "run",
+                             side_effect=fake_subprocess):
+                bench.run_cli(Path("/tmp/vcli"), "tree kv1/fixture/", 1)
+        self.assertEqual(observed["token"], token)
+
     def test_raft_profiles_require_verified_voters_and_single_leader(self):
         with tempfile.TemporaryDirectory() as tmp:
             ca = Path(tmp) / "ca.pem"
