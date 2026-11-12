@@ -174,17 +174,27 @@ def main() -> None:
     baseline = Path(baseline_arg).resolve() if baseline_arg else None
     if not candidate.is_file() or (baseline is not None and not baseline.is_file()):
         raise SystemExit("Benchmark CLI executable not found")
-    mount = f"vcli-benchmark-{uuid4().hex[:12]}"
-    api("POST", f"sys/mounts/{mount}", {
-        "type": "kv", "options": {"version": "1"},
-        "description": "throwaway recursive benchmark",
-    }, token=os.environ["VAULT_TOKEN"])
+    backend = os.getenv("VCLI_BENCH_STORAGE", "inmem")
+    if backend.startswith("raft-"):
+        # The Raft runner owns a known KV1 mount. Avoid conflating dynamic
+        # mount discovery with recursion/storage measurements.
+        mount = f"kv1/benchmark-{uuid4().hex[:12]}"
+        created_mount = False
+    else:
+        mount = f"vcli-benchmark-{uuid4().hex[:12]}"
+        created_mount = True
+        api("POST", f"sys/mounts/{mount}", {
+            "type": "kv", "options": {"version": "1"},
+            "description": "throwaway recursive benchmark",
+        }, token=os.environ["VAULT_TOKEN"])
     try:
         for size in SIZES:
             print(f"Recursive benchmark ({size} secrets, {REPEATS} samples)", flush=True)
             run_set(mount, size, candidate, baseline)
     finally:
-        api("DELETE", f"sys/mounts/{mount}", token=os.environ["VAULT_TOKEN"])
+        if created_mount:
+            api("DELETE", f"sys/mounts/{mount}", token=os.environ["VAULT_TOKEN"])
+        # Raft is fully ephemeral and the runner deletes the cluster and disk.
 
 
 if __name__ == "__main__":
