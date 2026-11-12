@@ -138,7 +138,8 @@ def run_set(mount: str, size: int, candidate: Path, baseline: Path | None) -> No
                     found = re.findall(r"secret[0-9]{4}", stdout)
                     if len(found) != size or len(set(found)) != size:
                         raise AssertionError(
-                            f"{label}: tree showed {len(found)} unique leaves, expected {size}"
+                            f"{label}: tree showed {len(found)} unique leaves, expected {size}; "
+                            f"output={stdout.replace(os.environ['VAULT_TOKEN'], '[REDACTED]')[:500]!r}"
                         )
                 if operation == "find" and "secret0000" not in stdout:
                     raise AssertionError("Find output omitted expected secret")
