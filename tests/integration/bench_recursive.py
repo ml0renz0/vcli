@@ -78,6 +78,13 @@ def run_cli(binary: Path, command: str, expected_count: int) -> tuple[float, str
             )
         if env["VAULT_TOKEN"] in result.stdout + result.stderr:
             raise AssertionError("Credential leaked by CLI output")
+        if command.startswith(("tree ", "ls ")) and (
+                command.startswith("ls ") and not result.stdout.strip()
+                or command.startswith("tree ") and "secret0000" not in result.stdout):
+            diagnostic = result.stderr.replace(env["VAULT_TOKEN"], "[REDACTED]")
+            if diagnostic:
+                print(f"{binary.name}: {command.split()[0]} diagnostic: "
+                      f"{diagnostic[-500:]!r}", flush=True)
         if command.startswith("backup "):
             files = list(Path(home).glob("backup_vault*.tgz"))
             if len(files) != 1:
