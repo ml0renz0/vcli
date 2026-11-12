@@ -55,14 +55,14 @@ class RecursiveBenchmarkDesignTests(TestCase):
         self.assertEqual(
             [(name, command, n) for name, command, n in tree_calls],
             [
-                ("ref", "tree fixture/tree-size-100", 100),
-                ("base", "tree fixture/tree-size-100", 100),
-                ("base", "tree fixture/tree-size-100", 100),
-                ("ref", "tree fixture/tree-size-100", 100),
-                ("ref", "tree fixture/tree-size-10", 10),
-                ("base", "tree fixture/tree-size-10", 10),
-                ("base", "tree fixture/tree-size-10", 10),
-                ("ref", "tree fixture/tree-size-10", 10),
+                ("ref", "tree fixture/tree-size-100/", 100),
+                ("base", "tree fixture/tree-size-100/", 100),
+                ("base", "tree fixture/tree-size-100/", 100),
+                ("ref", "tree fixture/tree-size-100/", 100),
+                ("ref", "tree fixture/tree-size-10/", 10),
+                ("base", "tree fixture/tree-size-10/", 10),
+                ("base", "tree fixture/tree-size-10/", 10),
+                ("ref", "tree fixture/tree-size-10/", 10),
             ],
         )
         self.assertEqual(len(reported), 16)
