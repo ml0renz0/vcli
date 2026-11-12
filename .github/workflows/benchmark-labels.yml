@@ -78,9 +78,9 @@ jobs:
             sudo apt-get update -qq
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
           fi
-      - name: Compare against pinned pre-refactor revision
+      - name: Measure current CLI against selected Vault backend
         env:
           VCLI_BENCH_STORAGE: ${{ github.event.label.name == 'bench:raft-3' && 'raft-3' || github.event.label.name == 'bench:raft-1' && 'raft-1' || 'inmem' }}
         run: |
           bash scripts/bench-compare.sh \
-            4f96cf2091be1d6c70a5e3df3bf214d6dfb4c67e 10,100 4
+            none 10,100 4
