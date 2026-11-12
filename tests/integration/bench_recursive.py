@@ -72,9 +72,28 @@ def run_cli(binary: Path, command: str, expected_count: int) -> tuple[float, str
         )
         ms = (time.perf_counter_ns() - started) / 1_000_000
         if result.returncode:
+            trace = ""
+            if command.startswith("tree "):
+                # Reproduce only failed read-only commands with debug tracing.
+                # Never rerun writes after a failure or time an instrumented run.
+                trace_file = Path(home) / "vcli-trace"
+                diagnostic_env = env.copy()
+                diagnostic_env.update({"DEBUG": "yes", "VCLI_DEBUGFILE": str(trace_file)})
+                subprocess.run(
+                    [str(binary), "-n"], input=command + "\n",
+                    env=diagnostic_env, text=True, capture_output=True, timeout=TIMEOUT,
+                )
+                if trace_file.exists():
+                    trace = "; ".join(
+                        line for line in trace_file.read_text().splitlines()
+                        if "request:" in line or "tree:" in line
+                    )[-450:]
+            secret = env["VAULT_TOKEN"]
             raise AssertionError(
                 f"{binary.name}: {command.split()[0]} exited {result.returncode}; "
-                f"stderr={result.stderr[-300:]}"
+                f"stdout={result.stdout.replace(secret, '[REDACTED]')[-250:]!r}; "
+                f"stderr={result.stderr.replace(secret, '[REDACTED]')[-250:]!r}; "
+                f"trace={trace.replace(secret, '[REDACTED]')}"
             )
         if env["VAULT_TOKEN"] in result.stdout + result.stderr:
             raise AssertionError("Credential leaked by CLI output")
