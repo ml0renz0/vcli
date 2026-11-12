@@ -137,9 +137,14 @@ def run_set(mount: str, size: int, candidate: Path, baseline: Path | None) -> No
                     # A successful exit is not proof that the whole tree was read.
                     found = re.findall(r"secret[0-9]{4}", stdout)
                     if len(found) != size or len(set(found)) != size:
+                        _, listing = run_cli(binary, f"ls {source}/", size)
+                        direct = api("LIST", f"{source}/",
+                                     token=os.environ["VAULT_TOKEN"])
+                        safe = lambda text: text.replace(os.environ["VAULT_TOKEN"], "[REDACTED]")
                         raise AssertionError(
                             f"{label}: tree showed {len(found)} unique leaves, expected {size}; "
-                            f"output={stdout.replace(os.environ['VAULT_TOKEN'], '[REDACTED]')[:500]!r}"
+                            f"tree={safe(stdout)[:250]!r}, ls={safe(listing)[:250]!r}, "
+                            f"api_count={len(direct.get('data', {}).get('keys', []))}"
                         )
                 if operation == "find" and "secret0000" not in stdout:
                     raise AssertionError("Find output omitted expected secret")
