@@ -96,16 +96,21 @@ unseal(){
     echo 'Unseal endpoint is not loopback-only' >&2
     return 1
   }
-  # Read the private Shamir share from JSON, never a process argument.
-  result=$(jq -nc --slurpfile initialized "$tmp/init.json" \
-    '{key: $initialized[0].unseal_keys_b64[0]}' |
-    curl --silent --show-error --fail --cacert "$tmp/config/ca.pem" \
-      --header 'Content-Type: application/json' --data-binary @- \
-      "https://$binding/v1/sys/unseal") || return 1
-  if ! jq -e '.sealed == false' <<< "$result" >/dev/null; then
-    echo "Raft node $i did not unseal: $(jq -c '{initialized, sealed, progress, t}' <<< "$result")" >&2
-    return 1
-  fi
+  # Raft join with Shamir is asynchronous: the first accepted share may
+  # precede the leader's challenge-response completion. Bound all retries.
+  for ((unseal_attempt=1; unseal_attempt<=30; unseal_attempt++)); do
+    result=$(jq -nc --slurpfile initialized "$tmp/init.json" \
+      '{key: $initialized[0].unseal_keys_b64[0]}' |
+      curl --silent --show-error --fail --cacert "$tmp/config/ca.pem" \
+        --header 'Content-Type: application/json' --data-binary @- \
+        "https://$binding/v1/sys/unseal") || return 1
+    if jq -e '.sealed == false' <<< "$result" >/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Raft node $i did not unseal: $(jq -c '{initialized, sealed, progress, t}' <<< "$result")" >&2
+  return 1
 }
 launch 1
 wait_node 1
