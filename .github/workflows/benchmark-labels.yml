@@ -1,0 +1,94 @@
+name: PR recursive benchmark via labels
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled]
+
+permissions:
+  contents: read
+
+# Independent from normal CI: one selected backend, never the seven-Vault matrix.
+concurrency:
+  group: vcli-benchmark-pr-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  provision_flags:
+    name: Provision benchmark flag labels
+    if: >-
+      ${{
+        github.event.action != 'labeled' &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Create absent benchmark labels (never apply automatically)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          labels=$(gh api "repos/$GITHUB_REPOSITORY/labels" --paginate --jq '.[].name')
+          while IFS='|' read -r name color description; do
+            [[ -n "$name" ]] || continue
+            if grep -Fxq -- "$name" <<< "$labels"; then
+              echo "$name already exists"
+            else
+              gh api --method POST "repos/$GITHUB_REPOSITORY/labels" \
+                -f "name=$name" -f "color=$color" \
+                -f "description=$description" >/dev/null
+              echo "Created $name"
+            fi
+          done <<'LABELS'
+          bench:inmem|0366d6|Run the opt-in in-memory Vault recursive benchmark once when applied
+          bench:ab-inmem|1d76db|Run verified same-runner paired A/B recursion benchmark on disposable Vault
+          bench:raft-1|0e8a16|Run the opt-in single-node Raft recursive benchmark once when applied
+          bench:raft-3|5319e7|Run the opt-in three-voter Raft recursive benchmark once when applied
+          LABELS
+
+  benchmark:
+    name: Benchmark ${{ github.event.label.name }}
+    if: >-
+      ${{
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        (
+          github.event.label.name == 'bench:inmem' ||
+          github.event.label.name == 'bench:ab-inmem' ||
+          github.event.label.name == 'bench:raft-1' ||
+          github.event.label.name == 'bench:raft-3'
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout candidate and baseline history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate benchmark scripts and contracts
+        run: |
+          bash -n ./vcli ./scripts/bench-compare.sh ./tests/integration/run.sh ./tests/integration/run-raft.sh
+          python3 -m unittest -v tests.cli.test_recursive_benchmark
+      - name: Install benchmark requirements
+        run: |
+          missing=()
+          for cmd in jq curl openssl; do
+            command -v "$cmd" >/dev/null || missing+=("$cmd")
+          done
+          if (( ${#missing[@]} )); then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
+          fi
+      - name: Measure current CLI or paired A/B versus validated baseline
+        env:
+          BENCH_LABEL: ${{ github.event.label.name }}
+          VCLI_BENCH_STORAGE: ${{ github.event.label.name == 'bench:raft-3' && 'raft-3' || github.event.label.name == 'bench:raft-1' && 'raft-1' || 'inmem' }}
+        run: |
+          if [[ "$BENCH_LABEL" == 'bench:ab-inmem' ]]; then
+            bash scripts/bench-compare.sh \
+              c009d45b2760646363c8e3caa6ea29df2bd6a37b 10,100 4
+          else
+            bash scripts/bench-compare.sh \
+              none 10,100 4
+          fi
