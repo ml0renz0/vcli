@@ -42,6 +42,7 @@ jobs:
             fi
           done <<'LABELS'
           bench:inmem|0366d6|Run the opt-in in-memory Vault recursive benchmark once when applied
+          bench:ab-inmem|1d76db|Run verified same-runner paired A/B recursion benchmark on disposable Vault
           bench:raft-1|0e8a16|Run the opt-in single-node Raft recursive benchmark once when applied
           bench:raft-3|5319e7|Run the opt-in three-voter Raft recursive benchmark once when applied
           LABELS
@@ -53,6 +54,7 @@ jobs:
         github.event.pull_request.head.repo.full_name == github.repository &&
         (
           github.event.label.name == 'bench:inmem' ||
+          github.event.label.name == 'bench:ab-inmem' ||
           github.event.label.name == 'bench:raft-1' ||
           github.event.label.name == 'bench:raft-3'
         )
@@ -78,9 +80,15 @@ jobs:
             sudo apt-get update -qq
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
           fi
-      - name: Measure current CLI against selected Vault backend
+      - name: Measure current CLI or paired A/B versus validated baseline
         env:
+          BENCH_LABEL: ${{ github.event.label.name }}
           VCLI_BENCH_STORAGE: ${{ github.event.label.name == 'bench:raft-3' && 'raft-3' || github.event.label.name == 'bench:raft-1' && 'raft-1' || 'inmem' }}
         run: |
-          bash scripts/bench-compare.sh \
-            none 10,100 4
+          if [[ "$BENCH_LABEL" == 'bench:ab-inmem' ]]; then
+            bash scripts/bench-compare.sh \
+              c009d45b2760646363c8e3caa6ea29df2bd6a37b 10,100 4
+          else
+            bash scripts/bench-compare.sh \
+              none 10,100 4
+          fi

@@ -65,6 +65,31 @@ _vcli_children /kv1/test
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertEqual(result.stdout, "")
 
+    def test_tree_avoids_basename_subprocess_and_handles_trailing_slashes(self):
+        source = SOURCE.read_text(encoding="utf-8")
+        match = re.search(r"^function _tree\(\)\{.*?^\}", source,
+                          re.MULTILINE | re.DOTALL)
+        self.assertIsNotNone(match)
+        stub = r'''
+current_pwd="/"
+debug(){ :; }
+padecho(){ printf "%s\n" "$1"; }
+basename(){ echo "external basename called" >&2; return 91; }
+_vcli_children(){
+  case "$1" in
+    /kv1/branch) printf "child/\n" ;;
+    /kv1/branch/child) printf "leaf\n" ;;
+    /) return 0 ;;
+    *) echo "Unexpected path: $1" >&2; return 9 ;;
+  esac
+}
+_tree "/kv1/branch///" && _tree "/"
+'''
+        result = subprocess.run(["bash", "-c", match.group(0) + stub],
+                                text=True, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(),
+                         ["branch/", "child/", "leaf", "//"])
     def test_curl_failure_is_not_treated_as_empty_directory(self):
         result = self.call('{"data":{"keys":[]}}', failure=True)
         self.assertNotEqual(result.returncode, 0)

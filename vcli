@@ -1142,11 +1142,14 @@ function _tree(){
     else
         url="$1"
     fi
-    # A trailing slash is accepted from callers, but never doubled in recursion.
-    [[ $url == / ]] || url=${url%/}
+    # Normalize root before recursion, including multiple trailing slashes.
+    while [[ $url != / && $url == */ ]]; do url=${url%/}; done
     [[ -n ${2:-} ]] && ((depth+=1))
     debug "tree: visiting directory"
-    padecho "$(basename "$url")/" "$depth" "$space" "$echo_space   "
+    # Do not spawn a basename process for every visited directory.
+    local node="${url##*/}"
+    [[ $url == / ]] && node="/"
+    padecho "$node/" "$depth" "$space" "$echo_space   "
     # Use the shared LIST validator. Failed subtrees must abort traversal,
     # rather than silently produce an incomplete successful tree.
     paths=$(_vcli_children "$url") || return 1

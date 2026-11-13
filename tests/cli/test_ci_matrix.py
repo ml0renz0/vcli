@@ -70,13 +70,15 @@ class VaultMatrixParity(unittest.TestCase):
         self.assertIn("issues: write", workflow)
         self.assertIn("github.event.action != 'labeled'", workflow)
         self.assertIn("gh api --method POST", workflow)
-        for label in ("bench:inmem", "bench:raft-1", "bench:raft-3"):
+        for label in ("bench:inmem", "bench:ab-inmem", "bench:raft-1", "bench:raft-3"):
             self.assertIn("github.event.label.name == '" + label + "'", workflow)
             self.assertIn("          " + label + "|", workflow)
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", workflow)
         self.assertIn("cancel-in-progress: true", workflow)
         self.assertIn("bash scripts/bench-compare.sh", workflow)
         self.assertIn("none 10,100 4", workflow)
+        self.assertIn("c009d45b2760646363c8e3caa6ea29df2bd6a37b 10,100 4", workflow)
+        self.assertIn("if [[ \"$BENCH_LABEL\" == 'bench:ab-inmem' ]]", workflow)
         self.assertNotIn("pull_request_target:", workflow)
     def test_manual_benchmark_does_not_repeat_full_vault_matrix(self):
         workflow = (RUNNER.parents[2] / ".github" / "workflows" / "ci.yml").read_text()
