@@ -15,7 +15,7 @@ on:
       baseline_ref:
         description: 'Git commit to compare against (must contain vcli)'
         type: string
-        default: '4f96cf2091be1d6c70a5e3df3bf214d6dfb4c67e'
+        default: 'c009d45b2760646363c8e3caa6ea29df2bd6a37b'
       storage_backend:
         description: 'Disposable Vault storage profile'
         type: choice

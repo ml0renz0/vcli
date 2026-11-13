@@ -242,3 +242,33 @@ la misma validación funcional, muestreo mayor y medición de procesos/HTTP.
 El commit de referencia anterior `4f96cf2` no es un baseline válido para
 todos los casos de árbol y se rechazó explícitamente por devolver resultados
 incompletos. No se publican mejoras respecto a ese commit.
+
+## Medición A/B de la optimización de `tree` — 2026-11-13
+
+Referencia: commit `c009d45` (matriz TLS completa verde). Candidato: `6d944b4`
+con `_tree` sin la llamada externa a `basename` por directorio y normalización
+robusta de barras finales. [GitHub Actions #43414343529](https://github.com/ml0renz0/vcli/actions/runs/43414343529)
+terminó correctamente contra un **único Vault inmem TLS**, con ambos
+binarios ejecutados en orden alternado sobre los mismos datos y runner,
+cuatro muestras por operación y tamaño. Ambos superaron la validación
+funcional; no son tiempos de despliegue productivo.
+
+| Secretos | Operación | Base p50 (ms) | Candidato p50 (ms) | Cambio |
+| ---: | --- | ---: | ---: | ---: |
+| 10 | `tree` | 280,8 | 265,7 | −5,4 % |
+| 10 | `find` | 480,3 | 484,2 | +0,8 % |
+| 10 | `cptree` | 818,6 | 816,0 | −0,3 % |
+| 10 | `backup` | 522,5 | 519,3 | −0,6 % |
+| 100 | `tree` | 289,1 | 275,4 | −4,7 % |
+| 100 | `find` | 2.563,5 | 2.496,2 | −2,6 % |
+| 100 | `cptree` | 6.550,2 | 6.496,1 | −0,8 % |
+| 100 | `backup` | 2.658,4 | 2.793,1 | +5,1 % |
+
+**Interpretación:** observamos una reducción pequeña y consistente de la
+mediana de `tree` para estos dos casos; el cambio elimina exactamente
+una invocación de `basename` por directorio visitado. Con solo cuatro
+muestras no puede afirmarse una ganancia estadísticamente estable, ni
+atribuir a esta optimización las diferencias de otras operaciones. El
+p95 con cuatro muestras coincide con el máximo; para una conclusión
+más sólida harían falta más repeticiones y perfiles Raft A/B. No
+se introducen gates de rendimiento por porcentajes arbitrarios.
