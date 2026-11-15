@@ -284,3 +284,32 @@ a `mkdir` sin utilizar Vault.
 
 La mejora de latencia se evaluará mediante el benchmark A/B sobre el mismo
 runner y Vault. No se atribuyen ahorros medidos hasta completar esa prueba.
+
+
+### Medición A/B de `backup` — 2026-11-15
+
+Referencia: `cdf1c8c` (último CI verde anterior al cambio).
+Candidato: optimización de `_backup` sin `dirname` por secreto y sin
+`mkdir -p` para padres que ya existan. [GitHub Actions
+#43718675927](https://github.com/ml0renz0/vcli/actions/runs/43718675927)
+ha terminado **verde**, comparando ambas versiones en orden alternado
+contra el mismo Vault 2.1.1 `inmem` TLS, sobre el mismo runner, con
+cuatro muestras y validación funcional de cada operación.
+
+| Secretos | Operación | Base p50 (ms) | Candidato p50 (ms) | Cambio |
+| ---: | --- | ---: | ---: | ---: |
+| 10 | `tree` | 350,5 | 350,5 | ~0,0 % |
+| 10 | `find` | 661,9 | 659,7 | −0,3 % |
+| 10 | `cptree` | 1.143,3 | 1.150,5 | +0,6 % |
+| 10 | `backup` | 720,6 | 702,8 | **−2,5 %** |
+| 100 | `tree` | 365,4 | 365,1 | −0,1 % |
+| 100 | `find` | 3.401,5 | 3.382,5 | −0,6 % |
+| 100 | `cptree` | 8.157,6 | 8.189,7 | +0,4 % |
+| 100 | `backup` | 3.629,5 | 3.373,9 | **−7,0 %** |
+
+La mejora coincide con el efecto esperado de eliminar un `dirname`
+externo por secreto y reducir preparaciones de directorios a los padres
+distintos. Los controles no muestran una variación comparable. Con solo
+cuatro muestras no se declara significación estadística ni se extrapola
+el resultado a Vault Raft o a sistemas productivos. La reducción de
+procesos por hoja sí queda protegida por el contrato aislado.
