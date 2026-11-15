@@ -77,7 +77,7 @@ class VaultMatrixParity(unittest.TestCase):
         self.assertIn("cancel-in-progress: true", workflow)
         self.assertIn("bash scripts/bench-compare.sh", workflow)
         self.assertIn("none 10,100 4", workflow)
-        self.assertIn("c009d45b2760646363c8e3caa6ea29df2bd6a37b 10,100 4", workflow)
+        self.assertIn("cdf1c8c63c5497c61e10a504faca5d5080d46761 10,100 4", workflow)
         self.assertIn("if [[ \"$BENCH_LABEL\" == 'bench:ab-inmem' ]]", workflow)
         self.assertNotIn("pull_request_target:", workflow)
     def test_manual_benchmark_does_not_repeat_full_vault_matrix(self):
