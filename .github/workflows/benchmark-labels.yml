@@ -87,7 +87,7 @@ jobs:
         run: |
           if [[ "$BENCH_LABEL" == 'bench:ab-inmem' ]]; then
             bash scripts/bench-compare.sh \
-              c009d45b2760646363c8e3caa6ea29df2bd6a37b 10,100 4
+              cdf1c8c63c5497c61e10a504faca5d5080d46761 10,100 4
           else
             bash scripts/bench-compare.sh \
               none 10,100 4
