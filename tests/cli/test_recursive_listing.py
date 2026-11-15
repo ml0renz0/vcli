@@ -99,19 +99,19 @@ _tree "/kv1/branch///" && _tree "/"
                           re.MULTILINE | re.DOTALL)
         self.assertIsNotNone(match)
         shell = r'''
-_vcli_absolute_path(){ printf "%s\\n" "$1"; }
+_vcli_absolute_path(){ printf "%s\n" "$1"; }
 _cat(){
   [[ "$1" != "/kv1/sample" ]] || return 1
-  printf '{"data":{"key":"value"}}\\n'
+  printf '{"data":{"key":"value"}}\n'
 }
 _vcli_leaves(){
-  printf "%s\\n" \\
-    "/kv1/sample/one/a" "/kv1/sample/one/b" \\
-    "/kv1/sample/two words/a" "/kv1/sample/two words/b" \\
+  printf "%s\n" \
+    "/kv1/sample/one/a" "/kv1/sample/one/b" \
+    "/kv1/sample/two words/a" "/kv1/sample/two words/b" \
     "/kv1/sample/two words/c" "/kv1/sample/one/c"
 }
 dirname(){ echo "external dirname unexpectedly called" >&2; return 91; }
-mkdir(){ printf "mkdir\\n" >> "$MKDIR_LOG"; command mkdir "$@"; }
+mkdir(){ printf "mkdir\n" >> "$MKDIR_LOG"; command mkdir "$@"; }
 _backup /kv1/sample
 '''
         with tempfile.TemporaryDirectory(prefix="vcli-backup-contract-") as home:
@@ -134,7 +134,7 @@ _backup /kv1/sample
                 })
                 for name, member in members.items():
                     self.assertEqual(tgz.extractfile(member).read(),
-                                     b'{"key":"value"}\\n', name)
+                                     b'{"key":"value"}\n', name)
 
     def test_curl_failure_is_not_treated_as_empty_directory(self):
         result = self.call('{"data":{"keys":[]}}', failure=True)
