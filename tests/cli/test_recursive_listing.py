@@ -90,6 +90,52 @@ _tree "/kv1/branch///" && _tree "/"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.splitlines(),
                          ["branch/", "child/", "leaf", "//"])
+    def test_backup_avoids_repeated_mkdir_and_preserves_nested_files(self):
+        """Six nested leaves share two secret directories."""
+        import tarfile
+        import tempfile
+        match = re.search(r"^function _backup\(\)\{.*?^\}",
+                          SOURCE.read_text(encoding="utf-8"),
+                          re.MULTILINE | re.DOTALL)
+        self.assertIsNotNone(match)
+        shell = r'''
+_vcli_absolute_path(){ printf "%s\\n" "$1"; }
+_cat(){
+  [[ "$1" != "/kv1/sample" ]] || return 1
+  printf '{"data":{"key":"value"}}\\n'
+}
+_vcli_leaves(){
+  printf "%s\\n" \\
+    "/kv1/sample/one/a" "/kv1/sample/one/b" \\
+    "/kv1/sample/two words/a" "/kv1/sample/two words/b" \\
+    "/kv1/sample/two words/c" "/kv1/sample/one/c"
+}
+dirname(){ echo "external dirname unexpectedly called" >&2; return 91; }
+mkdir(){ printf "mkdir\\n" >> "$MKDIR_LOG"; command mkdir "$@"; }
+_backup /kv1/sample
+'''
+        with tempfile.TemporaryDirectory(prefix="vcli-backup-contract-") as home:
+            env = os.environ.copy()
+            env.update({"HOME": home, "TMP": home, "TMPDIR": home,
+                        "MKDIR_LOG": str(Path(home) / "mkdir.log")})
+            result = subprocess.run(["bash", "-c", match.group(0) + shell],
+                                    env=env, capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((Path(home) / "mkdir.log").read_text().splitlines(),
+                             ["mkdir", "mkdir"])
+            archives = list(Path(home).glob("backup_vault*.tgz"))
+            self.assertEqual(len(archives), 1)
+            with tarfile.open(archives[0], "r:gz") as tgz:
+                members = {m.name.removeprefix("./"): m for m in tgz if m.isfile()}
+                self.assertEqual(set(members), {
+                    "kv1/sample/one/a", "kv1/sample/one/b",
+                    "kv1/sample/two words/a", "kv1/sample/two words/b",
+                    "kv1/sample/two words/c", "kv1/sample/one/c",
+                })
+                for name, member in members.items():
+                    self.assertEqual(tgz.extractfile(member).read(),
+                                     b'{"key":"value"}\\n', name)
+
     def test_curl_failure_is_not_treated_as_empty_directory(self):
         result = self.call('{"data":{"keys":[]}}', failure=True)
         self.assertNotEqual(result.returncode, 0)

@@ -1292,7 +1292,7 @@ function _rmtree(){
 
 # backup vault
 function _backup(){
-    local root leaves leaf response payload dir archive relative
+    local root leaves leaf response payload dir archive relative parent
     root=$(_vcli_absolute_path "${1:-}") || { echo "Missing backup path" >&2; return 1; }
     [[ $root != / && ${root#/} == */* ]] || {
         echo "Backup requires a path within a secrets mount" >&2; return 1;
@@ -1311,7 +1311,11 @@ function _backup(){
             rm -rf -- "$dir"; return 1;
         }
         relative="${leaf#/}"
-        mkdir -p -- "$dir/$(dirname "$relative")" || { rm -rf -- "$dir"; return 1; }
+        # Use native Bash path expansion and create parents only once.
+        parent="${relative%/*}"
+        if [[ ! -d "$dir/$parent" ]]; then
+            mkdir -p -- "$dir/$parent" || { rm -rf -- "$dir"; return 1; }
+        fi
         printf '%s\n' "$payload" > "$dir/$relative" || { rm -rf -- "$dir"; return 1; }
     done <<< "$leaves"
     if ! tar -czf "$archive" -C "$dir" .; then

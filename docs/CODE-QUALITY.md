@@ -272,3 +272,15 @@ atribuir a esta optimización las diferencias de otras operaciones. El
 p95 con cuatro muestras coincide con el máximo; para una conclusión
 más sólida harían falta más repeticiones y perfiles Raft A/B. No
 se introducen gates de rendimiento por porcentajes arbitrarios.
+
+## Optimización de backup: menos procesos por secreto
+
+En `_backup`, `dirname` se sustituye por expansión nativa Bash y
+`mkdir -p` solo se llama si falta el directorio destino. Esto evita
+un proceso por hoja y llamadas redundantes a `mkdir` para hermanos
+del mismo directorio. El contrato aislado comprueba seis ficheros de dos
+carpetas, una con espacios, verifica el tarball y el número de llamadas
+a `mkdir` sin utilizar Vault.
+
+La mejora de latencia se evaluará mediante el benchmark A/B sobre el mismo
+runner y Vault. No se atribuyen ahorros medidos hasta completar esa prueba.
