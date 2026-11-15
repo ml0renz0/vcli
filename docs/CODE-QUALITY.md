@@ -313,3 +313,15 @@ distintos. Los controles no muestran una variación comparable. Con solo
 cuatro muestras no se declara significación estadística ni se extrapola
 el resultado a Vault Raft o a sistemas productivos. La reducción de
 procesos por hoja sí queda protegida por el contrato aislado.
+
+## Optimización cptree: clasificación reutilizada
+
+El preflight conserva las consultas de metadata KV v2 (incluidos secretos
+soft-deleted) y la validación de todos los destinos antes de escribir.
+Ahora almacena una clasificación KV1/KV2 por hoja, construye metadata con
+el montaje de prefijo más específico y evita repetir la consulta del tipo
+de montaje al escribir. La longitud del array evita una pasada de recuento.
+Los tests aislados protegen montajes solapados, espacios en rutas, CAS=0,
+orden del preflight y la prohibición de escritura ante HTTP 403.
+La matriz TLS real conserva las pruebas de colisiones y fallos parciales.
+Benchmark A/B pendiente contra el commit verde anterior 0b69ae8.

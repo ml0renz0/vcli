@@ -69,7 +69,7 @@ jobs:
       - name: Validate benchmark scripts and contracts
         run: |
           bash -n ./vcli ./scripts/bench-compare.sh ./tests/integration/run.sh ./tests/integration/run-raft.sh
-          python3 -m unittest -v tests.cli.test_recursive_benchmark
+          python3 -m unittest -v tests.cli.test_recursive_benchmark tests.cli.test_recursive_copy
       - name: Install benchmark requirements
         run: |
           missing=()
@@ -87,7 +87,7 @@ jobs:
         run: |
           if [[ "$BENCH_LABEL" == 'bench:ab-inmem' ]]; then
             bash scripts/bench-compare.sh \
-              cdf1c8c63c5497c61e10a504faca5d5080d46761 10,100 4
+              0b69ae8e7393ffea0f7b80b07b7d601526e2918f 10,100 4
           else
             bash scripts/bench-compare.sh \
               none 10,100 4

@@ -1210,26 +1210,27 @@ function _replace(){
 
 # copy secret tree to another location
 function _cptree(){
-    local source dest leaves leaf relative response payload
+    local source dest leaves leaf relative response payload target probe mount
     source=$(_vcli_absolute_path "$1") || { echo "Invalid source" >&2; return 1; }
     dest=$(_vcli_absolute_path "$2") || { echo "Invalid destination" >&2; return 1; }
     [[ $source != "$dest" && $dest != "$source/"* ]] || {
         echo "Destination must be outside source tree" >&2; return 1;
     }
     leaves=$(_vcli_leaves "$source") || return 1
-    # Preflight *every* destination first. In KV v2 metadata survives soft
-    # deletion, so checking /data alone could resurrect a deleted secret.
-    local target probe
+    # Verify every target before any writes, including soft-deleted KV2 metadata.
+    # Cache the longest-prefix mount classification to avoid duplicate lookups.
+    local -a kv2_modes=()
     while IFS= read -r leaf; do
         [[ -n $leaf ]] || continue
         relative="${leaf#"$source"/}"
         target="$dest/$relative"
-        # Inspect metadata, not data: a soft-deleted KV v2 secret still
-        # occupies its destination. Reuse longest-prefix mount resolution.
         if vcli_is_kv2_path "$target"; then
-            probe=$(vcli_kv2_metadata_path "$target") || return 1
+            mount=$VCLI_KV_MOUNT
+            probe="/$mount/metadata/${target#"/$mount/"}"
+            kv2_modes+=(yes)
         else
             probe="$target"
+            kv2_modes+=(no)
         fi
         if _curl "$probe" >/dev/null; then
             echo "Destination already exists: $target" >&2
@@ -1239,25 +1240,25 @@ function _cptree(){
             return 1
         fi
     done <<< "$leaves"
-    local completed=0 total=0
-    while IFS= read -r leaf; do [[ -n $leaf ]] && (( total+=1 )); done <<< "$leaves"
+    local completed=0 total=${#kv2_modes[@]} idx=0
     while IFS= read -r leaf; do
         [[ -n $leaf ]] || continue
         relative="${leaf#"$source"/}"
+        target="$dest/$relative"
         response=$(_cat "$leaf") || {
             _vcli_partial_failure cptree "$completed" "$total" "$leaf"; return 1;
         }
         payload=$(jq -ce '.data | select(type == "object")' <<< "$response") || {
             _vcli_partial_failure cptree "$completed" "$total" "$leaf"; return 1;
         }
-        if vcli_is_kv2_path "$dest/$relative"; then
-            _put "$dest/$relative" "$payload" 0
+        if [[ ${kv2_modes[idx]} == yes ]]; then
+            _put "$target" "$payload" 0
         else
-            _put "$dest/$relative" "$payload"
+            _put "$target" "$payload"
         fi || {
-            _vcli_partial_failure cptree "$completed" "$total" "$dest/$relative"; return 1;
+            _vcli_partial_failure cptree "$completed" "$total" "$target"; return 1;
         }
-        (( completed+=1 ))
+        (( completed+=1, idx+=1 ))
     done <<< "$leaves"
     printf "Copied tree from '%s' to '%s'\n" "$source" "$dest"
 }
