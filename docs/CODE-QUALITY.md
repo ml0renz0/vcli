@@ -325,3 +325,24 @@ Los tests aislados protegen montajes solapados, espacios en rutas, CAS=0,
 orden del preflight y la prohibición de escritura ante HTTP 403.
 La matriz TLS real conserva las pruebas de colisiones y fallos parciales.
 Benchmark A/B pendiente contra el commit verde anterior 0b69ae8.
+
+## Auditoría S-01: limpieza de temporales sensibles en `_put`
+
+**Prioridad alta.** Un error temprano de metadata KV v2 o una salida
+prematura de `_curl` podía abandonar un fichero `.put.*` con contenido
+de un secreto. Ahora `_put` usa variables locales y elimina el payload
+en las ramas de error y después de cualquier respuesta de `_curl`, incluso
+si el transporte falló sin consumir el fichero. La expansión fallida con
+`envsubst` también aborta la escritura. Tests aislados verifican 403,
+metadata inválida, fallo de ruta de metadata, error de transporte y éxito.
+La protección frente a señales y fallos asíncronos requiere auditoría
+separada del ciclo global de `TMP`.
+
+## A/B de `cptree` validado
+
+[CI #43776834258](https://github.com/ml0renz0/vcli/actions/runs/43776834258)
+y [A/B #43776893780](https://github.com/ml0renz0/vcli/actions/runs/43776893780)
+verdes. Medianas sobre un mismo Vault TLS y runner, cuatro muestras:
+10 secretos, 1.014,4 → 1.011,5 ms (−0,3 %); 100 secretos,
+7.436,8 → 7.334,6 ms (−1,4 %). Mejoras pequeñas y no concluyentes
+estadísticamente.

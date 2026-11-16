@@ -1586,53 +1586,52 @@ function _rm(){
 
 # put function
 function _put(){
-    local cas="${3:-}"
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd$1"
-    fi
+    local cas="${3:-}" funcname="${FUNCNAME[0]}" url="$1" data="" metadata="" metadata_file=""
+    [[ $url == /* ]] || url="$current_pwd$1"
     debug "put: url=$url"
     debug "put: payload redacted"
-    data=$(mktemp -p "$TMP" -t .put.XXXX)
+    data=$(mktemp -p "$TMP" -t .put.XXXX) || return 1
+    # Abort rather than writing a partial expanded secret.
     if command -v envsubst >/dev/null 2>&1; then
-        printf '%s\n' "$2" | envsubst > "$data"
-    else
-        printf '%s\n' "$2" > "$data"
+        if ! printf '%s\n' "$2" | envsubst > "$data"; then
+            rm -f -- "$data"; return 1
+        fi
+    elif ! printf '%s\n' "$2" > "$data"; then
+        rm -f -- "$data"; return 1
     fi
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
+    if [[ -z $url ]]; then
+        echo "Error! Missing secret path" >&2
         commands_help "${funcname//_/}"
-        return
-    fi
-    if [[ ! $data ]]; then
-        echo "Error! Missing secret data"
-        commands_help "${funcname//_/}"
-        return
+        rm -f -- "$data"; return 1
     fi
     url="${url/\/\//\/}"
     debug "put: request prepared"
     debug "put: submitting prepared request"
     if [[ -z $cas ]] && vcli_is_kv2_path "$url"; then
-        local metadata metadata_file
-        metadata=$(vcli_kv2_metadata_path "$url") || return 1
-        metadata_file=$(mktemp -p "$TMP" .vcli.metadata.XXXXXX) || return 1
-        # Preserve _curl's HTTP status in this shell (not a subshell).
+        metadata=$(vcli_kv2_metadata_path "$url") || {
+            rm -f -- "$data"; return 1
+        }
+        metadata_file=$(mktemp -p "$TMP" .vcli.metadata.XXXXXX) || {
+            rm -f -- "$data"; return 1
+        }
         if _curl "$metadata" > "$metadata_file"; then
             cas=$(jq -er '.data.current_version | select(type=="number")' "$metadata_file") || {
-                rm -f "$metadata_file"; return 1;
+                rm -f -- "$metadata_file" "$data"; return 1
             }
         elif [[ $http_code == 404 ]]; then
             cas=0
         else
-            rm -f "$metadata_file"
+            rm -f -- "$metadata_file" "$data"
             echo "vcli: unable to read KV v2 metadata before write" >&2
             return 1
         fi
-        rm -f "$metadata_file"
+        rm -f -- "$metadata_file"
     fi
-    _curl "$url" "$data" "POST" "$cas"
+    # _curl may fail before reading the payload; it is still ours to clean.
+    local result=0
+    _curl "$url" "$data" "POST" "$cas" || result=$?
+    rm -f -- "$data"
+    return "$result"
 }
 
 # validate and show principals and keytab info
