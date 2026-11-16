@@ -9,8 +9,29 @@ declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
 declare DEBUGFILE="${VCLI_DEBUGFILE:-$HOME/.vcli.debug}"
 declare TMP="${TMPDIR:-/tmp}"
-# Private temporary data and exported secret files.
+# Keep user-visible backups and exports under TMP, but stage sensitive
+# requests in a distinct 0700 directory removed on exit or TERM/INT.
+declare VCLI_SESSION_TMP="" VCLI_SESSION_PID=""
 umask 077
+
+function vcli_session_cleanup(){
+    # Never let an inherited EXIT trap in a subshell remove its parent files.
+    [[ -n $VCLI_SESSION_TMP && $BASHPID == "$VCLI_SESSION_PID" ]] || return 0
+    local owned="$VCLI_SESSION_TMP"
+    VCLI_SESSION_TMP=""
+    rm -rf -- "$owned"
+}
+
+function vcli_session_open(){
+    [[ -z $VCLI_SESSION_TMP ]] || return 0
+    VCLI_SESSION_TMP=$(mktemp -d -- "${TMP%/}/.vcli-session.XXXXXXXX") || return 1
+    VCLI_SESSION_PID=$BASHPID
+    trap 'vcli_session_cleanup' EXIT
+    trap 'exit 143' TERM
+    # The interactive editor installs its own Ctrl+C handler later.
+    trap 'exit 130' INT
+}
+
 declare is_command cmd cmd_history restcmd _key len pos history_index pending_key
 declare timeout="2" # timeout to verify connection to Vault
 declare http_code
@@ -680,8 +701,8 @@ function _vcli_login_approle(){
     [[ -n $role_id && -n $secret_id ]] || {
         echo "vcli: incomplete AppRole credentials" >&2; return 1;
     }
-    response_file=$(mktemp -p "$TMP" .vcli.auth.XXXXXX) || return 1
-    payload_file=$(mktemp -p "$TMP" .vcli.auth-data.XXXXXX) || {
+    response_file=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" .vcli.auth.XXXXXX) || return 1
+    payload_file=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" .vcli.auth-data.XXXXXX) || {
         rm -f "$response_file"; return 1;
     }
     jq -cn --arg rid "$role_id" --arg sid "$secret_id"         '{role_id:$rid,secret_id:$sid}' > "$payload_file" || {
@@ -725,7 +746,7 @@ function _renew_token(){
     if [[ -n $increment && ! $increment =~ ^[0-9]+(s|m|h)?$ ]]; then
         echo "vcli: invalid renewal increment" >&2; return 1;
     fi
-    payload=$(mktemp -p "$TMP" .vcli.renew.XXXXXX) || return 1
+    payload=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" .vcli.renew.XXXXXX) || return 1
     if [[ -n $increment ]]; then
         jq -cn --arg value "$increment" '{increment:$value}' > "$payload"
     else
@@ -769,7 +790,7 @@ function _curl(){
     local encoded url response_file payload_file="" payload="" status curl_status
     encoded=$(vcli_encode_endpoint "$path") || return 1
     url="$protocol://$vault_host:$vault_port/v1/$encoded"
-    response_file=$(mktemp -p "$TMP" .vcli.response.XXXXXX) || return 1
+    response_file=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" .vcli.response.XXXXXX) || return 1
     local -a args=(--silent --show-error --connect-timeout "${VCLI_CONNECT_TIMEOUT:-2}"
                   --max-time "${VCLI_HTTP_TIMEOUT:-30}" --request "$method"
                   --output "$response_file" --write-out '%{http_code}'
@@ -797,7 +818,7 @@ function _curl(){
         fi
         payload="$data"
         if [[ $kv2 == yes && ( $method == POST || $method == PUT || $method == PATCH ) ]]; then
-            payload_file=$(mktemp -p "$TMP" .vcli.payload.XXXXXX) || return 1
+            payload_file=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" .vcli.payload.XXXXXX) || return 1
             if [[ -n $cas ]]; then
                 if ! jq -c --argjson cas "$cas" '{data: ., options: {cas: $cas}}' "$data" > "$payload_file"; then
                     rm -f "$response_file" "$payload_file"
@@ -959,7 +980,7 @@ function _mount(){
         else
             url="/sys/mounts$url"
         fi
-        data=$(mktemp -p "$TMP" -t .put.XXXX)
+        data=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" -t .put.XXXX)
         jq -nc --arg d "$url secret backend" --arg v "${VAULT_KV_VERSION:-1}" '{type:"kv",description:$d,options:{version:$v}}' > "$data"
         if [[ $ignore_http_code ]]; then
             _curl -i "$url" "$data" "POST"
@@ -1053,11 +1074,11 @@ function _ls(){
         method="LIST"
     fi
     if [[ $disable_colors ]]; then
-        tmp=$(mktemp -p "$TMP" -t ls.XXXX)
+        tmp=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" -t ls.XXXX)
         _curl $ignore_http_code "$url" "" "$method" > "$tmp"
         jq '.data .keys[]' -r < "$tmp"
     else
-        tmp=$(mktemp -p "$TMP" -t ls.XXXX)
+        tmp=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" -t ls.XXXX)
         _curl $ignore_http_code "$url" "" "$method" > "$tmp"
         jq '.data .keys[]' -r < "$tmp" | sed -e "s/\//$CYAN\/$NONE/"
     fi
@@ -1067,7 +1088,7 @@ function _ls(){
 # lsrole list roles
 function _lsrole(){
     local tmp
-    tmp=$(mktemp -p "$TMP" -t lsrole.XXXX)
+    tmp=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" -t lsrole.XXXX)
     _cat /auth/approle/role?list=true > "$tmp"
     jq '.data .keys[]' -r < "$tmp"
     rm "$tmp"
@@ -1084,7 +1105,7 @@ function _showrole(){
         commands_help "${funcname//_/}"
         return
     fi
-    tmp=$(mktemp -p "$TMP" -t showrole.XXXX)
+    tmp=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" -t showrole.XXXX)
     _cat /auth/approle/role/"$role" > "$tmp"
     echo -n "policies: "
     jq -r '(.data.token_policies // .data.policies // [])[]' < "$tmp"
@@ -1094,7 +1115,7 @@ function _showrole(){
 # lspol list policies
 function _lspol(){
     local tmp
-    tmp=$(mktemp -p "$TMP" .vcli.policies.XXXXXX) || return 1
+    tmp=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" .vcli.policies.XXXXXX) || return 1
     if ! _curl /sys/policies/acl "" LIST > "$tmp"; then
         cat "$tmp" >&2; rm -f "$tmp"; return 1
     fi
@@ -1108,7 +1129,7 @@ function _showpol(){
     if [[ -z $policy ]]; then
         echo "Error! Missing policy" >&2; return 1
     fi
-    tmp=$(mktemp -p "$TMP" .vcli.policy.XXXXXX) || return 1
+    tmp=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" .vcli.policy.XXXXXX) || return 1
     if ! _curl "/sys/policies/acl/$policy" > "$tmp"; then
         cat "$tmp" >&2; rm -f "$tmp"; return 1
     fi
@@ -1298,7 +1319,7 @@ function _backup(){
     [[ $root != / && ${root#/} == */* ]] || {
         echo "Backup requires a path within a secrets mount" >&2; return 1;
     }
-    dir=$(mktemp -d -p "$TMP" .vcli-backup.XXXXXX) || return 1
+    dir=$(mktemp -d -p "${VCLI_SESSION_TMP:-$TMP}" .vcli-backup.XXXXXX) || return 1
     archive="$TMP/backup_vault_${root//\//-}.$(date +%s).tgz"
     if response=$(_cat "$root" 2>/dev/null); then
         leaves="$root"
@@ -1536,7 +1557,7 @@ function _mv(){
         _vcli_partial_failure mv 1 2 "$source"; return 1;
     }
     delete_path="${metadata/\/metadata\//\/delete\/}"
-    path_file=$(mktemp -p "$TMP" .vcli-delete.XXXXXX) || {
+    path_file=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" .vcli-delete.XXXXXX) || {
         _vcli_partial_failure mv 1 2 "$source"; return 1;
     }
     printf '{"versions":[%s]}\n' "$source_version" > "$path_file"
@@ -1573,7 +1594,7 @@ function _rm(){
     version=$(jq -er '.data.metadata.version | select(type=="number")' <<< "$snapshot") || return 1
     metadata=$(vcli_kv2_metadata_path "$path") || return 1
     delete_path="${metadata/\/metadata\//\/delete\/}"
-    payload=$(mktemp -p "$TMP" .vcli-delete.XXXXXX) || return 1
+    payload=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" .vcli-delete.XXXXXX) || return 1
     printf '{"versions":[%s]}\n' "$version" > "$payload"
     _curl "$delete_path" "$payload" POST || return 1
     after=$(_curl "$metadata") || return 1
@@ -1590,7 +1611,7 @@ function _put(){
     [[ $url == /* ]] || url="$current_pwd$1"
     debug "put: url=$url"
     debug "put: payload redacted"
-    data=$(mktemp -p "$TMP" -t .put.XXXX) || return 1
+    data=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" -t .put.XXXX) || return 1
     # Abort rather than writing a partial expanded secret.
     if command -v envsubst >/dev/null 2>&1; then
         if ! printf '%s\n' "$2" | envsubst > "$data"; then
@@ -1611,7 +1632,7 @@ function _put(){
         metadata=$(vcli_kv2_metadata_path "$url") || {
             rm -f -- "$data"; return 1
         }
-        metadata_file=$(mktemp -p "$TMP" .vcli.metadata.XXXXXX) || {
+        metadata_file=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" .vcli.metadata.XXXXXX) || {
             rm -f -- "$data"; return 1
         }
         if _curl "$metadata" > "$metadata_file"; then
@@ -1658,7 +1679,7 @@ function _vcli_krb_pairs(){
         principal=$(jq -er --arg k "${stem}_principal" '.[$k] | select(type=="string")' <<< "$data") || return 1
         [[ $principal =~ ^[A-Za-z0-9._/-]+@[A-Za-z0-9._-]+$ && $principal != *..* ]] || return 1
         encoded=$(jq -er --arg k "${stem}_keytab" '.[$k] | select(type=="string")' <<< "$data") || return 1
-        file=$(mktemp -p "$TMP" .vcli-krb.XXXXXX) || return 1
+        file=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" .vcli-krb.XXXXXX) || return 1
         if ! printf '%s' "$encoded" | base64 --decode > "$file" 2>/dev/null ||
            ! klist -kt "$file" 2>/dev/null | grep -Fq "$principal"; then
             rm -f "$file"
@@ -1686,7 +1707,7 @@ function _getkrb() (
     done
     _vcli_export_preflight "${destinations[@]}" || return 1
 
-    stage=$(mktemp -d -- "${TMP%/}/.vcli-export.XXXXXXXX") || return 1
+    stage=$(mktemp -d -- "${VCLI_SESSION_TMP:-$TMP}/.vcli-export.XXXXXXXX") || return 1
     for stem in "${stems[@]}"; do
         encoded=$(jq -er --arg k "${stem}_keytab" '.[$k]' <<< "$data") || {
             rm -rf -- "$stage"; return 1;
@@ -1932,7 +1953,7 @@ function _getcert() (
     for stem in "${stems[@]}"; do destinations+=("$TMP/$stem.crt" "$TMP/$stem.key"); done
     _vcli_export_preflight "${destinations[@]}" || return 1
 
-    stage=$(mktemp -d -- "${TMP%/}/.vcli-export.XXXXXXXX") || return 1
+    stage=$(mktemp -d -- "${VCLI_SESSION_TMP:-$TMP}/.vcli-export.XXXXXXXX") || return 1
     for stem in "${stems[@]}"; do
         crt=$(jq -er --arg k "${stem}_crt" '.[$k]' <<< "$data") || {
             rm -rf -- "$stage"; return 1;
@@ -2098,6 +2119,7 @@ function main(){
 
     # Check for correct arguments
     check_arg "$vault_host" "Vault host"
+    vcli_session_open || exit 1
     if [[ -z $vault_token ]]; then
         _vcli_login_approle || exit 1
     fi

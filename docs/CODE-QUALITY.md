@@ -346,3 +346,26 @@ verdes. Medianas sobre un mismo Vault TLS y runner, cuatro muestras:
 10 secretos, 1.014,4 → 1.011,5 ms (−0,3 %); 100 secretos,
 7.436,8 → 7.334,6 ms (−1,4 %). Mejoras pequeñas y no concluyentes
 estadísticamente.
+
+## Auditoría S-02: aislamiento de temporales y señales
+
+El cliente conserva `TMPDIR` para artefactos **solicitados por el usuario**
+(backups `.tgz`, certificados, claves y keytabs), pero ahora crea al
+iniciar una sesión válida un directorio aleatorio privado con modo
+`0700` para las respuestas/payloads HTTP, el material transitorio de
+AppRole/KV, el backup antes de comprimirlo y las exportaciones en staging.
+El directorio se elimina en `EXIT`, y `SIGTERM`/`SIGINT` provocan
+salida con estado 143/130 en modo batch. El editor REPL mantiene su
+comportamiento propio de Ctrl+C sin abandonar la sesión.
+
+La limpieza comprueba el identificador `BASHPID` del propietario para
+evitar que un subshell suprima los datos transitorios del proceso
+padre. Se añaden contratos aislados para salida normal, TERM, INT,
+propiedad en subshell, permisos `0700`, un `_put` interrumpido y
+supervivencia de artefactos externos a la sesión.
+
+**Límites:** ninguna implementación puede garantizar limpieza ante
+`SIGKILL`, fallos del kernel, cortes de alimentación u otros cierres
+forzosos; mientras el REPL siga activo después de una interrupción,
+los temporales residuales privados se eliminan al salir. Los archivos
+de backup/exportación **no se eliminan** automáticamente.
