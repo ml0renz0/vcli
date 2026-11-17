@@ -248,3 +248,26 @@ La matriz real y el playground ya están integrados en el gate obligatorio.
 Se mantienen limitaciones documentadas de portabilidad BSD/macOS, Unicode,
 terminal y operaciones no cubiertas por los contratos. El merge **no**
 equivale a declarar estable vcli 0.7: quedan la fase 04-Q y la auditoría final.
+
+## P-01: validación de contratos offline sobre macOS real
+
+El job obligatorio `macos-15` de la matriz utiliza **Bash moderno** y
+`coreutils` instalados con Homebrew (anteponiendo `gnubin` al PATH).
+Comprueba explícitamente las versiones de `ln`, `mv`, `stat` y
+`mktemp` y ejecuta el `vcli` de la PR, contratos CLI y tests aislados
+de temporales, AppRole, publicación exclusiva de backups, historial,
+debug y recorridos. El `Required CI gate` también exige este job.
+
+Se trata de una **primera validación macOS sin Vault**. No equivale a
+compatibilidad con las herramientas BSD nativas ni demuestra operaciones
+E2E contra Vault TLS en macOS. No cambia la implementación Bash ni
+relaja protecciones GNU contra colisiones o enlaces simbólicos.
+
+En un Mac con Homebrew:
+
+```bash
+brew install bash coreutils jq
+export PATH="$(brew --prefix bash)/bin:$(brew --prefix coreutils)/libexec/gnubin:$PATH"
+./vcli --version
+python3 -m unittest -v tests.cli.test_local_file_safety tests.cli.test_backup_publication
+```

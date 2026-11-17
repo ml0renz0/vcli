@@ -80,6 +80,21 @@ class VaultMatrixParity(unittest.TestCase):
         self.assertIn("0b69ae8e7393ffea0f7b80b07b7d601526e2918f 10,100 4", workflow)
         self.assertIn("if [[ \"$BENCH_LABEL\" == 'bench:ab-inmem' ]]", workflow)
         self.assertNotIn("pull_request_target:", workflow)
+    def test_macos_safety_job_is_mandatory_and_uses_gnu_runtime(self):
+        workflow = (RUNNER.parents[2] / ".github" / "workflows" / "ci.yml").read_text()
+        self.assertIn("name: Native macOS offline safety contracts", workflow)
+        self.assertIn("runs-on: macos-15", workflow)
+        self.assertIn("brew install bash coreutils jq", workflow)
+        self.assertIn("$(brew --prefix coreutils)/libexec/gnubin", workflow)
+        for command in ("ln", "mv", "stat", "mktemp"):
+            self.assertIn(command + " --version", workflow)
+        for test in ("test_backup_publication", "test_local_file_safety",
+                     "test_approle_security", "test_session_tempfiles"):
+            self.assertIn("tests.cli." + test, workflow)
+        self.assertIn("needs: [static, integration, minimal, playground, macos]", workflow)
+        self.assertIn('test "$MACOS_RESULT" = success', workflow)
+        self.assertIn("Native macOS offline safety and CLI contracts", workflow)
+
     def test_manual_benchmark_does_not_repeat_full_vault_matrix(self):
         workflow = (RUNNER.parents[2] / ".github" / "workflows" / "ci.yml").read_text()
         condition = "!(github.event_name == 'workflow_dispatch' && inputs.recursive_benchmark)"

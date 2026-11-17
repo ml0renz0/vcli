@@ -473,3 +473,12 @@ comandos concurrentes. Estas comprobaciones no protegen contra
 actores con control completo de directorios padres. `ln -T`,
 `mv -T`, `/dev/fd` y `stat -L -c` son dependencias GNU/Linux
 que requieren adaptación en la futura fase de portabilidad macOS/BSD.
+
+## P-01: comprobación macOS con Bash y GNU coreutils
+
+Primer paso de portabilidad: `macos-15` ejecuta nativamente las
+pruebas de CLI y seguridad offline bajo Bash de Homebrew con herramientas
+GNU. El gate obligatorio impide que se publique un candidato con esa
+compatibilidad básica rota. Los cambios de código S-01–S-04 se conservan.
+El resultado **no acredita** soporte BSD nativo, REPL/PTY completo ni
+Vault TLS real desde macOS; esas comprobaciones continúan pendientes.

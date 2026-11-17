@@ -179,9 +179,54 @@ jobs:
       - name: Lifecycle, full synthetic catalog and real VCLI smoke
         run: bash tests/playground/smoke.sh
 
+  macos:
+    name: Native macOS offline safety contracts (Homebrew GNU runtime)
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.recursive_benchmark }}
+    needs: static
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Python for isolated CLI contracts
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install modern Bash and GNU filesystem utilities
+        run: |
+          brew install bash coreutils jq
+          echo "$(brew --prefix bash)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
+      - name: Verify GNU runtime and production CLI
+        run: |
+          command -v bash jq ln mv stat mktemp timeout
+          bash -c '(( BASH_VERSINFO[0] >= 5 ))' || {
+            echo "vcli needs Homebrew Bash, not macOS Bash 3.2" >&2
+            exit 1
+          }
+          ln --version | grep -F "GNU coreutils"
+          mv --version | grep -F "GNU coreutils"
+          stat --version | grep -F "GNU coreutils"
+          mktemp --version | grep -F "GNU coreutils"
+          bash -n ./vcli
+          ./vcli --version
+          ./vcli -h >/dev/null
+      - name: Native macOS offline safety and CLI contracts
+        run: |
+          python3 -m unittest -v \
+            tests.cli.test_cli_contract \
+            tests.cli.test_portability \
+            tests.cli.test_put_tempfiles \
+            tests.cli.test_session_tempfiles \
+            tests.cli.test_approle_security \
+            tests.cli.test_backup_publication \
+            tests.cli.test_local_file_safety \
+            tests.cli.test_recursive_listing \
+            tests.cli.test_recursive_copy
+
   gate:
     name: Required CI gate
-    needs: [static, integration, minimal, playground]
+    needs: [static, integration, minimal, playground, macos]
     if: ${{ always() && !(github.event_name == 'workflow_dispatch' && inputs.recursive_benchmark) }}
     runs-on: ubuntu-24.04
     steps:
@@ -191,11 +236,13 @@ jobs:
           INTEGRATION_RESULT: ${{ needs.integration.result }}
           MINIMAL_RESULT: ${{ needs.minimal.result }}
           PLAYGROUND_RESULT: ${{ needs.playground.result }}
+          MACOS_RESULT: ${{ needs.macos.result }}
         run: |
           test "$STATIC_RESULT" = success
           test "$INTEGRATION_RESULT" = success
           test "$MINIMAL_RESULT" = success
           test "$PLAYGROUND_RESULT" = success
+          test "$MACOS_RESULT" = success
 
   recursive_benchmark:
     name: Paired recursion benchmark (one disposable TLS Vault)
