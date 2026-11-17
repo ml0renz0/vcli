@@ -402,3 +402,28 @@ El mecanismo requiere `ln -T` GNU, ya requerido por las exportaciones
 atómicas. Pendiente de S-04: endurecer el log de depuración y revisar
 carreras del historial; las comprobaciones de rutas por nombre no bastan
 para prometer ausencia de TOCTOU en todos los sistemas de archivos.
+
+## S-04 (parte 2): logs e historial ante carreras de rutas
+
+El log de depuración se crea de forma exclusiva con un fichero temporal
+0600 y `ln -T`, o se abre para añadir texto si ya existe. El descriptor
+real se verifica ANTES de la primera escritura: archivo regular, propio,
+permisos 0600, un único enlace y coincidencia de inode con la ruta.
+Se rechazan symlinks, hardlinks y logs con permisos inseguros. Las
+escrituras posteriores reutilizan el descriptor validado, por lo que
+un cambio de pathname no redirige las escrituras a un fichero ajeno.
+Al desactivar el modo debug se cierra el descriptor.
+
+En historial, `mv -T -f` evita que una carrera convierta el destino
+en un directorio capaz de recibir el archivo de historial temporal.
+La lectura ahora fija un descriptor y verifica la ruta antes de cargar.
+Pruebas aisladas: nombre con espacios, append privado, links y
+permisos inseguros, reemplazo de ruta tras apertura, historia con
+symlink y sustitución del destino por directorio.
+
+**Límites:** el historial entre sesiones simultáneas conserva una
+política de último escritor; no se ofrece mezcla transaccional de
+comandos concurrentes. Estas comprobaciones no protegen contra
+actores con control completo de directorios padres. `ln -T`,
+`mv -T`, `/dev/fd` y `stat -L -c` son dependencias GNU/Linux
+que requieren adaptación en la futura fase de portabilidad macOS/BSD.

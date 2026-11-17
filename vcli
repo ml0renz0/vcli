@@ -8,6 +8,7 @@ declare VERBOSE=${VERBOSE:-"no"}
 declare DEBUG=${DEBUG:-"no"}
 declare DEBUG_HEXDUMP="no"
 declare DEBUGFILE="${VCLI_DEBUGFILE:-$HOME/.vcli.debug}"
+declare VCLI_DEBUG_FD=""
 declare TMP="${TMPDIR:-/tmp}"
 # Keep user-visible backups and exports under TMP, but stage sensitive
 # requests in a distinct 0700 directory removed on exit or TERM/INT.
@@ -120,11 +121,46 @@ function prompt(){
     echo -n "[$COLOUR$http_code$NONE] $BOLD$SCRIPTNAME$TAB@$NONE$BOLD$vault_host$TAB:$NONE$BOLD$vault_port$current_pwd$TAB >$NONE "
 }
 
-function debug(){
-    local msg="$*"
-    if [[ $DEBUG == "yes" ]]; then
-        echo -e "$msg" >> $DEBUGFILE
+# Open once and pin a verified private inode; later pathname swaps are inert.
+function vcli_debug_open(){
+    [[ -z ${VCLI_DEBUG_FD:-} ]] || return 0
+    local staged="" fd=""
+    if [[ -L $DEBUGFILE || ( -e $DEBUGFILE && ! -f $DEBUGFILE ) ]]; then
+        echo "vcli: refusing unsafe debug path" >&2
+        return 1
     fi
+    if [[ ! -e $DEBUGFILE ]]; then
+        staged=$(mktemp -- "${DEBUGFILE}.XXXXXXXX") || return 1
+        if ! ln -T -- "$staged" "$DEBUGFILE"; then
+            rm -f -- "$staged"
+            echo "vcli: debug path occupied during creation" >&2
+            return 1
+        fi
+        rm -f -- "$staged" || return 1
+    fi
+    # Non-truncating append. Validate the opened inode before writing.
+    if ! { exec {fd}>> "$DEBUGFILE"; }; then return 1; fi
+    if [[ -L $DEBUGFILE || ! $DEBUGFILE -ef /dev/fd/$fd ||
+          ! -f /dev/fd/$fd || ! -O /dev/fd/$fd ]] ||
+       [[ $(stat -L -c '%a:%h' "/dev/fd/$fd" 2>/dev/null) != 600:1 ]]; then
+        exec {fd}>&-
+        echo "vcli: refusing insecure debug file (owned 0600, one link required)" >&2
+        return 1
+    fi
+    VCLI_DEBUG_FD=$fd
+}
+
+function vcli_debug_close(){
+    [[ -n ${VCLI_DEBUG_FD:-} ]] || return 0
+    local fd=$VCLI_DEBUG_FD
+    VCLI_DEBUG_FD=""
+    exec {fd}>&-
+}
+
+function debug(){
+    [[ ${DEBUG:-no} == yes ]] || return 0
+    vcli_debug_open || { DEBUG=no; return 1; }
+    printf '%s\n' "$*" >&"$VCLI_DEBUG_FD"
 }
 
 ################################################# CLI FUNCTIONS #################################################
@@ -446,15 +482,28 @@ function save_history(){
         printf 'vcli: refusing unsafe history path: %s\n' "$VCLISTORY" >&2
         return 1
     fi
-    mv -f -- "$history_tmp" "$VCLISTORY" || { rm -f -- "$history_tmp"; return 1; }
+    # GNU -T refuses a raced-in directory instead of moving history inside.
+    mv -T -f -- "$history_tmp" "$VCLISTORY" || { rm -f -- "$history_tmp"; return 1; }
 }
 
 # loads history from $HOME/.vclistory
 function load_history(){
     [[ ! -L $VCLISTORY && -f $VCLISTORY && -r $VCLISTORY ]] || return 0
     local -a loaded=()
-    local idx
-    mapfile -t loaded < "$VCLISTORY" || return 1
+    local idx fd
+    # Pin the inode before reading; reject a raced-in symlink.
+    if ! { exec {fd}< "$VCLISTORY"; }; then return 1; fi
+    if [[ -L $VCLISTORY || ! -f /dev/fd/$fd ||
+          ! $VCLISTORY -ef /dev/fd/$fd ]]; then
+        exec {fd}<&-
+        echo "vcli: history path changed while opening" >&2
+        return 1
+    fi
+    if ! mapfile -t loaded <&"$fd"; then
+        exec {fd}<&-
+        return 1
+    fi
+    exec {fd}<&-
     cmd_history=()
     for (( idx=${#loaded[@]}-1; idx>=0; idx-- )); do
         [[ -n ${loaded[idx]} ]] && cmd_history+=( "${loaded[idx]}" )
@@ -946,8 +995,8 @@ function run_cmd(){
             history)                print_history ;;
             exit)                   save_history; exit ;;
             help)                   commands_help "$arg1" ;;
-            enable-debug)           echo "debug enabled" ; DEBUG="yes";;
-            disable-debug)          echo "debug disabled" ; DEBUG="no";;
+            enable-debug)           vcli_debug_open || return 1; echo "debug enabled" ; DEBUG="yes";;
+            disable-debug)          echo "debug disabled" ; DEBUG="no"; vcli_debug_close;;
             verbose)                if [[ $VERBOSE == "yes" ]]; then
                                         echo "verbose mode OFF"
                                         VERBOSE="no"
