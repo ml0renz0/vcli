@@ -124,7 +124,7 @@ function prompt(){
 # Open once and pin a verified private inode; later pathname swaps are inert.
 function vcli_debug_open(){
     [[ -z ${VCLI_DEBUG_FD:-} ]] || return 0
-    local staged="" fd=""
+    local staged="" fd="" path_identity="" fd_identity=""
     if [[ -L $DEBUGFILE || ( -e $DEBUGFILE && ! -f $DEBUGFILE ) ]]; then
         echo "vcli: refusing unsafe debug path" >&2
         return 1
@@ -138,11 +138,15 @@ function vcli_debug_open(){
         fi
         rm -f -- "$staged" || return 1
     fi
-    # Non-truncating append. Validate the opened inode before writing.
     if ! { exec {fd}>> "$DEBUGFILE"; }; then return 1; fi
-    if [[ -L $DEBUGFILE || ! $DEBUGFILE -ef /dev/fd/$fd ||
-          ! -f /dev/fd/$fd || ! -O /dev/fd/$fd ]] ||
-       [[ $(stat -L -c '%a:%h' "/dev/fd/$fd" 2>/dev/null) != 600:1 ]]; then
+    # macOS /dev/fd can report a synthetic device; -ef may fail even when
+    # the inode matches. Keep -ef on Linux, compare inode metadata on macOS.
+    path_identity=$(stat -L -c '%i:%u:%a:%h' "$DEBUGFILE" 2>/dev/null) || path_identity=""
+    fd_identity=$(stat -L -c '%i:%u:%a:%h' "/dev/fd/$fd" 2>/dev/null) || fd_identity=""
+    if [[ -L $DEBUGFILE || ! -f /dev/fd/$fd || ! -O /dev/fd/$fd ||
+          -z $fd_identity || $path_identity != "$fd_identity" ||
+          $fd_identity != *:600:1 ]] ||
+       { [[ $OSTYPE != darwin* ]] && [[ ! $DEBUGFILE -ef /dev/fd/$fd ]]; }; then
         exec {fd}>&-
         echo "vcli: refusing insecure debug file (owned 0600, one link required)" >&2
         return 1
@@ -1036,7 +1040,7 @@ function _mount(){
         else
             url="/sys/mounts$url"
         fi
-        data=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" -t .put.XXXX)
+        data=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/.put.XXXXXX)
         jq -nc --arg d "$url secret backend" --arg v "${VAULT_KV_VERSION:-1}" '{type:"kv",description:$d,options:{version:$v}}' > "$data"
         if [[ $ignore_http_code ]]; then
             _curl -i "$url" "$data" "POST"
@@ -1130,11 +1134,11 @@ function _ls(){
         method="LIST"
     fi
     if [[ $disable_colors ]]; then
-        tmp=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" -t ls.XXXX)
+        tmp=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/ls.XXXXXX)
         _curl $ignore_http_code "$url" "" "$method" > "$tmp"
         jq '.data .keys[]' -r < "$tmp"
     else
-        tmp=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" -t ls.XXXX)
+        tmp=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/ls.XXXXXX)
         _curl $ignore_http_code "$url" "" "$method" > "$tmp"
         jq '.data .keys[]' -r < "$tmp" | sed -e "s/\//$CYAN\/$NONE/"
     fi
@@ -1144,7 +1148,7 @@ function _ls(){
 # lsrole list roles
 function _lsrole(){
     local tmp
-    tmp=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" -t lsrole.XXXX)
+    tmp=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/lsrole.XXXXXX)
     _cat /auth/approle/role?list=true > "$tmp"
     jq '.data .keys[]' -r < "$tmp"
     rm "$tmp"
@@ -1161,7 +1165,7 @@ function _showrole(){
         commands_help "${funcname//_/}"
         return
     fi
-    tmp=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" -t showrole.XXXX)
+    tmp=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/showrole.XXXXXX)
     _cat /auth/approle/role/"$role" > "$tmp"
     echo -n "policies: "
     jq -r '(.data.token_policies // .data.policies // [])[]' < "$tmp"
@@ -1681,7 +1685,7 @@ function _put(){
     [[ $url == /* ]] || url="$current_pwd$1"
     debug "put: url=$url"
     debug "put: payload redacted"
-    data=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" -t .put.XXXX) || return 1
+    data=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/.put.XXXXXX) || return 1
     # Abort rather than writing a partial expanded secret.
     if command -v envsubst >/dev/null 2>&1; then
         if ! printf '%s\n' "$2" | envsubst > "$data"; then

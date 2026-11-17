@@ -211,31 +211,6 @@ jobs:
           bash -n ./vcli
           ./vcli --version
           ./vcli -h >/dev/null
-      - name: Inspect macOS descriptor and tempfile semantics (synthetic files)
-        run: |
-          dir=$(mktemp -d -- "$RUNNER_TEMP/vcli-probe.XXXXXXXX")
-          chmod 700 "$dir"
-          file=$(mktemp -p "$dir" -t .put.XXXX)
-          chmod 600 "$file"
-          exec {fd}>>"$file"
-          printf 'Bash=%s file=%s fd=%s\n' "$BASH_VERSION" "$file" "$fd"
-          for path in "$file" "/dev/fd/$fd"; do
-            printf 'probe path=%s ' "$path"
-            stat -L -c 'mode=%a links=%h owner=%u device=%d inode=%i type=%F' "$path" || :
-            [[ -f $path ]] && echo 'regular=yes' || echo 'regular=no'
-            [[ -O $path ]] && echo 'owned=yes' || echo 'owned=no'
-          done
-          [[ "$file" -ef "/dev/fd/$fd" ]] && echo 'same-inode=yes' || echo 'same-inode=no'
-          printf 'tempfile=%s\n' "$file"
-          exec {fd}>&-
-          rm -rf -- "$dir"
-          bash -c '
-            trap "exit 143" TERM
-            echo "self-signal before" 
-            kill -s TERM "$BASHPID"
-            echo "self-signal fell through"
-            exit 99
-          '
       - name: Native macOS offline safety and CLI contracts
         run: |
           python3 -m unittest -v \

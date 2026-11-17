@@ -26,6 +26,15 @@ def shell_functions(*names):
         source.append(match.group(0))
     return "\n".join(source)
 
+class TempfileTemplatePortability(unittest.TestCase):
+    def test_sensitive_mktemp_uses_explicit_private_paths(self):
+        source = SOURCE.read_text(encoding="utf-8")
+        # With -t, GNU mktemp may use TMPDIR instead of -p.
+        self.assertNotIn('mktemp -p "${VCLI_SESSION_TMP:-$TMP}" -t', source)
+        for prefix in (".put.", "ls.", "lsrole.", "showrole."):
+            self.assertIn('mktemp -- "${VCLI_SESSION_TMP:-$TMP}/' + prefix, source)
+
+
 class SessionTempLifecycleTests(unittest.TestCase):
     def test_owner_cleanup_on_exit_and_catchable_signals(self):
         helpers = shell_functions("vcli_session_cleanup", "vcli_session_open")

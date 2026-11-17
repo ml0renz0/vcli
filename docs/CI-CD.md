@@ -271,3 +271,13 @@ export PATH="$(brew --prefix bash)/bin:$(brew --prefix coreutils)/libexec/gnubin
 ./vcli --version
 python3 -m unittest -v tests.cli.test_local_file_safety tests.cli.test_backup_publication
 ```
+
+### Ajuste P-02 al primer CI macOS
+
+El primer job macOS detectó dos diferencias reales: `mktemp` con
+`-p` y `-t` podía crear ficheros fuera del subdirectorio privado, y
+`-ef` podía considerar distintos una ruta y su descriptor abierto
+por el dispositivo sintético de `/dev/fd`. Se introducen rutas
+explícitas para los temporales y validación de metadatos del descriptor
+en macOS; Linux mantiene su comprobación de `-ef`. El gate sigue
+siendo obligatorio, sin desactivar tests.

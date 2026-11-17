@@ -482,3 +482,19 @@ GNU. El gate obligatorio impide que se publique un candidato con esa
 compatibilidad básica rota. Los cambios de código S-01–S-04 se conservan.
 El resultado **no acredita** soporte BSD nativo, REPL/PTY completo ni
 Vault TLS real desde macOS; esas comprobaciones continúan pendientes.
+
+## P-02 — diferencias de macOS verificadas
+
+El primer runner macOS 15 con Bash 5.3 y GNU coreutils falló cuatro
+contratos offline. El diagnóstico mostró que `mktemp -p ... -t ...`
+generaba un fichero bajo el TMPDIR general en lugar del directorio
+privado: se emplean ahora plantillas de ruta explícitas. Además, la
+comparación Bash `-ef` contra `/dev/fd/N` devolvía falso pese a que
+GNU stat veía el mismo inodo: macOS expone un dispositivo sintético
+para ese descriptor. En macOS se verifica la identidad mediante inodo,
+propietario, permisos y número de enlaces; en Linux se mantiene `-ef`
+adicionalmente. Ambos sistemas rechazan enlaces inseguros y modos
+públicos. El código supone un directorio padre de confianza: las
+comprobaciones de identidad por inodo no proporcionan aislamiento
+absoluto ante un atacante con control de directorios o sistema de
+archivos. Esta corrección requiere otra ejecución verde del job Mac.
