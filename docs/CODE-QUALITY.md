@@ -1,10 +1,47 @@
 # Fase 04-Q — Calidad, refactorización y eficiencia
 
-**Estado: en ejecución incremental; cierre y comparativa pendientes.** Hito obligatorio de la
-recuperación de `vcli`, después de la cobertura funcional y del playground
-con Vault real, y **antes de la auditoría y release candidate v0.7**.
-No modifica por sí solo el comportamiento del CLI ni declara optimizaciones
-ya implementadas.
+**Estado: en ejecución incremental; A/B y auditoría S-01–S-04 documentadas,
+cierre pendiente.** Hito obligatorio antes de la auditoría y RC v0.7.
+Los cambios funcionales ya implementados se enumeran con sus pruebas y
+limitaciones; no se considera completada la revisión de calidad.
+
+## Balance de la auditoría de seguridad (PR #25)
+
+| ID | Prioridad | Riesgo corregido | Protección / evidencia |
+|---|---|---|---|
+| S-01 | Alta | Payload KV v2 temporal abandonado tras error | Limpieza explícita de `_put` y regresiones de 403/transportes; CI verde |
+| S-02 | Alta | Temporales sensibles mezclados con artefactos persistentes | Directorio por sesión 0700, señales y aislamiento de procesos; CI verde |
+| S-03 | Alta | Credenciales AppRole visibles en argv de `jq` | Descriptores anónimos, preflight mTLS y regresiones de señales; CI verde |
+| S-04a | Alta | Sobrescritura o symlink en backup | Archivo privado y publicación exclusiva mediante `ln -T`; CI verde |
+| S-04b | Alta | Debug sobre rutas inseguras y carrera de directorio en historial | Descriptor validado para logs, `mv -T` e historial leído por FD; CI verde |
+
+**Evidencia del estado consolidado:** [CI completo #44044728301](https://github.com/ml0renz0/vcli/actions/runs/44044728301)
+(estado SUCCESS: static, playground TLS, cuatro versiones de Vault,
+Alpine, Debian y required gate). Las pruebas aisladas complementan, pero
+no reemplazan, los contratos E2E con Vault real. El backend Raft del
+benchmark sigue siendo opcional y no equivale a una topología productiva.
+
+### Riesgos y trabajos abiertos antes del RC
+
+- **Concurrencia:** el historial entre dos sesiones conserva semántica de
+  último escritor; no hay reconciliación de cambios concurrentes.
+- **Portabilidad:** `ln -T`, `mv -T`, `stat -L -c`, `/dev/fd` y algunos
+  comportamientos de `mktemp` dependen de GNU/Linux. Sin compatibilidad
+  nativa macOS/BSD acreditada.
+- **Señales y persistencia:** `SIGKILL`, pérdida de alimentación y
+  fallos del host pueden dejar temporales. Backups y exportaciones
+  solicitados por el usuario permanecen deliberadamente en disco.
+- **Alcance del auditor:** revisar caminos raros de error, permisos de
+  directorios padre, REPL con Unicode/redimensionamiento y el playground
+  exploratorio. Mantener el tratamiento de escrituras HTTP con resultado
+  ambiguo y las limitaciones de atomicidad de Vault.
+- **Rendimiento:** más muestras y recuento de procesos/llamadas HTTP antes
+  de inferir efectos generales o establecer límites cuantitativos.
+
+**Decisión:** S-01–S-04 se consideran implementadas y verificadas en la
+matriz obligatoria, pero **04-Q no está cerrada**. No iniciar el RC v0.7
+sin resolver o aceptar explícitamente los riesgos bloqueantes y pasar la
+fase 05 con el candidato congelado.
 
 ## Alcance
 
@@ -203,8 +240,12 @@ lanza únicamente el benchmark seleccionado; cambiar archivos, abrir la PR
 o añadir otras etiquetas **no** dispara ese benchmark. La ejecución por etiqueta
 se mantiene separada del CI obligatorio y del lanzamiento manual existente.
 
-Las etiquetas miden **solo el candidato actual** (sin baseline histórica),
-con cargas `10,100` y cuatro muestras por operación; cada etiqueta desencadena una prueba una vez cuando se añade,
+Las tres etiquetas de perfil miden **solo el candidato actual** (sin baseline
+histórica). Además, `bench:ab-inmem` ejecuta una comparativa por parejas
+contra el commit verde fijado en `.github/workflows/benchmark-labels.yml`
+(actualmente `0b69ae8`); actualizar ese commit para medir un cambio posterior.
+Todas usan cargas `10,100` y cuatro muestras por operación. Cada etiqueta
+desencadena una prueba cuando se añade,
 no en cada commit posterior. Para repetir la misma prueba, retirar la etiqueta
 y volver a aplicarla. La creación de etiquetas necesita que Actions tenga
 permiso `issues: write` en el job de aprovisionamiento, no en el job de
@@ -237,11 +278,12 @@ variabilidad de CPU, disco, carga y red local de cada runner. Raft-3 usa
 tres contenedores en **un único host**, no tres zonas de disponibilidad.
 Estas medidas tampoco representan la latencia de un despliegue de producción.
 
-**Pendiente de la fase 04-Q:** comparativa A/B con dos revisiones que pasen
-la misma validación funcional, muestreo mayor y medición de procesos/HTTP.
-El commit de referencia anterior `4f96cf2` no es un baseline válido para
-todos los casos de árbol y se rechazó explícitamente por devolver resultados
-incompletos. No se publican mejoras respecto a ese commit.
+**Actualización:** las comparativas A/B verificadas de `tree`, `backup` y
+`cptree` figuran a continuación, con dos revisiones validadas en el mismo
+runner y Vault. Siguen pendientes muestreos mayores e instrumentación
+comparativa de procesos/HTTP para una conclusión estadística más robusta.
+El commit histórico `4f96cf2` fue descartado como baseline porque devolvía
+recorridos incompletos; no se atribuyen mejoras respecto a él.
 
 ## Medición A/B de la optimización de `tree` — 2026-11-13
 
@@ -282,8 +324,9 @@ del mismo directorio. El contrato aislado comprueba seis ficheros de dos
 carpetas, una con espacios, verifica el tarball y el número de llamadas
 a `mkdir` sin utilizar Vault.
 
-La mejora de latencia se evaluará mediante el benchmark A/B sobre el mismo
-runner y Vault. No se atribuyen ahorros medidos hasta completar esa prueba.
+La comparación A/B posterior confirmó una reducción de mediana en `backup`
+para los casos de 10 y 100 secretos; véase la tabla inmediatamente siguiente.
+Las cuatro muestras disponibles no demuestran significación estadística.
 
 
 ### Medición A/B de `backup` — 2026-11-15
@@ -324,7 +367,10 @@ de montaje al escribir. La longitud del array evita una pasada de recuento.
 Los tests aislados protegen montajes solapados, espacios en rutas, CAS=0,
 orden del preflight y la prohibición de escritura ante HTTP 403.
 La matriz TLS real conserva las pruebas de colisiones y fallos parciales.
-Benchmark A/B pendiente contra el commit verde anterior 0b69ae8.
+El A/B contra `0b69ae8` [terminó verde](https://github.com/ml0renz0/vcli/actions/runs/43776893780):
+`cptree` pasó de 1.014,4 a 1.011,5 ms con 10 secretos (−0,3 %) y de
+7.436,8 a 7.334,6 ms con 100 (−1,4 %), sin mejora estadística fuerte
+demostrada con cuatro muestras.
 
 ## Auditoría S-01: limpieza de temporales sensibles en `_put`
 

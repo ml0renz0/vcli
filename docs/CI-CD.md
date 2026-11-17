@@ -122,11 +122,12 @@ contratos actuales. Los datos del benchmark corresponden solo al CI.
    KV v1/v2, X.509, keytabs MIT, ACL/AppRole y datos inválidos.
    La aceptación automatizada se ejecuta como job obligatorio; falta
    explorar manualmente la UX. Véase `playground/README.md`.
-9. **Fase 04-Q — calidad, reutilización y eficiencia** (**pendiente**):
-   auditoría estructural y de seguridad de Bash; reducción justificada de
-   duplicidades, procesos externos, parsing y llamadas HTTP; benchmark
-   reproducible antes/después; comentarios breves y Markdown actualizado.
-   Véase [`docs/CODE-QUALITY.md`](CODE-QUALITY.md). **Bloquea el RC**.
+9. **Fase 04-Q — calidad, reutilización y eficiencia** (**en ejecución**):
+   comparativas A/B verificadas para `tree`, `backup` y `cptree`, más
+   hallazgos S-01–S-04 de seguridad corregidos y cubiertos por CI.
+   Pendientes la consolidación de límites de concurrencia/portabilidad,
+   la revisión exploratoria y los criterios de salida; véase
+   [`docs/CODE-QUALITY.md`](CODE-QUALITY.md). **Sigue bloqueando el RC**.
 10. **Pre-release**: ejecutar matriz completa y playground, revisar changelog,
     reproducibilidad, SHA-256, procedencia y el estado de la auditoría; publicar
     manualmente **solo** con todos los gates y la fase 04-Q completados.

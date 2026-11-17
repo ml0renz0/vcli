@@ -83,8 +83,10 @@ Los formatos cubiertos son los que gestiona actualmente el **vcli
 Bash revival**. Blueprints YAML, reconciliación declarativa, políticas
 gestionadas por descriptores y rotación son **funcionalidades futuras
 del mismo proyecto vcli**, no comandos disponibles en esta entrega.
-La [fase 04-Q](../docs/CODE-QUALITY.md) revisará la reutilización y la
-eficiencia del código antes del release candidate.
+La [fase 04-Q](../docs/CODE-QUALITY.md) está en curso: ya documenta
+mediciones A/B y correcciones de seguridad S-01–S-04. El playground
+continúa siendo obligatorio antes del release candidate, pero `smoke`
+no sustituye la auditoría de permisos/carreras ni las pruebas E2E completas.
 
 ## ACL y AppRole
 

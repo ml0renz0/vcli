@@ -63,9 +63,10 @@ printf 'cat kv1/demo/app\n' | scripts/playground.sh batch
 - [Contrato CLI](docs/CLI-CONTRACT.md): comportamiento observable y garantías.
 - [CI/CD y matriz de Vault real](docs/CI-CD.md): tests, limitaciones y gates.
 - [Revival y secuencia de entrega](docs/REVIVAL.md): estado de la recuperación.
-- [Fase 04-Q — calidad y eficiencia](docs/CODE-QUALITY.md): revisión de
-  duplicidades, helpers reutilizables, optimización medida, comentarios y
-  documentación, **previa a la auditoría/release v0.7**.
+- [Fase 04-Q — calidad y eficiencia](docs/CODE-QUALITY.md): optimizaciones
+  A/B verificadas y hallazgos de seguridad S-01–S-04 corregidos, con
+  inventario de riesgos residuales. **Fase todavía abierta y previa a la
+  auditoría/release v0.7**.
 - [Catálogo del playground](playground/README.md): rutas, fixtures y recetas.
 
 **Evolución futura (no implementada en v0.7):** blueprints declarativos YAML,

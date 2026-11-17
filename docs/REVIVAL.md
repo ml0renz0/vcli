@@ -30,7 +30,7 @@ pruebas, benchmarks y herramientas de desarrollo, no como motor de `vcli`.
 | 03 | REPL, historial y terminal | Batería principal implementada; quedan casos UX específicos |
 | 04 | Portabilidad, robustez, benchmark | Matriz Linux y playground operativos; quedan casos límites |
 | Playground | Vault TLS real, fixtures KV/PKI/Kerberos/ACL/AppRole | Implementado y con aceptación automática; exploración manual pendiente |
-| **04-Q** | **Revisión de calidad, refactorización y eficiencia** | **Planificado, obligatorio antes del RC** |
+| **04-Q** | **Revisión de calidad, refactorización y eficiencia** | **En ejecución: optimizaciones A/B y S-01–S-04 validados; cierre pendiente** |
 | 05 | Auditoría final y release candidate v0.7 | Pendiente |
 | Evolución posterior | YAML, plan/apply/drift, políticas, plantillas y rotación | Roadmap, no implementado en v0.7 |
 
@@ -60,10 +60,11 @@ JSON, certificados y claves X.509, keytabs MIT, ejemplos malformados, ACL
 de lectura y AppRoles. El `smoke` comprueba API/CLI, permisos, autenticación
 y limpieza; no sustituye una revisión exploratoria completa.
 
-## Siguiente hito — Fase 04-Q: calidad y eficiencia
+## Fase 04-Q — estado de la revisión de calidad y seguridad
 
-**No se considera completada.** Antes de la auditoría final se realizará
-una revisión incremental del código Bash para:
+**En ejecución, no cerrada.** Ya se ha revisado y endurecido parte del
+código Bash, incorporando pruebas regresivas y comparaciones de
+rendimiento. Los objetivos y criterios de trabajo son:
 
 1. Inventariar duplicidades, funciones con demasiadas responsabilidades,
    estado global, errores y temporales, priorizando seguridad y corrección.
@@ -77,8 +78,16 @@ una revisión incremental del código Bash para:
 5. Añadir **comentarios breves centrados en invariantes y decisiones no
    obvias**, evitando documentación redundante, y revisar los cinco Markdown.
 
-La especificación completa, candidatos concretos y criterios de salida
-están en [`docs/CODE-QUALITY.md`](CODE-QUALITY.md).
+La especificación, los resultados A/B, el inventario de hallazgos S-01–S-04
+y las limitaciones pendientes están en
+[`docs/CODE-QUALITY.md`](CODE-QUALITY.md).
+
+**Última evidencia:** [CI #44044728301](https://github.com/ml0renz0/vcli/actions/runs/44044728301)
+verde con Vault 1.20.4/1.21.4/2.0.4/2.1.1, Alpine, Debian y playground
+TLS. Pendiente: cerrar la auditoría de riesgos residuales, revisar
+portabilidad BSD/macOS y compatibilidad TTY/Unicode, completar revisión de
+la documentación, y ejecutar los criterios de auditoría final 05. El RC
+continúa bloqueado hasta completar esos pasos.
 
 ## Release y evolución posterior
 

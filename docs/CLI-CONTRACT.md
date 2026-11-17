@@ -20,7 +20,7 @@ Los tests no comprueban el nombre de una función interna ni si se usó
 | Escrituras compuestas | `addsecret/delsecret/cp/mv` | estado final correcto, sin corrupción |
 | Autorización | solo lectura, token inválido | 403/denegación, nunca mutar ni imprimir token |
 | Administración | `lspol/showpol/lsrole/showrole` | políticas y AppRoles obtenidos de Vault real |
-| Privacidad | comandos con secretos | no queda plaintext en historial, logs, argv o temporales persistentes |
+| Privacidad | comandos con secretos | el CLI no debe registrar payloads de comandos sensibles por defecto ni pasar credenciales AppRole por argv; temporales de sesión se limpian al salir normalmente o mediante señales capturables |
 
 ## Matriz de tests
 
@@ -112,3 +112,19 @@ precarga datos sintéticos equivalentes para pruebas manuales.
 prudencia. La compatibilidad nativa BSD/macOS no está certificada.
 La auditoría de [fase 04-Q](CODE-QUALITY.md) revisará duplicidades de
 validación, dependencias GNU, manejo de temporales y su coste en procesos.
+
+## Archivos locales (endurecimiento S-01 a S-04)
+
+El cliente separa los temporales internos en un directorio privado 0700
+por sesión y utiliza umask 077. Los backups y los certificados/keytabs
+exportados son artefactos intencionalmente persistentes; no se borran
+al cerrar el CLI. El backup se construye por completo en privado y se
+publica de forma exclusiva, sin sobrescribir destinos ni seguir symlinks.
+El modo de depuración solo admite un fichero regular propio 0600 con
+un único enlace duro. El historial se reemplaza de forma atómica;
+la lectura comprueba la identidad del fichero abierto.
+
+**Límites de contrato:** no se garantiza eliminación tras SIGKILL o fallo
+físico. El historial no sincroniza escrituras de sesiones concurrentes;
+la última escritura válida prevalece. Estas garantías de rutas y permisos
+se validan actualmente en Linux/GNU, no en macOS/BSD nativo.
