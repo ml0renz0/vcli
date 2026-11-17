@@ -369,3 +369,13 @@ supervivencia de artefactos externos a la sesión.
 forzosos; mientras el REPL siga activo después de una interrupción,
 los temporales residuales privados se eliminan al salir. Los archivos
 de backup/exportación **no se eliminan** automáticamente.
+
+## S-03: AppRole, argumentos y temprana limpieza HTTP
+
+`_vcli_login_approle` ya no pasa `secret_id` por `jq --arg` (visible en argv).
+En su lugar `jq --rawfile` recibe credenciales desde descriptores anónimos;
+se preservan comillas y saltos de línea. Se rechaza mTLS incompleto
+antes de crear archivos de credenciales, y `_curl` elimina la respuesta
+si falla el `mktemp` del payload KV2. La prueba aislada inspecciona
+los argumentos reales de jq, JSON, rechazo mTLS antes de EXIT e
+interrupción TERM durante autenticación, además de conservar artefactos.

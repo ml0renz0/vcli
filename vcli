@@ -701,11 +701,21 @@ function _vcli_login_approle(){
     [[ -n $role_id && -n $secret_id ]] || {
         echo "vcli: incomplete AppRole credentials" >&2; return 1;
     }
+    # Fail mTLS preflight before writing any AppRole credentials.
+    if [[ -n ${VAULT_CLIENT_CERT:-} || -n ${VAULT_CLIENT_KEY:-} ]]; then
+        if [[ -z ${VAULT_CLIENT_CERT:-} || -z ${VAULT_CLIENT_KEY:-} ]]; then
+            echo "vcli: both VAULT_CLIENT_CERT and VAULT_CLIENT_KEY are required" >&2
+            return 1
+        fi
+    fi
     response_file=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" .vcli.auth.XXXXXX) || return 1
     payload_file=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" .vcli.auth-data.XXXXXX) || {
         rm -f "$response_file"; return 1;
     }
-    jq -cn --arg rid "$role_id" --arg sid "$secret_id"         '{role_id:$rid,secret_id:$sid}' > "$payload_file" || {
+    # Never pass the secret_id through process argv.
+    jq -cn --rawfile rid <(printf '%s' "$role_id") \
+           --rawfile sid <(printf '%s' "$secret_id") \
+           '{role_id:$rid,secret_id:$sid}' > "$payload_file" || {
         rm -f "$response_file" "$payload_file"; return 1;
     }
     local -a args=(--silent --show-error --connect-timeout "${VCLI_CONNECT_TIMEOUT:-2}"
@@ -717,14 +727,8 @@ function _vcli_login_approle(){
     [[ -n ${VAULT_CAPATH:-} ]] && args+=(--capath "$VAULT_CAPATH")
     # Mutual TLS is opt-in; a half-configured pair must never silently
     # fall back to an unauthenticated client certificate handshake.
-    if [[ -n ${VAULT_CLIENT_CERT:-} || -n ${VAULT_CLIENT_KEY:-} ]]; then
-        if [[ -z ${VAULT_CLIENT_CERT:-} || -z ${VAULT_CLIENT_KEY:-} ]]; then
-            echo "vcli: both VAULT_CLIENT_CERT and VAULT_CLIENT_KEY are required" >&2
-            rm -f "$response_file"
-            return 1
-        fi
+    [[ -n ${VAULT_CLIENT_CERT:-} ]] &&
         args+=(--cert "$VAULT_CLIENT_CERT" --key "$VAULT_CLIENT_KEY")
-    fi
     [[ -n ${VAULT_NAMESPACE:-} ]] && args+=(--header "X-Vault-Namespace: $VAULT_NAMESPACE")
     status=$(curl "${args[@]}" "$protocol://$vault_host:$vault_port/v1/auth/approle/login")
     code=$?
@@ -818,7 +822,10 @@ function _curl(){
         fi
         payload="$data"
         if [[ $kv2 == yes && ( $method == POST || $method == PUT || $method == PATCH ) ]]; then
-            payload_file=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" .vcli.payload.XXXXXX) || return 1
+            payload_file=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" .vcli.payload.XXXXXX) || {
+                rm -f -- "$response_file"
+                return 1
+            }
             if [[ -n $cas ]]; then
                 if ! jq -c --argjson cas "$cas" '{data: ., options: {cas: $cas}}' "$data" > "$payload_file"; then
                     rm -f "$response_file" "$payload_file"
