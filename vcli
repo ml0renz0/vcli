@@ -1040,7 +1040,7 @@ function _mount(){
         else
             url="/sys/mounts$url"
         fi
-        data=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/.put.XXXXXX)
+        data=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/.put.XXXXXX")
         jq -nc --arg d "$url secret backend" --arg v "${VAULT_KV_VERSION:-1}" '{type:"kv",description:$d,options:{version:$v}}' > "$data"
         if [[ $ignore_http_code ]]; then
             _curl -i "$url" "$data" "POST"
@@ -1134,11 +1134,11 @@ function _ls(){
         method="LIST"
     fi
     if [[ $disable_colors ]]; then
-        tmp=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/ls.XXXXXX)
+        tmp=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/ls.XXXXXX")
         _curl $ignore_http_code "$url" "" "$method" > "$tmp"
         jq '.data .keys[]' -r < "$tmp"
     else
-        tmp=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/ls.XXXXXX)
+        tmp=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/ls.XXXXXX")
         _curl $ignore_http_code "$url" "" "$method" > "$tmp"
         jq '.data .keys[]' -r < "$tmp" | sed -e "s/\//$CYAN\/$NONE/"
     fi
@@ -1148,7 +1148,7 @@ function _ls(){
 # lsrole list roles
 function _lsrole(){
     local tmp
-    tmp=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/lsrole.XXXXXX)
+    tmp=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/lsrole.XXXXXX")
     _cat /auth/approle/role?list=true > "$tmp"
     jq '.data .keys[]' -r < "$tmp"
     rm "$tmp"
@@ -1165,7 +1165,7 @@ function _showrole(){
         commands_help "${funcname//_/}"
         return
     fi
-    tmp=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/showrole.XXXXXX)
+    tmp=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/showrole.XXXXXX")
     _cat /auth/approle/role/"$role" > "$tmp"
     echo -n "policies: "
     jq -r '(.data.token_policies // .data.policies // [])[]' < "$tmp"
@@ -1685,7 +1685,7 @@ function _put(){
     [[ $url == /* ]] || url="$current_pwd$1"
     debug "put: url=$url"
     debug "put: payload redacted"
-    data=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/.put.XXXXXX) || return 1
+    data=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/.put.XXXXXX") || return 1
     # Abort rather than writing a partial expanded secret.
     if command -v envsubst >/dev/null 2>&1; then
         if ! printf '%s\n' "$2" | envsubst > "$data"; then
