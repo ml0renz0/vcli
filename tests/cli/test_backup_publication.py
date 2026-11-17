@@ -76,7 +76,7 @@ done
             archives = list(root.glob("backup_vault*.tgz"))
             contents = {}
             for archive in archives:
-                if archive.is_file() and not archive.is_symlink():
+                if mode == "normal" and archive.is_file() and not archive.is_symlink():
                     with tarfile.open(archive, "r:gz") as handle:
                         contents[archive.name] = {
                             name.removeprefix("./"): handle.extractfile(member).read()
