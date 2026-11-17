@@ -379,3 +379,26 @@ antes de crear archivos de credenciales, y `_curl` elimina la respuesta
 si falla el `mktemp` del payload KV2. La prueba aislada inspecciona
 los argumentos reales de jq, JSON, rechazo mTLS antes de EXIT e
 interrupción TERM durante autenticación, además de conservar artefactos.
+
+## S-04 (parte 1): publicación exclusiva de backups
+
+**Hallazgo:** `_backup` generaba un nombre con resolución de un segundo y
+ejecutaba `tar -czf` directamente sobre `TMPDIR`: dos backups del mismo
+árbol podían sobrescribirse y un atacante con capacidad de crear un symlink
+en el destino podía conseguir que se truncara su objetivo.
+
+**Corrección:** se crea el fichero `.tgz` entero dentro del directorio
+privado de sesión, con permisos 0600; el nombre final lleva una parte
+aleatoria de `mktemp`. Se publica mediante `ln -T` exclusivamente
+(en el mismo sistema de archivos). Si el destino existe o es un symlink,
+la publicación falla sin reemplazarlo ni modificarlo. Ningún archivo
+incompleto se publica antes de terminar `tar`. Solo se elimina el staging,
+no los ficheros ajenos ni los backups publicados.
+
+Las regresiones simulan una creación concurrente de symlink y de archivo
+justo antes de publicar, validan ausencia de truncado, dos backups en un
+mismo segundo, permisos 0600 y error de compresión sin salida parcial.
+El mecanismo requiere `ln -T` GNU, ya requerido por las exportaciones
+atómicas. Pendiente de S-04: endurecer el log de depuración y revisar
+carreras del historial; las comprobaciones de rutas por nombre no bastan
+para prometer ausencia de TOCTOU en todos los sistemas de archivos.

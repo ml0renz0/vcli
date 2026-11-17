@@ -1321,13 +1321,12 @@ function _rmtree(){
 
 # backup vault
 function _backup(){
-    local root leaves leaf response payload dir archive relative parent
+    local root leaves leaf response payload dir archive archive_stage relative parent
     root=$(_vcli_absolute_path "${1:-}") || { echo "Missing backup path" >&2; return 1; }
     [[ $root != / && ${root#/} == */* ]] || {
         echo "Backup requires a path within a secrets mount" >&2; return 1;
     }
     dir=$(mktemp -d -p "${VCLI_SESSION_TMP:-$TMP}" .vcli-backup.XXXXXX) || return 1
-    archive="$TMP/backup_vault_${root//\//-}.$(date +%s).tgz"
     if response=$(_cat "$root" 2>/dev/null); then
         leaves="$root"
     else
@@ -1347,11 +1346,26 @@ function _backup(){
         fi
         printf '%s\n' "$payload" > "$dir/$relative" || { rm -rf -- "$dir"; return 1; }
     done <<< "$leaves"
-    if ! tar -czf "$archive" -C "$dir" .; then
-        rm -f -- "$archive"
+    # Build the whole archive in private staging. Never truncate a public
+    # destination or follow a symlink placed there by another process.
+    archive_stage=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" .vcli-archive.XXXXXXXX) || {
+        rm -rf -- "$dir"; return 1;
+    }
+    archive="${TMP%/}/backup_vault_${root//\//-}.$(date +%s).${archive_stage##*.}.tgz"
+    if ! tar -czf "$archive_stage" -C "$dir" .; then
+        rm -f -- "$archive_stage"
         rm -rf -- "$dir"
         return 1
     fi
+    # Exclusive hardlink publication fails closed on collisions and symlinks.
+    # Staging and output share TMP's filesystem; the published inode is 0600.
+    if ! ln -T -- "$archive_stage" "$archive"; then
+        rm -f -- "$archive_stage"
+        rm -rf -- "$dir"
+        echo "vcli: backup destination occupied or cannot be published" >&2
+        return 1
+    fi
+    rm -f -- "$archive_stage"
     rm -rf -- "$dir"
     printf "Vault backup created: %s\n" "$archive"
 }
