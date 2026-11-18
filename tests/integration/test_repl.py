@@ -213,10 +213,11 @@ class InteractiveShellTests(unittest.TestCase):
     def test_05_ctrl_c_discards_partial_input_and_keeps_session(self):
         home, fd, child = self.session()
         try:
-            self.send(fd, b"not-a-valid-command")
-            # Wait until all input has reached the editor before interrupting:
-            # Darwin's PTY can queue bytes while the child is still redrawing.
-            read_until(fd, b"not-a-valid-command", timeout=8)
+            self.send(fd, b"not-a-valid-command!")
+            # The editor inserts a character at a time and emits cursor
+            # controls between them; a contiguous echoed command is not valid.
+            # The unique final '!' proves the full input has been consumed.
+            read_until(fd, b"!", timeout=8)
             os.kill(child.pid, signal.SIGINT)
             read_until(fd, b" >", timeout=8)
             self.assertIsNone(child.poll(), "Ctrl+C must not terminate the session")
