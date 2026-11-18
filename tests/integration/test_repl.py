@@ -214,8 +214,11 @@ class InteractiveShellTests(unittest.TestCase):
         home, fd, child = self.session()
         try:
             self.send(fd, b"not-a-valid-command")
+            # Wait until all input has reached the editor before interrupting:
+            # Darwin's PTY can queue bytes while the child is still redrawing.
+            read_until(fd, b"not-a-valid-command", timeout=8)
             os.kill(child.pid, signal.SIGINT)
-            time.sleep(0.2)
+            read_until(fd, b" >", timeout=8)
             self.assertIsNone(child.poll(), "Ctrl+C must not terminate the session")
             self.send(fd, b"help\n")
             out = self.expect_help(fd, timeout=8)
@@ -287,7 +290,9 @@ class InteractiveShellTests(unittest.TestCase):
             for _ in range(2):
                 self.send(fd, b"help\n")
                 self.expect_help(fd, timeout=8)
-                time.sleep(0.15)
+                # The help header precedes several screens of text. Do not
+                # send Ctrl+D until the REPL has printed its next prompt.
+                read_until(fd, b" >", timeout=8)
             self.send(fd, b"\x04")
             self.assertEqual(wait_pty_exit(fd, child, timeout=8), 0)
             saved = (Path(home.name) / ".vclistory").read_text(encoding="utf-8")
