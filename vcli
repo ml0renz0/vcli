@@ -2158,6 +2158,7 @@ function vcli_clear_editor(){
 # Keep consuming the paste after an interrupt until its closing marker.
 # Otherwise a pasted newline after Ctrl+C could execute a Vault command.
 function vcli_interrupt_editor(){
+    VCLI_EDITOR_INTERRUPTED=yes
     vcli_clear_editor
     if [[ $vcli_paste_mode == yes ]]; then
         vcli_paste_bad=yes
@@ -2280,12 +2281,16 @@ function main(){
             _key=$pending_key
             unset pending_key
         elif ! read -r -sN1 _key; then
-            # An interrupted read is recoverable; EOF should exit.
-            if [[ -t 0 ]]; then
+            # A real terminal can still return EOF (notably Ctrl+D on Darwin).
+            # Only SIGINT is a recoverable interrupted read; a TTY alone is
+            # not evidence that the read should be retried indefinitely.
+            if [[ ${VCLI_EDITOR_INTERRUPTED:-} == yes ]]; then
+                VCLI_EDITOR_INTERRUPTED=""
                 continue
             fi
             clean_n_exit
         fi
+        VCLI_EDITOR_INTERRUPTED=""
         # Bracketed paste must never execute embedded newlines or control keys.
         # Once unsafe input is seen, drop the rest until the closing CSI 201~.
         if [[ $vcli_paste_mode == yes && $_key != $'\x1b' ]]; then
