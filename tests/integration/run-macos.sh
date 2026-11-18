@@ -90,6 +90,12 @@ VCLI_TEST_READONLY_TOKEN=$(vault token create -policy=vcli-ci-ro -orphan -field=
 [[ -n $VCLI_TEST_READONLY_TOKEN ]] || exit 1
 
 bash -n ./vcli
+# Fail early on Darwin PTY regressions, before running the longer 13-module
+# matrix. These exact cases also remain mandatory within the full suite.
+python3 -m unittest -q \
+    tests.integration.test_repl.InteractiveShellTests.test_interactive_help_and_ctrl_d \
+    tests.integration.test_repl.InteractiveShellTests.test_14_history_rewrite_is_atomic_and_private \
+    tests.integration.test_repl.InteractiveShellTests.test_17_incomplete_csi_times_out_without_breaking_next_command
 # Identical existing black-box E2E suites, independently checked via Vault API.
 python3 -m unittest -v tests.integration.test_vault \
     tests.integration.test_operations \
