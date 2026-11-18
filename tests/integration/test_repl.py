@@ -63,6 +63,33 @@ def read_until(fd, marker: bytes, timeout=8) -> bytes:
     raise AssertionError(f"Expected {marker!r} in PTY output: {bytes(data)[-1500:]!r}")
 
 
+def wait_pty_exit(fd, child, timeout=8):
+    """Consume pending PTY output while waiting for the CLI to exit.
+
+    On Darwin the PTY output buffer can fill after an early output marker,
+    blocking vcli's writer before it gets back to read Ctrl+D. This still
+    requires a clean exit with status 0; it does not weaken the assertion.
+    """
+    deadline = time.monotonic() + timeout
+    output = bytearray()
+    while child.poll() is None and time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        readable, _, _ = select.select([fd], [], [], min(0.15, remaining))
+        if readable:
+            try:
+                chunk = os.read(fd, 8192)
+            except OSError:
+                break
+            if not chunk:
+                break
+            output.extend(chunk)
+    if child.poll() is None:
+        raise AssertionError(
+            f"vcli did not exit after Ctrl+D; PTY tail={bytes(output)[-1000:]!r}"
+        )
+    return child.wait(timeout=1)
+
+
 class InteractiveShellTests(unittest.TestCase):
     def test_interactive_help_and_ctrl_d(self):
         with tempfile.TemporaryDirectory(prefix="vcli-ci-repl-") as home:
@@ -90,7 +117,7 @@ class InteractiveShellTests(unittest.TestCase):
                 # Wait for the REPL to finish rendering help before Ctrl+D.
                 time.sleep(0.5)
                 os.write(master, b"\x04")  # Ctrl+D
-                self.assertEqual(child.wait(timeout=8), 0)
+                self.assertEqual(wait_pty_exit(master, child, timeout=8), 0)
             finally:
                 if child.poll() is None:
                     child.kill()
@@ -216,7 +243,7 @@ class InteractiveShellTests(unittest.TestCase):
             self.assertIn(b"#1: help", out)
             self.assertIsNone(child.poll())
             self.send(fd, b"\x04")
-            self.assertEqual(child.wait(timeout=8), 0)
+            self.assertEqual(wait_pty_exit(fd, child, timeout=8), 0)
             self.assertNotIn("his\n", (Path(home.name) / ".vclistory").read_text())
         finally:
             self.end(home, fd, child)
@@ -262,7 +289,7 @@ class InteractiveShellTests(unittest.TestCase):
                 self.expect_help(fd, timeout=8)
                 time.sleep(0.15)
             self.send(fd, b"\x04")
-            self.assertEqual(child.wait(timeout=8), 0)
+            self.assertEqual(wait_pty_exit(fd, child, timeout=8), 0)
             saved = (Path(home.name) / ".vclistory").read_text(encoding="utf-8")
             self.assertEqual(saved.splitlines().count("help"), 1, saved)
         finally:
@@ -294,7 +321,7 @@ class InteractiveShellTests(unittest.TestCase):
                 # Help renders multiple lines; give the REPL time to read Ctrl+D.
                 time.sleep(0.5)
                 self.send(fd, b"\x04")
-                self.assertEqual(child.wait(timeout=8), 0)
+                self.assertEqual(wait_pty_exit(fd, child, timeout=8), 0)
                 self.assertEqual(protected.read_text(), "do-not-touch\n")
                 self.assertTrue(history.is_symlink())
             finally:
@@ -306,7 +333,7 @@ class InteractiveShellTests(unittest.TestCase):
             self.send(fd, b"history\n", pace=0.03)
             read_until(fd, b"#1: help", timeout=8)
             self.send(fd, b"\x04")
-            self.assertEqual(child.wait(timeout=8), 0)
+            self.assertEqual(wait_pty_exit(fd, child, timeout=8), 0)
             history_file = Path(home.name) / ".vclistory"
             self.assertEqual(history_file.stat().st_mode & 0o777, 0o600)
             self.assertEqual(history_file.read_text().splitlines(), ["help", "history"])
