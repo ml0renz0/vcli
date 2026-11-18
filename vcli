@@ -13,14 +13,39 @@ declare TMP="${TMPDIR:-/tmp}"
 # Keep user-visible backups and exports under TMP, but stage sensitive
 # requests in a distinct 0700 directory removed on exit or TERM/INT.
 declare VCLI_SESSION_TMP="" VCLI_SESSION_PID=""
+declare VCLI_TTY_STATE=""
 umask 077
 
 function vcli_session_cleanup(){
     # Never let an inherited EXIT trap in a subshell remove its parent files.
-    [[ -n $VCLI_SESSION_TMP && $BASHPID == "$VCLI_SESSION_PID" ]] || return 0
+    [[ $BASHPID == "$VCLI_SESSION_PID" ]] || return 0
+    vcli_terminal_restore
+    [[ -n $VCLI_SESSION_TMP ]] || return 0
     local owned="$VCLI_SESSION_TMP"
     VCLI_SESSION_TMP=""
     rm -rf -- "$owned"
+}
+
+# On macOS Bash's per-read tty mode restoration is unreliable under PTY;
+# configure the interactive editor once, then restore the user's exact mode
+# on every exit path via the existing session EXIT trap.
+function vcli_terminal_open(){
+    [[ $OSTYPE == darwin* && -t 0 ]] || return 0
+    [[ -z ${VCLI_TTY_STATE:-} ]] || return 0
+    local saved
+    saved=$(stty -g </dev/stdin) || return 1
+    if ! stty -icanon -echo min 1 time 0 </dev/stdin; then
+        stty "$saved" </dev/stdin || true
+        return 1
+    fi
+    VCLI_TTY_STATE=$saved
+}
+
+function vcli_terminal_restore(){
+    [[ -n ${VCLI_TTY_STATE:-} ]] || return 0
+    local saved=$VCLI_TTY_STATE
+    VCLI_TTY_STATE=""
+    stty "$saved" </dev/stdin || true
 }
 
 function vcli_session_open(){
@@ -2232,6 +2257,12 @@ function main(){
         exit "$batch_result"
     fi
 
+    # macOS needs stable noncanonical, no-echo mode for one-byte reads
+    # (including Ctrl+D, Ctrl+R and cursor sequences). EXIT restores tty.
+    if ! vcli_terminal_open; then
+        echo "vcli: unable to configure interactive terminal" >&2
+        exit 1
+    fi
     # Ctrl+C clears the editing buffer without terminating the session.
     trap 'vcli_interrupt_editor' INT
 
