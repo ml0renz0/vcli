@@ -498,3 +498,14 @@ públicos. El código supone un directorio padre de confianza: las
 comprobaciones de identidad por inodo no proporcionan aislamiento
 absoluto ante un atacante con control de directorios o sistema de
 archivos. Esta corrección requiere otra ejecución verde del job Mac.
+
+## P-03 — Vault real bajo macOS sin Docker
+
+Sobre `macos-15` y Bash/GNU Homebrew se incorpora Vault **2.1.1 ARM64**
+nativo con TLS generado por Vault, binario oficial validado con SHA-256
+fijado, escucha exclusivamente en loopback y catálogo KV v1/v2/anidado,
+ACL/AppRole y token de prueba. Un trap elimina el proceso y sus archivos
+sensibles. Se reutilizan suites E2E de KV, TLS, autenticación,
+operaciones y parte de PKI/Kerberos con comprobación independiente API.
+**Pendiente** comprobar la ejecución verde del job; no acredita utilidades
+BSD puras ni cobertura completa de los E2E macOS.

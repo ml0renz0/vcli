@@ -95,6 +95,28 @@ class VaultMatrixParity(unittest.TestCase):
         self.assertIn('test "$MACOS_RESULT" = success', workflow)
         self.assertIn("Native macOS offline safety and CLI contracts", workflow)
 
+    def test_macos_live_vault_is_pinned_loopback_and_required(self):
+        workflow = (RUNNER.parents[2] / ".github" / "workflows" / "ci.yml").read_text()
+        runner = RUNNER.parents[1] / "integration" / "run-macos.sh"
+        content = runner.read_text(encoding="utf-8")
+        self.assertIn("Native macOS Vault 2.1.1 TLS E2E (no Docker)", workflow)
+        self.assertIn("bash tests/integration/run-macos.sh", workflow)
+        self.assertIn("tests/integration/run-macos.sh", workflow)
+        self.assertIn("brew install bash coreutils jq openssl@3 krb5", workflow)
+        self.assertIn("needs: [static, integration, minimal, playground, macos]", workflow)
+        self.assertIn("releases.hashicorp.com/vault/2.1.1/", content)
+        self.assertIn("95d100472b726d889ee380c9335191abdf5b3e6f3108cde48f4f962bfea4f009", content)
+        self.assertIn("shasum -a 256 -c -", content)
+        self.assertIn("vault server -dev -dev-tls", content)
+        self.assertIn("VAULT_ADDR='https://127.0.0.1:8200'", content)
+        self.assertIn("trap cleanup EXIT", content)
+        self.assertIn("VCLI_TEST_READONLY_TOKEN", content)
+        for name in ("test_vault", "test_operations", "test_security",
+                     "test_tls", "test_auth_lifecycle", "test_session_commands"):
+            self.assertIn("tests.integration." + name, content)
+        self.assertNotIn("docker ", content.lower())
+        self.assertNotIn("VAULT_SKIP_VERIFY=true", content)
+
     def test_manual_benchmark_does_not_repeat_full_vault_matrix(self):
         workflow = (RUNNER.parents[2] / ".github" / "workflows" / "ci.yml").read_text()
         condition = "!(github.event_name == 'workflow_dispatch' && inputs.recursive_benchmark)"

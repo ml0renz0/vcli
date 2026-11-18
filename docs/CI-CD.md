@@ -281,3 +281,24 @@ por el dispositivo sintético de `/dev/fd`. Se introducen rutas
 explícitas para los temporales y validación de metadatos del descriptor
 en macOS; Linux mantiene su comprobación de `-ef`. El gate sigue
 siendo obligatorio, sin desactivar tests.
+
+### P-03 — Vault TLS real en macOS nativo
+
+El job `macos-15` incorpora una **segunda etapa E2E** sin Docker:
+`tests/integration/run-macos.sh` descarga el binario oficial Vault
+2.1.1 `darwin_arm64` y verifica su SHA-256 **fijado en el repositorio**,
+antes de ejecutarlo. Levanta `vault server -dev -dev-tls` limitado a
+`127.0.0.1:8200`, con CA autogenerada, token exclusivamente sintético,
+tres montajes KV, AppRole y política de solo lectura. Comprueba que la
+CA no se acepta implícitamente. Los recursos y el proceso se eliminan
+en `EXIT` y señales capturables.
+
+La etapa ejecuta contratos E2E existentes de KV, operaciones compuestas,
+seguridad, TLS, ciclo de vida de autenticación y comandos de sesión, más
+tres casos de exportación de certificados/keytab. No utiliza credenciales
+externas. El primer CI macOS debe validar el resultado antes de declarar
+esta cobertura completada.
+
+**Alcance:** Vault dev efímero sobre macOS, no toda la matriz Linux ni
+una topología Raft de producción. La dependencia de GNU/MIT Homebrew
+y la ausencia de soporte BSD nativo permanecen documentadas.
