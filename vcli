@@ -519,11 +519,15 @@ function save_history(){
 function load_history(){
     [[ ! -L $VCLISTORY && -f $VCLISTORY && -r $VCLISTORY ]] || return 0
     local -a loaded=()
-    local idx fd
-    # Pin the inode before reading; reject a raced-in symlink.
+    local idx fd path_identity fd_identity
+    # Pin the inode before reading; macOS /dev/fd may have a synthetic
+    # device number, so compare inode + owner, with -ef additionally on Linux.
     if ! { exec {fd}< "$VCLISTORY"; }; then return 1; fi
+    path_identity=$(stat -L -c '%i:%u' "$VCLISTORY" 2>/dev/null) || path_identity=""
+    fd_identity=$(stat -L -c '%i:%u' "/dev/fd/$fd" 2>/dev/null) || fd_identity=""
     if [[ -L $VCLISTORY || ! -f /dev/fd/$fd ||
-          ! $VCLISTORY -ef /dev/fd/$fd ]]; then
+          -z $fd_identity || $path_identity != "$fd_identity" ]] ||
+       { [[ $OSTYPE != darwin* ]] && [[ ! $VCLISTORY -ef /dev/fd/$fd ]]; }; then
         exec {fd}<&-
         echo "vcli: history path changed while opening" >&2
         return 1
@@ -2242,6 +2246,13 @@ function main(){
     # Show vault's health
     [[ ! $disable_prompt ]] && _cat "-_disable_-f_-" sys/health
 
+    # Configure macOS input BEFORE displaying the prompt: a PTY client can
+    # start sending Ctrl+D/CSI immediately on seeing the prompt.
+    if [[ ${disable_prompt:-} != yes ]] && ! vcli_terminal_open; then
+        echo "vcli: unable to configure interactive terminal" >&2
+        exit 1
+    fi
+
     # print prompt
     prompt
 
@@ -2257,12 +2268,6 @@ function main(){
         exit "$batch_result"
     fi
 
-    # macOS needs stable noncanonical, no-echo mode for one-byte reads
-    # (including Ctrl+D, Ctrl+R and cursor sequences). EXIT restores tty.
-    if ! vcli_terminal_open; then
-        echo "vcli: unable to configure interactive terminal" >&2
-        exit 1
-    fi
     # Ctrl+C clears the editing buffer without terminating the session.
     trap 'vcli_interrupt_editor' INT
 
