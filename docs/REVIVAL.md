@@ -28,7 +28,7 @@ pruebas, benchmarks y herramientas de desarrollo, no como motor de `vcli`.
 | 01 | Revival Bash, KV y operaciones base | Implementado y cubierto por CI |
 | 02 | PKI, X.509, claves y Kerberos | Implementado y cubierto por CI |
 | 03 | REPL, historial y terminal | Batería principal implementada; quedan casos UX específicos |
-| 04 | Portabilidad, robustez, benchmark | Linux/playground verificados; macOS P-04a TLS E2E verde (111 casos); P-04b amplía a los 13 módulos Linux, incluyendo PTY/TLS avanzado/PKI; BSD nativo pendiente |
+| 04 | Portabilidad, robustez, benchmark | Linux/playground verificados; macOS P-04b verde (187 E2E, 13 módulos Linux); P-05 inicia portabilidad BSD por funciones; BSD nativo completo pendiente |
 | Playground | Vault TLS real, fixtures KV/PKI/Kerberos/ACL/AppRole | Implementado y con aceptación automática; exploración manual pendiente |
 | **04-Q** | **Revisión de calidad, refactorización y eficiencia** | **En ejecución: optimizaciones A/B y S-01–S-04 validados; cierre pendiente** |
 | 05 | Auditoría final y release candidate v0.7 | Pendiente |
@@ -82,7 +82,7 @@ La especificación, los resultados A/B, el inventario de hallazgos S-01–S-04
 y las limitaciones pendientes están en
 [`docs/CODE-QUALITY.md`](CODE-QUALITY.md).
 
-**Última evidencia:** [CI #44044728301](https://github.com/ml0renz0/vcli/actions/runs/44044728301)
+**Última evidencia:** [CI #44420646290](https://github.com/ml0renz0/vcli/actions/runs/44420646290)
 verde con Vault 1.20.4/1.21.4/2.0.4/2.1.1, Alpine, Debian y playground
 TLS. Pendiente: cerrar la auditoría de riesgos residuales, revisar
 portabilidad BSD/macOS y compatibilidad TTY/Unicode, completar revisión de

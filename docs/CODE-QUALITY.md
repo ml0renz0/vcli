@@ -527,3 +527,19 @@ PKI/Kerberos (incluidas carreras adversariales) y REPL PTY (38 casos).
 La lista se comprueba automáticamente frente a la matriz Linux para
 impedir saltos silenciosos. Aceptación pendiente de CI verde real; la
 paridad de utilidades BSD continúa fuera del alcance y requerirá P-05.
+
+## P-05a — expiración X.509 con date GNU y BSD nativo
+
+Se elimina la dependencia exclusiva de `date -d` para los comandos
+de vencimiento de certificados. El helper `vcli_cert_expiry_epoch`
+valida el formato `notAfter=... GMT` de OpenSSL y usa
+`/bin/date -u -j -f` de macOS, incluso con GNU coreutils en PATH,
+o `date -u -d` en Linux. `LC_ALL=C` fuerza una interpretación
+estable de los nombres de meses. Tests offline con épocas UTC conocidas
+y rechazo de cadenas arbitrarias/inyección, ejecutados en Linux y
+macOS. Las pruebas E2E `getcertexpiration` y `getallcertexpiration`
+continúan en los 13 módulos nativos de macOS y Linux.
+
+No implica soporte BSD completo: `ln -T`, `mv -T`, `stat -c`,
+`mktemp -p`, `base64 --decode` y `timeout` aún necesitan revisión
+sin reducir las garantías de seguridad.

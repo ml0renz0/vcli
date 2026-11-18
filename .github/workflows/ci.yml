@@ -63,7 +63,7 @@ jobs:
           fi
           for cmd in jq curl shellcheck; do command -v "$cmd"; done
       - name: CLI contract and E2E matrix parity (no Vault required)
-        run: python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_ci_matrix tests.cli.test_command_coverage tests.cli.test_endpoint_encoding tests.cli.test_recursive_listing tests.cli.test_backup_publication tests.cli.test_recursive_copy tests.cli.test_put_tempfiles tests.cli.test_session_tempfiles tests.cli.test_approle_security tests.cli.test_local_file_safety tests.cli.test_recursive_benchmark
+        run: python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_ci_matrix tests.cli.test_command_coverage tests.cli.test_endpoint_encoding tests.cli.test_recursive_listing tests.cli.test_backup_publication tests.cli.test_recursive_copy tests.cli.test_put_tempfiles tests.cli.test_session_tempfiles tests.cli.test_approle_security tests.cli.test_local_file_safety tests.cli.test_certificate_date_portability tests.cli.test_recursive_benchmark
       - name: Bash syntax and ShellCheck
         run: |
           bash -n ./vcli ./scripts/playground.sh ./scripts/playground-seed.sh ./scripts/bench-compare.sh ./tests/integration/run-raft.sh ./tests/integration/run-macos.sh ./tests/playground/smoke.sh
@@ -218,6 +218,7 @@ jobs:
           python3 -m unittest -v \
             tests.cli.test_cli_contract \
             tests.cli.test_portability \
+            tests.cli.test_certificate_date_portability \
             tests.cli.test_put_tempfiles \
             tests.cli.test_session_tempfiles \
             tests.cli.test_approle_security \

@@ -328,3 +328,12 @@ Ningún test E2E se omite, adapta ni simula para macOS; una discrepancia
 bloquea el gate y se investiga. **Pendiente CI P-04b** para declarar
 paridad efectiva. Se sigue usando Bash moderno y GNU Homebrew, por lo que
 esto aún no acredita soporte de utilidades BSD nativas.
+
+### P-05a — primer componente probado con date BSD nativo
+
+El parser de vencimiento de X.509 emplea `/bin/date` de macOS con
+`-u -j -f` y Linux con `date -u -d`. El formato de entrada se
+valida y la fecha se interpreta en UTC y locale C. El test offline
+`tests/cli/test_certificate_date_portability.py` se ejecuta en
+Ubuntu y macOS, y la suite E2E completa mantiene la comprobación
+con Vault TLS real. No equivale todavía a runtime BSD puro.

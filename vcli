@@ -1902,6 +1902,20 @@ function _getcertlist(){
     done
 }
 
+# Parse OpenSSL GMT notAfter dates with GNU date or native macOS BSD date.
+function vcli_cert_expiry_epoch(){
+    local raw="${1:-}" value
+    [[ $raw == notAfter=* ]] || return 1
+    value=${raw#notAfter=}
+    [[ $value =~ ^[A-Z][a-z]{2}[[:space:]]+[0-9]{1,2}[[:space:]]+[0-9]{2}:[0-9]{2}:[0-9]{2}[[:space:]]+[0-9]{4}[[:space:]]+GMT$ ]] || return 1
+    if [[ $OSTYPE == darwin* ]]; then
+        # Exercise the native BSD implementation even when GNU date is on PATH.
+        LC_ALL=C /bin/date -u -j -f '%b %e %T %Y GMT' "$value" +%s
+    else
+        LC_ALL=C date -u -d "$value" +%s
+    fi
+}
+
 # returns expiration date for specified certificates secret
 function _getcertexpiration(){
     local path="" option="" arg data stem crt end days now expiration
@@ -1917,7 +1931,7 @@ function _getcertexpiration(){
     for stem in "${stems[@]}"; do
         crt=$(jq -er --arg k "${stem}_crt" '.[$k]' <<< "$data") || return 1
         end=$(printf '%s\n' "$crt" | openssl x509 -noout -enddate 2>/dev/null) || return 1
-        expiration=$(date -d "${end#notAfter=}" +%s) || return 1
+        expiration=$(vcli_cert_expiry_epoch "$end") || return 1
         days=$(( (expiration-now)/86400 ))
         [[ $option == -oo && $days -gt 30 ]] && continue
         [[ $option == -ow && $days -le 30 && $days -gt 7 ]] && continue
