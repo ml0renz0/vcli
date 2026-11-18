@@ -2172,6 +2172,16 @@ function vcli_interrupt_editor(){
     prompt
 }
 
+# macOS tty echo is already disabled once by vcli_terminal_open.
+# Avoid Bash read -s reconfiguring/restoring the PTY on every keystroke.
+function vcli_read_editor_key(){
+    if [[ -n ${VCLI_TTY_STATE:-} ]]; then
+        IFS= read -r -N1 _key
+    else
+        IFS= read -r -sN1 _key
+    fi
+}
+
 function main(){
     # Track bracketed paste explicitly so an embedded newline cannot execute
     # a Vault command before the user confirms the pasted input.
@@ -2282,7 +2292,7 @@ function main(){
         if [[ ${pending_key+x} ]]; then
             _key=$pending_key
             unset pending_key
-        elif ! read -r -sN1 _key; then
+        elif ! vcli_read_editor_key; then
             # A real terminal can still return EOF (notably Ctrl+D on Darwin).
             # Only SIGINT is a recoverable interrupted read; a TTY alone is
             # not evidence that the read should be retried indefinitely.
