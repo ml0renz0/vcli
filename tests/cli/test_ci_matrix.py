@@ -119,6 +119,25 @@ class VaultMatrixParity(unittest.TestCase):
         self.assertNotIn("docker ", content.lower())
         self.assertNotIn("VAULT_SKIP_VERIFY=true", content)
 
+    def test_macos_runs_every_mandatory_linux_e2e_module_in_order(self):
+        mac = (RUNNER.parent / "run-macos.sh").read_text(encoding="utf-8")
+        self.assertEqual(mac.count("python3 -m unittest -v "), 1)
+        lines = mac.splitlines()
+        start = next(i for i, line in enumerate(lines)
+                     if "python3 -m unittest -v " in line)
+        fragments = []
+        for line in lines[start:]:
+            fragment = line.strip()
+            if not fragments:
+                break
+            continued = fragment.endswith(chr(92))
+            fragments.extend(fragment.rstrip(chr(92)).split())
+            if not continued:
+                break
+        self.assertEqual(fragments[:4], ["python3", "-m", "unittest", "-v"])
+        self.assertEqual(fragments[4:], test_modules()[0],
+                         "macOS must run the same 13 unmodified E2E suites as Linux")
+
     def test_manual_benchmark_does_not_repeat_full_vault_matrix(self):
         workflow = (RUNNER.parents[2] / ".github" / "workflows" / "ci.yml").read_text()
         condition = "!(github.event_name == 'workflow_dispatch' && inputs.recursive_benchmark)"

@@ -91,17 +91,16 @@ VCLI_TEST_READONLY_TOKEN=$(vault token create -policy=vcli-ci-ro -orphan -field=
 
 bash -n ./vcli
 # Identical existing black-box E2E suites, independently checked via Vault API.
-python3 -m unittest -v \
-    tests.integration.test_vault \
+python3 -m unittest -v tests.integration.test_vault \
     tests.integration.test_operations \
     tests.integration.test_kv2_advanced \
     tests.integration.test_security \
     tests.integration.test_fault_injection \
     tests.integration.test_partial_failures \
     tests.integration.test_cas_concurrency \
-    tests.integration.test_tls \
     tests.integration.test_auth_lifecycle \
-    tests.integration.test_session_commands \
-    tests.integration.test_pki_kerberos.PkiKerberosContracts.test_01_getcert_exports_exact_matching_pem_with_private_permissions \
-    tests.integration.test_pki_kerberos.PkiKerberosContracts.test_05_getsan_uses_actual_certificate_extensions \
-    tests.integration.test_pki_kerberos.PkiKerberosContracts.test_07_getkrb_exports_exact_keytab_with_private_permissions
+    tests.integration.test_tls \
+    tests.integration.test_tls_advanced \
+    tests.integration.test_pki_kerberos \
+    tests.integration.test_repl \
+    tests.integration.test_session_commands

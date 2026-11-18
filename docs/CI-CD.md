@@ -314,3 +314,17 @@ concurrencia y fallos de transporte. No se relajan aserciones ni se sustituyen
 por mocks de Vault. **Pendiente del nuevo CI:** comprobar que se comportan
 igual en macOS. Continúan pendientes `test_tls_advanced`, `test_repl` y
 la totalidad de `test_pki_kerberos`.
+
+### P-04b — paridad completa de módulos E2E Linux/macOS
+
+Tras [P-04a verde (111 pruebas E2E nativas en macOS)](https://github.com/ml0renz0/vcli/actions/runs/44218092770),
+se sustituye el subconjunto anterior de suites en `run-macos.sh` por los
+**13 módulos completos**, en el mismo orden que Ubuntu, Alpine y Debian.
+Incluye `test_tls_advanced`, los 33 casos de `test_pki_kerberos` y
+los 38 casos de `test_repl` con PTY real. La prueba estática
+`test_macos_runs_every_mandatory_linux_e2e_module_in_order` impide que
+la matriz macOS pierda cobertura o mantenga una lista parcial en el futuro.
+Ningún test E2E se omite, adapta ni simula para macOS; una discrepancia
+bloquea el gate y se investiga. **Pendiente CI P-04b** para declarar
+paridad efectiva. Se sigue usando Bash moderno y GNU Homebrew, por lo que
+esto aún no acredita soporte de utilidades BSD nativas.

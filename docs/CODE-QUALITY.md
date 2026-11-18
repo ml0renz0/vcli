@@ -518,3 +518,12 @@ parcialmente aplicadas. Se conserva el backend Vault 2.1.1 con TLS real,
 la verificación independiente vía REST y el Required CI gate. Todavía
 no se declara paridad E2E total hasta pasar TLS avanzado, PTY y PKI/Kerberos
 completos, además de validar estos cuatro módulos en macOS.
+
+## P-04b — suite E2E completa en macOS
+
+P-04a pasó 111 pruebas sobre Vault TLS real nativo en macOS. P-04b exige
+los mismos 13 módulos de Ubuntu/Alpine/Debian, con TLS avanzado,
+PKI/Kerberos (incluidas carreras adversariales) y REPL PTY (38 casos).
+La lista se comprueba automáticamente frente a la matriz Linux para
+impedir saltos silenciosos. Aceptación pendiente de CI verde real; la
+paridad de utilidades BSD continúa fuera del alcance y requerirá P-05.

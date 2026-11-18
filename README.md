@@ -29,10 +29,10 @@ desde Ubuntu; todas las suites E2E también se ejecutan en Alpine 3.22 y
 Debian bookworm-slim con Vault 2.1.1. Esto **no** certifica otros entornos ni
 todos los casos de uso. La PR de desarrollo sigue pendiente de auditoría final.
 
-**macOS (cobertura en ampliación):** la CI incorpora pruebas offline sobre
-macOS 15 con Bash moderno y GNU coreutils de Homebrew. Aún no se ha
-acreditado compatibilidad con utilidades BSD nativas ni Vault TLS real
-desde macOS. Véase [CI/CD](docs/CI-CD.md).
+**macOS:** la CI ejecuta pruebas offline y E2E contra Vault 2.1.1 nativo
+con TLS en macOS 15, usando Bash moderno y GNU coreutils de Homebrew.
+La ampliación a los 13 módulos E2E de Linux está en validación; no se ha
+acreditado compatibilidad con utilidades BSD nativas. Véase [CI/CD](docs/CI-CD.md).
 
 ## Probarlo con un Vault real, sin tocar producción
 

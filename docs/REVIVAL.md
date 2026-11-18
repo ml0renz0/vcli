@@ -28,7 +28,7 @@ pruebas, benchmarks y herramientas de desarrollo, no como motor de `vcli`.
 | 01 | Revival Bash, KV y operaciones base | Implementado y cubierto por CI |
 | 02 | PKI, X.509, claves y Kerberos | Implementado y cubierto por CI |
 | 03 | REPL, historial y terminal | Batería principal implementada; quedan casos UX específicos |
-| 04 | Portabilidad, robustez, benchmark | Linux/playground verificados; macOS P-03 TLS E2E verde (60 casos); ampliando KV2/CAS/faults para paridad; BSD nativo pendiente |
+| 04 | Portabilidad, robustez, benchmark | Linux/playground verificados; macOS P-04a TLS E2E verde (111 casos); P-04b amplía a los 13 módulos Linux, incluyendo PTY/TLS avanzado/PKI; BSD nativo pendiente |
 | Playground | Vault TLS real, fixtures KV/PKI/Kerberos/ACL/AppRole | Implementado y con aceptación automática; exploración manual pendiente |
 | **04-Q** | **Revisión de calidad, refactorización y eficiencia** | **En ejecución: optimizaciones A/B y S-01–S-04 validados; cierre pendiente** |
 | 05 | Auditoría final y release candidate v0.7 | Pendiente |
