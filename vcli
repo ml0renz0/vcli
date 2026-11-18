@@ -2180,7 +2180,10 @@ function vcli_interrupt_editor(){
 # macOS tty echo is already disabled once by vcli_terminal_open.
 # Avoid Bash read -s reconfiguring/restoring the PTY on every keystroke.
 function vcli_read_editor_key(){
-    if [[ -n ${VCLI_TTY_STATE:-} ]]; then
+    # Darwin read -s can race with SIGINT while resetting termios, losing
+    # Ctrl+C and leaving stale editor input. The PTY is set up once by
+    # vcli_terminal_open; do not request Bash's per-keystroke tty changes.
+    if [[ $OSTYPE == darwin* ]]; then
         IFS= read -r -N1 _key
     else
         IFS= read -r -sN1 _key
