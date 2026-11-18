@@ -8,6 +8,7 @@ import os
 import sys
 import fcntl
 import termios
+import tty
 from pathlib import Path
 import pty
 import signal
@@ -30,6 +31,17 @@ def _vcli_tty_preexec():
     if sys.platform == "darwin":
         fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
+
+
+def _vcli_prepare_pty(slave):
+    """Deliver control bytes to Bash's own key reader, not Darwin's line editor.
+
+    In canonical mode macOS intercepts Ctrl+D as an EOF rather than sending
+    0x04. The CLI's read -N1 must receive that byte, as on Linux. Preserve
+    the existing controlling-terminal setup and all behavioral assertions.
+    """
+    if sys.platform == "darwin":
+        tty.setraw(slave, when=termios.TCSANOW)
 
 
 def read_until(fd, marker: bytes, timeout=8) -> bytes:
@@ -64,6 +76,7 @@ class InteractiveShellTests(unittest.TestCase):
                 "VAULT_TOKEN": os.environ.get("VCLI_TEST_READONLY_TOKEN", ""),
             })
             master, slave = pty.openpty()
+            _vcli_prepare_pty(slave)
             child = subprocess.Popen([str(VCLI)], stdin=slave, stdout=slave,
                                      stderr=slave, env=env, start_new_session=True,
                                      preexec_fn=_vcli_tty_preexec)
@@ -107,6 +120,7 @@ class InteractiveShellTests(unittest.TestCase):
         for name, content in (files or {}).items():
             (Path(home.name) / name).write_text(content, encoding="utf-8")
         master, slave = pty.openpty()
+        _vcli_prepare_pty(slave)
         child = subprocess.Popen([str(VCLI)], stdin=slave, stdout=slave,
                                  stderr=slave, env=env, cwd=home.name,
                                  start_new_session=True,
