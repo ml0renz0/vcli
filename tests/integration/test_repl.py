@@ -5,6 +5,9 @@ Not a replacement for the planned full keyboard regression matrix.
 from __future__ import annotations
 
 import os
+import sys
+import fcntl
+import termios
 from pathlib import Path
 import pty
 import signal
@@ -15,6 +18,18 @@ import time
 import unittest
 
 VCLI = Path(__file__).resolve().parents[2] / "vcli"
+
+
+def _vcli_tty_preexec():
+    """Attach the child session to its PTY, as a real interactive terminal.
+
+    Darwin requires TIOCSCTTY for the newly created session; merely passing
+    the slave as stdio and calling setsid is insufficient. Without this,
+    Bash read -s/-N may fail tcsetattr and leak control keys as text.
+    """
+    if sys.platform == "darwin":
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
 
 
 def read_until(fd, marker: bytes, timeout=8) -> bytes:
@@ -50,7 +65,8 @@ class InteractiveShellTests(unittest.TestCase):
             })
             master, slave = pty.openpty()
             child = subprocess.Popen([str(VCLI)], stdin=slave, stdout=slave,
-                                     stderr=slave, env=env, start_new_session=True)
+                                     stderr=slave, env=env, start_new_session=True,
+                                     preexec_fn=_vcli_tty_preexec)
             os.close(slave)
             try:
                 read_until(master, b" >", timeout=10)
@@ -93,7 +109,8 @@ class InteractiveShellTests(unittest.TestCase):
         master, slave = pty.openpty()
         child = subprocess.Popen([str(VCLI)], stdin=slave, stdout=slave,
                                  stderr=slave, env=env, cwd=home.name,
-                                 start_new_session=True)
+                                 start_new_session=True,
+                                     preexec_fn=_vcli_tty_preexec)
         os.close(slave)
         read_until(master, b" >", timeout=12)
         return home, master, child
