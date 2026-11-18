@@ -2451,7 +2451,9 @@ function main(){
         [[ $DEBUG_HEXDUMP == "yes" ]] && debug "hexdump: key event redacted"
         # print prompt if commadn was run
         if [[ $is_command ]]; then prompt ; unset is_command cmd pos len history_draft ; history_index=-1 ; pos=1; fi
-    done < /dev/stdin
+    # Use the original inherited PTY fd, not a reopened /dev/stdin.
+    # Darwin treats reopens of /dev/fd/0 differently for control bytes/EOF.
+    done
 }
 
 main "$@"
