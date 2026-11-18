@@ -111,8 +111,10 @@ class VaultMatrixParity(unittest.TestCase):
         self.assertIn("VAULT_ADDR='https://127.0.0.1:8200'", content)
         self.assertIn("trap cleanup EXIT", content)
         self.assertIn("VCLI_TEST_READONLY_TOKEN", content)
-        for name in ("test_vault", "test_operations", "test_security",
-                     "test_tls", "test_auth_lifecycle", "test_session_commands"):
+        for name in ("test_vault", "test_operations", "test_kv2_advanced",
+                     "test_security", "test_fault_injection", "test_partial_failures",
+                     "test_cas_concurrency", "test_tls", "test_auth_lifecycle",
+                     "test_session_commands"):
             self.assertIn("tests.integration." + name, content)
         self.assertNotIn("docker ", content.lower())
         self.assertNotIn("VAULT_SKIP_VERIFY=true", content)

@@ -302,3 +302,15 @@ esta cobertura completada.
 **Alcance:** Vault dev efímero sobre macOS, no toda la matriz Linux ni
 una topología Raft de producción. La dependencia de GNU/MIT Homebrew
 y la ausencia de soporte BSD nativo permanecen documentadas.
+
+### P-04a — ampliación de la matriz E2E macOS
+
+Después del primer [CI P-03 verde](https://github.com/ml0renz0/vcli/actions/runs/44214734566)
+(60 tests E2E nativos en macOS), se añaden las suites completas existentes
+de `test_kv2_advanced`, `test_cas_concurrency`, `test_fault_injection`
+y `test_partial_failures` en el **mismo Vault TLS nativo** del runner.
+Se validan preflights, metadatos KV v2, carreras CAS, escrituras ambiguas,
+concurrencia y fallos de transporte. No se relajan aserciones ni se sustituyen
+por mocks de Vault. **Pendiente del nuevo CI:** comprobar que se comportan
+igual en macOS. Continúan pendientes `test_tls_advanced`, `test_repl` y
+la totalidad de `test_pki_kerberos`.

@@ -509,3 +509,12 @@ sensibles. Se reutilizan suites E2E de KV, TLS, autenticación,
 operaciones y parte de PKI/Kerberos con comprobación independiente API.
 **Pendiente** comprobar la ejecución verde del job; no acredita utilidades
 BSD puras ni cobertura completa de los E2E macOS.
+
+## P-04a — paridad E2E macOS (KV2, CAS y errores)
+
+Se amplía el job nativo Mac con cuatro suites compartidas de Linux:
+KV v2 avanzado, CAS/concurrencia, inyección de fallos HTTPS y operaciones
+parcialmente aplicadas. Se conserva el backend Vault 2.1.1 con TLS real,
+la verificación independiente vía REST y el Required CI gate. Todavía
+no se declara paridad E2E total hasta pasar TLS avanzado, PTY y PKI/Kerberos
+completos, además de validar estos cuatro módulos en macOS.

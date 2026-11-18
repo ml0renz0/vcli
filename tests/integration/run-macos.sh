@@ -94,7 +94,11 @@ bash -n ./vcli
 python3 -m unittest -v \
     tests.integration.test_vault \
     tests.integration.test_operations \
+    tests.integration.test_kv2_advanced \
     tests.integration.test_security \
+    tests.integration.test_fault_injection \
+    tests.integration.test_partial_failures \
+    tests.integration.test_cas_concurrency \
     tests.integration.test_tls \
     tests.integration.test_auth_lifecycle \
     tests.integration.test_session_commands \
