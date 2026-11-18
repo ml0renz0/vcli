@@ -430,7 +430,12 @@ function completion(){
 # Add a successful command to history. Loading files is handled only by load_history.
 function add_cmd(){
     local cmd old_cmd
-    cmd="$(echo "$*" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')"
+    # Trim with Bash rather than GNU-specific sed BRE escapes; preserve
+    # whitespace collapsing and exact history de-duplication on Darwin.
+    cmd="$*"
+    cmd="${cmd#"${cmd%%[![:space:]]*}"}"
+    cmd="${cmd%"${cmd##*[![:space:]]}"}"
+    cmd=$(printf '%s' "$cmd" | tr -s ' ')
     is_cmd "$cmd" || return 1
     # Do not persist potentially sensitive command payloads by default.
     if [[ ${VCLI_HISTORY_SECRETS:-false} != true &&
