@@ -128,7 +128,7 @@ class VaultMatrixParity(unittest.TestCase):
         fragments = []
         for line in lines[start:]:
             fragment = line.strip()
-            if not fragments:
+            if not fragment:
                 break
             continued = fragment.endswith(chr(92))
             fragments.extend(fragment.rstrip(chr(92)).split())
