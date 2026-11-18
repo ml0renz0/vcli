@@ -34,7 +34,9 @@ function vcli_terminal_open(){
     [[ -z ${VCLI_TTY_STATE:-} ]] || return 0
     local saved
     saved=$(stty -g </dev/stdin) || return 1
-    if ! stty -icanon -echo min 1 time 0 </dev/stdin; then
+    # Disable VEOF as well: Darwin may re-enable canonical input during
+    # Bash read -s, consuming Ctrl+D instead of returning its byte.
+    if ! stty -icanon -echo eof undef min 1 time 0 </dev/stdin; then
         stty "$saved" </dev/stdin || true
         return 1
     fi
