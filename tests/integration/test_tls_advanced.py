@@ -224,7 +224,10 @@ class AdvancedTlsTests(unittest.TestCase):
             out = self.execute(addr)
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
         self.assertIn("tls-trust-chain-verified", out.stdout)
-        self.assertEqual(seen, [("GET", "/v1/" + self.leaf)])
+        self.assertEqual(seen, [
+            ("GET", "/v1/sys/health"),
+            ("GET", "/v1/" + self.leaf),
+        ])
 
     def test_02_missing_intermediate_ca_rejected(self):
         with self.gateway(intermediate=False) as (addr, seen, _):
@@ -258,7 +261,10 @@ class AdvancedTlsTests(unittest.TestCase):
         self.assertNotEqual(rejected.returncode, 0)
         self.assertNotIn("tls-trust-chain-verified", rejected.stdout + rejected.stderr)
         self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
-        self.assertEqual(len(seen), 2, seen)
+        self.assertEqual(seen, [
+            ("GET", "/v1/sys/health"), ("GET", "/v1/" + self.leaf),
+            ("GET", "/v1/sys/health"), ("GET", "/v1/" + self.leaf),
+        ])
 
     def test_06_mtls_refuses_missing_client_certificate(self):
         with self.gateway("rotated-server", require_client=True) as (addr, seen, _):
@@ -274,7 +280,10 @@ class AdvancedTlsTests(unittest.TestCase):
             })
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
         self.assertIn("tls-trust-chain-verified", out.stdout)
-        self.assertEqual(seen, [("GET", "/v1/" + self.leaf)])
+        self.assertEqual(seen, [
+            ("GET", "/v1/sys/health"),
+            ("GET", "/v1/" + self.leaf),
+        ])
 
     def test_08_mtls_rejects_incomplete_client_key_pair(self):
         with self.gateway("rotated-server", require_client=True) as (addr, seen, _):

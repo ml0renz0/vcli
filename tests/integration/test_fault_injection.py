@@ -114,51 +114,61 @@ class FaultContracts(unittest.TestCase):
         with self.hostile_https(code=429, body=b'{"errors":["rate limited"]}') as (url, seen):
             out = self.command('put kv1/fault-limit {"value":1}', url)
         self.assertNotEqual(out.returncode, 0)
-        self.assertEqual(seen, [("POST", "/v1/kv1/fault-limit")])
+        self.assertEqual(seen, [
+            ("GET", "/v1/sys/health"),
+            ("POST", "/v1/kv1/fault-limit"),
+        ])
 
     def test_02_http_500_read_reports_failure(self):
         with self.hostile_https(code=500, body=b'{"errors":["internal"]}') as (url, seen):
             out = self.command("cat kv1/fault-server", url)
         self.assertNotEqual(out.returncode, 0)
-        self.assertEqual(seen, [("GET", "/v1/kv1/fault-server")])
+        self.assertEqual(seen, [
+            ("GET", "/v1/sys/health"),
+            ("GET", "/v1/kv1/fault-server"),
+        ])
 
     def test_03_http_503_write_not_reported_success(self):
         with self.hostile_https(code=503, body=b'{"errors":["unavailable"]}') as (url, seen):
             out = self.command('put kv1/fault-unavailable {"value":1}', url)
         self.assertNotEqual(out.returncode, 0)
-        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen, [("GET", "/v1/sys/health"),
+                                ("POST", "/v1/kv1/fault-unavailable")])
 
     def test_04_http_200_malformed_json_read_fails_closed(self):
         with self.hostile_https(code=200, body=b'NOT-A-JSON-RESPONSE') as (url, seen):
             out = self.command("cat kv1/fault-invalid-json", url)
         self.assertNotEqual(out.returncode, 0)
-        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen, [("GET", "/v1/sys/health"),
+                                ("GET", "/v1/kv1/fault-invalid-json")])
         self.assertNotIn("NOT-A-JSON-RESPONSE", out.stdout)
 
     def test_05_http_200_empty_read_is_not_a_valid_secret(self):
         with self.hostile_https(code=200, body=b'') as (url, seen):
             out = self.command("cat kv1/fault-empty-response", url)
         self.assertNotEqual(out.returncode, 0)
-        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen, [("GET", "/v1/sys/health"),
+                                ("GET", "/v1/kv1/fault-empty-response")])
 
     def test_06_truncated_http_body_fails_closed(self):
         with self.hostile_https(code=200, body=b'{"data":{"value":1}}',
                                 mode="truncated") as (url, seen):
             out = self.command("cat kv1/fault-truncated", url)
         self.assertNotEqual(out.returncode, 0)
-        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen, [("GET", "/v1/sys/health")])
 
     def test_07_server_timeout_is_bounded_and_nonzero(self):
         with self.hostile_https(code=200, body=b'{"data":{"value":1}}', delay=2.4) as (url, seen):
             out = self.command("cat kv1/fault-timeout", url, timeout="1")
         self.assertNotEqual(out.returncode, 0)
-        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen, [("GET", "/v1/sys/health")])
 
     def test_08_auth_rejection_does_not_expose_token(self):
         with self.hostile_https(code=403, body=b'{"errors":["permission denied"]}') as (url, seen):
             out = self.command("cat kv1/fault-unauthorized", url)
         self.assertNotEqual(out.returncode, 0)
-        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen, [("GET", "/v1/sys/health"),
+                                ("GET", "/v1/kv1/fault-unauthorized")])
 
 
 if __name__ == "__main__":
