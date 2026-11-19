@@ -407,3 +407,21 @@ DNS y TLS cortan la sesión. `timeout` desaparece de las dependencias
 del ejecutable y el job macOS ya no lo exige en el PATH. Se añaden
 tests aislados y E2E contra Vault TLS real. Los benchmarks anteriores
 no se extrapolan al nuevo coste del inicio de sesión.
+
+### Preparación del runner Vault — cancelación APT (2026-11-19)
+
+La [CI #44519593285](https://github.com/ml0renz0/vcli/actions/runs/44519593285)
+falló en el gate porque **Vault 1.20.4** quedó bloqueado en
+`Ensure runtime dependencies` y se canceló al agotar 18 minutos.
+No llegó a ejecutar `bash -n` ni las suites Vault. Las otras tres
+versiones, Alpine, Debian, macOS, estáticos y playground fueron
+verdes: este incidente no constituye un fallo reproducido del CLI.
+
+El instalador de dependencias del job de integración ahora informa
+del progreso de APT y aplica dos intentos acotados: máximo 150 s para
+`apt-get update` y 150 s para `apt-get install` por intento,
+con expiración forzada y diagnóstico explícito si ambos fallan. No
+se añade `continue-on-error`, no se elimina el job Vault 1.20.4 ni
+se relaja el gate. GNU `timeout` solo aparece en la infraestructura
+Ubuntu de GitHub Actions, no vuelve a exigirse por `vcli`.
+**Pendiente de validar una nueva ejecución completa**.

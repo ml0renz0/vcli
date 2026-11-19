@@ -142,8 +142,31 @@ jobs:
             for i in "${!missing[@]}"; do
               [[ ${missing[i]} == klist ]] && missing[i]=krb5-user
             done
-            sudo apt-get update -qq -o Acquire::Retries=2 -o Acquire::http::Timeout=10
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
+            # A runner once hung here without output until the 18-minute job
+            # timeout; cap each APT operation and retry transient failures.
+            # GNU timeout is CI-only; vcli itself does not depend on it.
+            installed=no
+            for attempt in 1 2; do
+              echo "::group::APT runtime dependencies: attempt $attempt/2 (${missing[*]})"
+              if timeout --signal=TERM --kill-after=10s 150s sudo apt-get update \
+                   -o Acquire::Retries=2 -o Acquire::http::Timeout=15 &&
+                 timeout --signal=TERM --kill-after=10s 150s sudo env \
+                   DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
+                   --no-install-recommends -o DPkg::Lock::Timeout=30 \
+                   -o Acquire::Retries=2 -o Acquire::http::Timeout=15 \
+                   "${missing[@]}"; then
+                installed=yes
+                echo "::endgroup::"
+                break
+              fi
+              echo "::endgroup::"
+              echo "::warning::APT preparation failed or exceeded a 150s bound (attempt $attempt)"
+              (( attempt == 2 )) || sleep 3
+            done
+            if [[ $installed != yes ]]; then
+              echo "::error::Unable to install required runtime tools; integration remains mandatory"
+              exit 1
+            fi
           fi
           for cmd in jq curl openssl klist; do command -v "$cmd"; done
       - name: Validate production candidate
