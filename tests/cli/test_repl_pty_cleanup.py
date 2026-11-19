@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.integration.test_repl import InteractiveShellTests
+from tests.integration import test_repl as repl
 
 
 class PtyCleanupContract(unittest.TestCase):
@@ -23,7 +23,7 @@ class PtyCleanupContract(unittest.TestCase):
             )
             os.close(slave)
             slave = -1
-            InteractiveShellTests().end(home, master, child)
+            repl.InteractiveShellTests().end(home, master, child)
             master = -1
             self.assertIsNotNone(child.poll())
             self.assertFalse(path.exists())
