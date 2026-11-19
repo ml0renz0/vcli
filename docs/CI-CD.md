@@ -373,3 +373,12 @@ sesión** con SIGKILL, recoge el estado del hijo y libera los recursos
 en un `finally`. Un contrato aislado obliga a que el grupo y el
 directorio temporal desaparezcan. Ningún test funcional se suprime,
 marca como esperado o debilita; el gate sigue siendo obligatorio.
+
+### P-05e — ensayo de publicación exclusiva con link nativo
+
+`tests.cli.test_native_link_publication` se ejecuta obligatoriamente
+en el job estático Linux y en el runner macOS con `/usr/bin/link`
+BSD. Cubre destino vacío, fichero existente, symlink, directorio,
+repetición, modo `0600` y preservación del inodo. **Es un contrato de
+caracterización:** aún no sustituye los `ln -T` de producción ni
+elimina la necesidad GNU de `mv -T`.
