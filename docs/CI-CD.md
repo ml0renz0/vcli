@@ -464,3 +464,9 @@ una última terminación directa acotada si la primera espera expira.
 No se aceptan procesos sobrevivientes ni se silencian los errores.
 Se añade un contrato que simula el fallo de la señal de grupo y verifica
 la limpieza real del hijo. Sin cambios en `vcli` de producción.
+
+### 04-Q HTTP-01 — opciones TLS compartidas (pendiente CI)
+
+`tests.cli.test_http_transport_args` corre tanto en Ubuntu como en macOS.
+AppRole y `_curl` comparten solo opciones TLS, no credenciales ni manejo de
+respuestas. Se preservan íntegramente la matriz Vault TLS y el gate global.

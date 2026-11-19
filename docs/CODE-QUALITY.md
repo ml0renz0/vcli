@@ -659,3 +659,13 @@ equivalente, un único ordenado para el listado, cero ordenados para un
 comando conocido y que `IFS` no cambie. Se ejecuta tanto en Ubuntu como
 en macOS; la suite PTY E2E sigue comprobando el comando `help` real.
 No se han alterado operaciones HTTP, autenticación ni gestión de secretos.
+
+## 04-Q HTTP-01 — transporte TLS común entre AppRole y _curl
+
+Se extrae `vcli_curl_transport_args` para configurar timeout, CA, mTLS y
+namespace en un array local del llamador. AppRole mantiene la autenticación
+sin token y `_curl` envía el token mediante stdin; no se mezclan secretos.
+La configuración mTLS incompleta falla antes de generar temporales.
+El contrato aislado nuevo verifica defaults, rutas con espacios, opt-in de
+`--insecure` y rechazo de pares mTLS incompletos. Continúan obligatorios
+los E2E de Vault TLS, AppRole y manejo de errores. **Pendiente de CI**.

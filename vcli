@@ -822,6 +822,29 @@ function _vcli_leaves(){
     done <<< "$entries"
 }
 
+# Curl transport configuration shared by AppRole and token requests.
+# The caller owns the argument array; authentication remains separate.
+function vcli_curl_transport_args(){
+    local -n _vcli_transport_out="$1"
+    _vcli_transport_out=(--silent --show-error
+        --connect-timeout "${VCLI_CONNECT_TIMEOUT:-2}"
+        --max-time "${VCLI_HTTP_TIMEOUT:-30}")
+    case "${VAULT_SKIP_VERIFY:-false}" in
+        1|true|TRUE|yes|YES) _vcli_transport_out+=(--insecure);;
+    esac
+    [[ -n ${VAULT_CACERT:-} ]] && _vcli_transport_out+=(--cacert "$VAULT_CACERT")
+    [[ -n ${VAULT_CAPATH:-} ]] && _vcli_transport_out+=(--capath "$VAULT_CAPATH")
+    if [[ -n ${VAULT_CLIENT_CERT:-} || -n ${VAULT_CLIENT_KEY:-} ]]; then
+        if [[ -z ${VAULT_CLIENT_CERT:-} || -z ${VAULT_CLIENT_KEY:-} ]]; then
+            echo "vcli: both VAULT_CLIENT_CERT and VAULT_CLIENT_KEY are required" >&2
+            return 1
+        fi
+        _vcli_transport_out+=(--cert "$VAULT_CLIENT_CERT" --key "$VAULT_CLIENT_KEY")
+    fi
+    [[ -n ${VAULT_NAMESPACE:-} ]] &&
+        _vcli_transport_out+=(--header "X-Vault-Namespace: $VAULT_NAMESPACE")
+    return 0
+}
 # AppRole login uses the same TLS verification as ordinary Vault calls.
 # Never print role_id, secret_id or the resulting client token.
 function _vcli_login_approle(){
@@ -829,13 +852,9 @@ function _vcli_login_approle(){
     [[ -n $role_id && -n $secret_id ]] || {
         echo "vcli: incomplete AppRole credentials" >&2; return 1;
     }
-    # Fail mTLS preflight before writing any AppRole credentials.
-    if [[ -n ${VAULT_CLIENT_CERT:-} || -n ${VAULT_CLIENT_KEY:-} ]]; then
-        if [[ -z ${VAULT_CLIENT_CERT:-} || -z ${VAULT_CLIENT_KEY:-} ]]; then
-            echo "vcli: both VAULT_CLIENT_CERT and VAULT_CLIENT_KEY are required" >&2
-            return 1
-        fi
-    fi
+    # Validate the complete TLS configuration before staging credentials.
+    local -a args=()
+    vcli_curl_transport_args args || return 1
     response_file=$(mktemp "${VCLI_SESSION_TMP:-$TMP}/.vcli.auth.XXXXXX") || return 1
     payload_file=$(mktemp "${VCLI_SESSION_TMP:-$TMP}/.vcli.auth-data.XXXXXX") || {
         rm -f "$response_file"; return 1;
@@ -846,18 +865,9 @@ function _vcli_login_approle(){
            '{role_id:$rid,secret_id:$sid}' > "$payload_file" || {
         rm -f "$response_file" "$payload_file"; return 1;
     }
-    local -a args=(--silent --show-error --connect-timeout "${VCLI_CONNECT_TIMEOUT:-2}"
-        --max-time "${VCLI_HTTP_TIMEOUT:-30}" --request POST
-        --header "Content-Type: application/json" --data-binary "@$payload_file"
+    args+=(--request POST --header "Content-Type: application/json"
+        --data-binary "@$payload_file"
         --output "$response_file" --write-out '%{http_code}')
-    case "${VAULT_SKIP_VERIFY:-false}" in 1|true|TRUE|yes|YES) args+=(--insecure);; esac
-    [[ -n ${VAULT_CACERT:-} ]] && args+=(--cacert "$VAULT_CACERT")
-    [[ -n ${VAULT_CAPATH:-} ]] && args+=(--capath "$VAULT_CAPATH")
-    # Mutual TLS is opt-in; a half-configured pair must never silently
-    # fall back to an unauthenticated client certificate handshake.
-    [[ -n ${VAULT_CLIENT_CERT:-} ]] &&
-        args+=(--cert "$VAULT_CLIENT_CERT" --key "$VAULT_CLIENT_KEY")
-    [[ -n ${VAULT_NAMESPACE:-} ]] && args+=(--header "X-Vault-Namespace: $VAULT_NAMESPACE")
     status=$(curl "${args[@]}" "$protocol://$vault_host:$vault_port/v1/auth/approle/login")
     code=$?
     rm -f "$payload_file"
@@ -922,26 +932,12 @@ function _curl(){
     local encoded url response_file payload_file="" payload="" status curl_status
     encoded=$(vcli_encode_endpoint "$path") || return 1
     url="$protocol://$vault_host:$vault_port/v1/$encoded"
+    local -a args=()
+    vcli_curl_transport_args args || return 1
     response_file=$(mktemp "${VCLI_SESSION_TMP:-$TMP}/.vcli.response.XXXXXX") || return 1
-    local -a args=(--silent --show-error --connect-timeout "${VCLI_CONNECT_TIMEOUT:-2}"
-                  --max-time "${VCLI_HTTP_TIMEOUT:-30}" --request "$method"
-                  --output "$response_file" --write-out '%{http_code}'
-                  --header @- --header 'Content-Type: application/json')
-    case "${VAULT_SKIP_VERIFY:-false}" in 1|true|TRUE|yes|YES) args+=(--insecure);; esac
-    [[ -n ${VAULT_CACERT:-} ]] && args+=(--cacert "$VAULT_CACERT")
-    [[ -n ${VAULT_CAPATH:-} ]] && args+=(--capath "$VAULT_CAPATH")
-    # Mutual TLS is opt-in; a half-configured pair must never silently
-    # fall back to an unauthenticated client certificate handshake.
-    if [[ -n ${VAULT_CLIENT_CERT:-} || -n ${VAULT_CLIENT_KEY:-} ]]; then
-        if [[ -z ${VAULT_CLIENT_CERT:-} || -z ${VAULT_CLIENT_KEY:-} ]]; then
-            echo "vcli: both VAULT_CLIENT_CERT and VAULT_CLIENT_KEY are required" >&2
-            rm -f "$response_file"
-            return 1
-        fi
-        args+=(--cert "$VAULT_CLIENT_CERT" --key "$VAULT_CLIENT_KEY")
-    fi
-    [[ -n ${VAULT_NAMESPACE:-} ]] && args+=(--header "X-Vault-Namespace: $VAULT_NAMESPACE")
-
+    args+=(--request "$method" --output "$response_file"
+        --write-out '%{http_code}' --header @-
+        --header 'Content-Type: application/json')
     if [[ -n $data && $data != '-_list_root_-' ]]; then
         if [[ ! -f $data ]]; then
             echo "vcli: request payload file missing: $data" >&2

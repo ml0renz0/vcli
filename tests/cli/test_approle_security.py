@@ -23,7 +23,7 @@ def functions(*names):
 class AppRoleSecurityTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.shell=functions("vcli_session_cleanup","vcli_session_open","_vcli_login_approle")
+        cls.shell=functions("vcli_session_cleanup","vcli_session_open","vcli_curl_transport_args","_vcli_login_approle")
 
     def run_auth(self,mode,role="role-test",secret="secret-test"):
         shell=r'''
