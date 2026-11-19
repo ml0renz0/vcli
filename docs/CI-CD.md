@@ -470,3 +470,10 @@ la limpieza real del hijo. Sin cambios en `vcli` de producción.
 `tests.cli.test_http_transport_args` corre tanto en Ubuntu como en macOS.
 AppRole y `_curl` comparten solo opciones TLS, no credenciales ni manejo de
 respuestas. Se preservan íntegramente la matriz Vault TLS y el gate global.
+
+### 04-Q HTTP-02 — respuesta JSON y temporal (pendiente CI)
+
+El renderer `vcli_emit_http_response` se prueba aisladamente en Ubuntu
+y macOS. `_curl` conserva errores de transporte y resultados inciertos
+sin reintentos, con limpieza común de la respuesta temporal.
+Los E2E Vault TLS, CAS, permisos y errores continúan obligatorios.

@@ -903,6 +903,27 @@ function _renew_token(){
     echo "Vault token renewed"
 }
 
+# Render and validate HTTP JSON; caller owns response temporary file.
+function vcli_emit_http_response(){
+    local file="$1" status="$2" method="$3" data="$4" kv2="$5" cas="$6"
+    if [[ $status == 2* && ( $method == GET || $method == LIST ) ]]; then
+        if [[ ! -s $file ]] ||
+           ! jq -e 'type == "object"' "$file" >/dev/null 2>&1; then
+            echo "vcli: invalid or empty JSON from Vault" >&2
+            return 1
+        fi
+    fi
+    if [[ $data == '-_list_root_-' ]]; then
+        jq -r '.data | keys[]' "$file"
+    elif [[ -s $file ]]; then
+        if [[ $kv2 == yes && $method == GET && $status == 2* && $cas != raw ]]; then
+            jq 'if (.data.data | type) == "object" then .data = .data.data else . end' "$file"
+        else
+            jq '.' "$file"
+        fi
+    fi
+}
+
 # simplified curl function
 function _curl(){
     local ignore_http_code=no disable_fail=no
@@ -970,6 +991,7 @@ function _curl(){
     curl_status=$?
     [[ -n $payload_file ]] && rm -f "$payload_file"
     [[ -n $data && $data != '-_list_root_-' && -f $data ]] && rm -f "$data"
+    local render_status=0
     if (( curl_status != 0 )); then
         http_code="000"
         # A write may have committed before its HTTP response was lost.
@@ -978,38 +1000,14 @@ function _curl(){
             printf 'vcli: OUTCOME_UNKNOWN method=%s path=/%s; verify Vault state before retrying\n' "$method" "$path" >&2
         fi
         [[ $ignore_http_code == no ]] && cat "$response_file" >&2
-        rm -f "$response_file"
-        return 1
-    fi
-    if [[ $ignore_http_code == no ]]; then
+        render_status=1
+    elif [[ $ignore_http_code == no ]]; then
         http_code="$status"
-        # A successful HTTP status is not sufficient for a read. A truncated,
-        # empty or non-object response must fail closed, not fall back to cat.
-        if [[ $status == 2* && ( $method == GET || $method == LIST ) ]]; then
-            if [[ ! -s $response_file ]] ||
-               ! jq -e 'type == "object"' "$response_file" >/dev/null 2>&1; then
-                echo "vcli: invalid or empty JSON from Vault" >&2
-                rm -f "$response_file"
-                return 1
-            fi
-        fi
-        if [[ $data == '-_list_root_-' ]]; then
-            jq -r '.data | keys[]' "$response_file" || {
-                rm -f "$response_file"; return 1;
-            }
-        elif [[ -s $response_file ]]; then
-            if [[ $kv2 == yes && $method == GET && $status == 2* && $cas != raw ]]; then
-                jq 'if (.data.data | type) == "object" then .data = .data.data else . end' "$response_file" || {
-                    rm -f "$response_file"; return 1;
-                }
-            else
-                jq '.' "$response_file" || {
-                    rm -f "$response_file"; return 1;
-                }
-            fi
-        fi
+        vcli_emit_http_response "$response_file" "$status" "$method" "$data" "$kv2" "$cas" || render_status=1
     fi
+    # Shared response cleanup after transport, HTTP and JSON outcomes.
     rm -f "$response_file"
+    (( render_status == 0 )) || return 1
     [[ $status == 2* || $disable_fail == yes ]]
 }
 

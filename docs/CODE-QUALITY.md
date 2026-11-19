@@ -669,3 +669,17 @@ La configuración mTLS incompleta falla antes de generar temporales.
 El contrato aislado nuevo verifica defaults, rutas con espacios, opt-in de
 `--insecure` y rechazo de pares mTLS incompletos. Continúan obligatorios
 los E2E de Vault TLS, AppRole y manejo de errores. **Pendiente de CI**.
+
+## 04-Q HTTP-02 — respuesta JSON y limpieza unificadas (pendiente CI)
+
+`vcli_emit_http_response` valida y formatea el cuerpo HTTP sin gestionar
+el fichero temporal. `_curl` concentra la limpieza de la respuesta en
+una única ruta tras el transporte, conservando resultados de conexión,
+respuestas HTTP, validación JSON, transformación KV v2 y listado raíz.
+Se mantiene la advertencia de escritura de resultado desconocido sin
+reintentos automáticos.
+
+`tests/cli/test_http_response_render.py` valida GET/LIST, JSON inválido,
+errores HTTP, KV v2/raw, listados y la ruta de limpieza. Los contratos
+aislados son obligatorios en Ubuntu/macOS y no sustituyen E2E Vault TLS.
+No se afirma un ahorro de tiempo sin medición.
