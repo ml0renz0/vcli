@@ -35,6 +35,19 @@ class TempfileTemplatePortability(unittest.TestCase):
             self.assertIn('mktemp -- "${VCLI_SESSION_TMP:-$TMP}/' + prefix, source)
 
 
+class PortablePrivateTempTemplates(unittest.TestCase):
+    def test_all_sensitive_templates_use_explicit_paths_not_gnu_p(self):
+        source = SOURCE.read_text(encoding="utf-8")
+        # macOS /usr/bin/mktemp does not accept GNU -p. Every internal
+        # tempfile must explicitly reside within the private session.
+        self.assertNotIn('mktemp -p ', source)
+        self.assertNotIn('mktemp -d -p ', source)
+        for line in source.splitlines():
+            if "mktemp " not in line or "VCLI_SESSION_TMP" not in line:
+                continue
+            self.assertIn('VCLI_SESSION_TMP:-$TMP}/', line, line)
+
+
 class SessionTempLifecycleTests(unittest.TestCase):
     def test_owner_cleanup_on_exit_and_catchable_signals(self):
         helpers = shell_functions("vcli_session_cleanup", "vcli_session_open")

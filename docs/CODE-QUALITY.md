@@ -558,3 +558,17 @@ comparan bytes de salida, además de ejecutar explícitamente
 La adaptación P-05 no implica aún que `vcli` funcione con todas las
 herramientas BSD; las operaciones `ln -T`, `mv -T` y `stat -c`
 requieren trabajo adicional.
+
+## P-05c — mktemp con plantillas explícitas GNU/BSD
+
+Se eliminan las llamadas de `vcli` a `mktemp -p` y `mktemp -d -p`
+para los temporales internos: cada creación pasa una plantilla de ruta
+completa dentro del directorio privado de sesión 0700, en vez de depender
+de una opción GNU o del orden de prioridad de TMPDIR. La prueba estática
+exige que ningún temporal sensible vuelva a usar `-p`. En el runner
+macOS se verifica explícitamente la creación mediante
+`/usr/bin/mktemp` BSD nativo, sin tomar el mktemp de Homebrew.
+
+Los tests S-01/S-02/S-03, operaciones KV y la matriz E2E siguen siendo
+obligatorios. Este paso no declara portabilidad BSD total: `ln -T`,
+`mv -T`, `stat -c` y otras utilidades GNU todavía se requieren.

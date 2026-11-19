@@ -346,3 +346,11 @@ binaria con NUL y bytes no UTF-8 mediante `base64 -d`. En Mac se
 comprueba además `/usr/bin/base64` BSD nativo incluso cuando
 Homebrew GNU coreutils está antes en `PATH`. Continúan intactas
 las pruebas E2E PKI/Kerberos con Vault TLS real.
+
+### P-05c — rutas temporales independientes de GNU mktemp -p
+
+Se usan plantillas explícitas para todos los temporales internos,
+conservando el aislamiento 0700 de la sesión. El runner macOS prueba
+`/usr/bin/mktemp` nativo (fichero y directorio) y los contratos
+obligatorios verifican que `-p` no reaparezca en el ejecutable Bash.
+La matriz Vault TLS de Linux/macOS protege la compatibilidad funcional.

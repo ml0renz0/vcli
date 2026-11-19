@@ -210,6 +210,12 @@ jobs:
           mv --version | grep -F "GNU coreutils"
           stat --version | grep -F "GNU coreutils"
           mktemp --version | grep -F "GNU coreutils"
+          # Verify BSD mktemp accepts our explicit absolute-path template.
+          native_dir=$(/usr/bin/mktemp -d "$RUNNER_TEMP/vcli-bsd-mktemp.XXXXXXXX")
+          native_file=$(/usr/bin/mktemp "$native_dir/secret.XXXXXXXX")
+          [[ $native_file == "$native_dir/"* && -f $native_file ]]
+          rm -f -- "$native_file"
+          rmdir -- "$native_dir"
           bash -n ./vcli
           ./vcli --version
           ./vcli -h >/dev/null
