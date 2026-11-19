@@ -584,17 +584,14 @@ y el resultado de `/usr/bin/stat` en Mac. Se preservan las comprobaciones
 de enlaces simbólicos/duros y la exigencia de `-ef` adicional en Linux.
 Esto no elimina todavía las dependencias GNU de `ln -T` y `mv -T`.
 
-## P-05e — contrato adversarial de `link(1)` nativo (candidato a `ln -T`)
+## P-05e — resultado de la exploración de `link(1)` en macOS
 
-Se añade un contrato ejecutable en Linux y en macOS que invoca el `link(1)`
-**nativo del sistema** (en Darwin, `/usr/bin/link`, sin Homebrew).
-Debe publicar un fichero `0600` de manera exclusiva conservando su
-inodo, fallar si el destino ya es un fichero, symlink o directorio,
-no crear enlaces dentro de un directorio rival y rechazar publicaciones
-repetidas. Esto caracteriza un posible reemplazo portable de `ln -T`
-para publicación segura, **sin modificar todavía el comportamiento
-productivo**. La migración exigirá adaptar también los tests de fallos
-inyectados y la matriz E2E; no se considera hecha hasta validación verde.
-
-`mv -T` no tiene equivalente seguro directo en BSD `mv` ante una carrera
-con un directorio; no se reemplazará por `mv` simple sin garantía equivalente.
+Se evaluó el comando `link(1)` como posible sustituto de `ln -T`
+para publicación exclusiva y rechazo de destinos preexistentes. En
+Linux pasó sus contratos, pero el runner macOS 15 **no dispone de
+`/usr/bin/link`**. La hipótesis de disponibilidad del binario BSD
+no se sostuvo y la prueba experimental se ha retirado del gate.
+El código de producción permanece con `ln -T` de GNU coreutils,
+porque cambiarlo por `ln` o `mv` sin garantías equivalentes permitiría
+carreras con directorios. La portabilidad GNU-free de publicación
+segura sigue **pendiente**, no implementada.

@@ -374,11 +374,10 @@ en un `finally`. Un contrato aislado obliga a que el grupo y el
 directorio temporal desaparezcan. Ningún test funcional se suprime,
 marca como esperado o debilita; el gate sigue siendo obligatorio.
 
-### P-05e — ensayo de publicación exclusiva con link nativo
+### P-05e — candidato `link(1)` descartado
 
-`tests.cli.test_native_link_publication` se ejecuta obligatoriamente
-en el job estático Linux y en el runner macOS con `/usr/bin/link`
-BSD. Cubre destino vacío, fichero existente, symlink, directorio,
-repetición, modo `0600` y preservación del inodo. **Es un contrato de
-caracterización:** aún no sustituye los `ln -T` de producción ni
-elimina la necesidad GNU de `mv -T`.
+El ensayo con `link(1)` pasó en Linux, pero el runner macOS 15 confirmó
+que `/usr/bin/link` no está disponible. Se ha retirado el test
+experimental que presuponía ese binario; la matriz vuelve a exigir
+solo los mecanismos GNU de publicación ya verificados. No se ha
+modificado ni debilitado la protección de los artefactos.
