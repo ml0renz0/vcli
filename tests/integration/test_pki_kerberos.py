@@ -132,6 +132,48 @@ class PkiKerberosContracts(unittest.TestCase):
         return out
 
     @staticmethod
+    def _perl_fault_module(bindir):
+        """Test-only override of Perl link() with CORE::GLOBAL::link.
+
+        PERL5OPT loads this before the real /usr/bin/perl -e production
+        helper compiles. The CLI remains byte-for-byte unchanged; each
+        fault still reaches the exact publication syscall boundary.
+        """
+        module = bindir / "VcliLinkFault.pm"
+        module.write_text(r"""BEGIN {
+    *CORE::GLOBAL::link = sub {
+        my ($source, $destination) = @_;
+        if (defined $ENV{'VCLI_TEST_LN_DEST'}
+            && $destination eq $ENV{'VCLI_TEST_LN_DEST'}) {
+            my $action = $ENV{'VCLI_TEST_LN_ACTION'} // '';
+            if ($action eq 'regular') {
+                open my $fh, '>', $destination or die "inject regular: $!";
+                print {$fh} 'RACE-MARKER';
+                close $fh;
+            } elsif ($action eq 'symlink') {
+                CORE::symlink($ENV{'VCLI_TEST_LN_VICTIM'}, $destination)
+                    or die "inject symlink: $!";
+            } elsif ($action eq 'directory') {
+                CORE::mkdir($destination, 0700) or die "inject dir: $!";
+            } elsif ($action eq 'fail') {
+                $! = 13;
+                return 0;
+            } elsif ($action eq 'signal') {
+                open my $fh, '>', $ENV{'VCLI_TEST_MARKER'}
+                    or die "inject signal marker: $!";
+                close $fh;
+                exec($ENV{'VCLI_TEST_REAL_SLEEP'}, '60')
+                    or die "inject signal delay: $!";
+            }
+        }
+        return CORE::link($source, $destination);
+    };
+}
+1;
+""", encoding="utf-8")
+        return {"PERL5LIB": str(bindir), "PERL5OPT": "-MVcliLinkFault"}
+
+    @staticmethod
     def _ln_race_env(root, destination, action, victim=None):
         """Inject an exact race at the publication syscall, after preflight."""
         bindir = Path(root) / "hook-bin"
@@ -150,12 +192,15 @@ fi
 exec "$VCLI_TEST_REAL_LN" "$@"
 """, encoding="utf-8")
         hook.chmod(0o755)
-        return {
+        fault_env = {
             "PATH": str(bindir) + os.pathsep + os.environ["PATH"],
             "VCLI_TEST_LN_DEST": str(destination),
             "VCLI_TEST_LN_ACTION": action,
             "VCLI_TEST_LN_VICTIM": str(victim or ""),
         }
+        if sys.platform == "darwin":
+            fault_env.update(PkiKerberosContracts._perl_fault_module(bindir))
+        return fault_env
 
     @staticmethod
     def _assert_no_stage(root):
@@ -551,16 +596,6 @@ exec "$VCLI_TEST_REAL_BASE64" "$@"
 
     def test_33_sigterm_during_second_publish_rolls_back_certificate(self):
         with tempfile.TemporaryDirectory(prefix="vcli-publish-term-") as root:
-            if sys.platform == "darwin":
-                # The native syscall path is intentionally insulated from
-                # PATH shims. Verify complete, private publication here; the
-                # Linux branch retains deterministic interruption injection.
-                result = self.cli(root, f"getcert {self.cert_path}")
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual((Path(root) / "web.crt").read_text(), self.crt)
-                self.assertEqual((Path(root) / "web.key").read_text(), self.key)
-                self._assert_no_stage(root)
-                return
             bindir = Path(root) / "hook-bin"
             bindir.mkdir()
             marker = Path(root) / "publish-reached"
@@ -574,11 +609,16 @@ fi
 exec "$VCLI_TEST_REAL_LN" "$@"
 """, encoding="utf-8")
             hook.chmod(0o755)
-            self._interrupt_export(root, f"getcert {self.cert_path}", {
+            signal_env = {
                 "PATH": str(bindir) + os.pathsep + os.environ["PATH"],
                 "VCLI_TEST_LN_DEST": str(Path(root) / "web.key"),
+                "VCLI_TEST_LN_ACTION": "signal",
                 "VCLI_TEST_MARKER": str(marker),
-            }, marker)
+            }
+            if sys.platform == "darwin":
+                signal_env.update(self._perl_fault_module(bindir))
+            self._interrupt_export(root, f"getcert {self.cert_path}",
+                                   signal_env, marker)
             self.assertFalse((Path(root) / "web.crt").exists())
             self.assertFalse((Path(root) / "web.key").exists())
 
