@@ -507,8 +507,9 @@ fijado, escucha exclusivamente en loopback y catálogo KV v1/v2/anidado,
 ACL/AppRole y token de prueba. Un trap elimina el proceso y sus archivos
 sensibles. Se reutilizan suites E2E de KV, TLS, autenticación,
 operaciones y parte de PKI/Kerberos con comprobación independiente API.
-**Pendiente** comprobar la ejecución verde del job; no acredita utilidades
-BSD puras ni cobertura completa de los E2E macOS.
+**Verificado:** [CI P-03 #44214734566](https://github.com/ml0renz0/vcli/actions/runs/44214734566)
+completó el E2E TLS nativo; P-04b amplió después la cobertura. No acredita
+uso exclusivo de utilidades BSD nativas.
 
 ## P-04a — paridad E2E macOS (KV2, CAS y errores)
 
@@ -525,8 +526,11 @@ P-04a pasó 111 pruebas sobre Vault TLS real nativo en macOS. P-04b exige
 los mismos 13 módulos de Ubuntu/Alpine/Debian, con TLS avanzado,
 PKI/Kerberos (incluidas carreras adversariales) y REPL PTY (38 casos).
 La lista se comprueba automáticamente frente a la matriz Linux para
-impedir saltos silenciosos. Aceptación pendiente de CI verde real; la
-paridad de utilidades BSD continúa fuera del alcance y requerirá P-05.
+impedir saltos silenciosos. **Verificado:** [CI #44508003815](https://github.com/ml0renz0/vcli/actions/runs/44508003815)
+terminó con macOS, los 13 módulos E2E compartidos y el gate obligatorio
+verdes en `8b14905` (187 casos E2E en el inventario de `docs/REVIVAL.md`).
+La paridad con utilidades BSD puras sigue pendiente: P-05a–P-05d
+solo eliminan dependencias GNU puntuales.
 
 ## P-05a — expiración X.509 con date GNU y BSD nativo
 

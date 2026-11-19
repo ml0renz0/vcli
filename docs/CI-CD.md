@@ -325,9 +325,11 @@ los 38 casos de `test_repl` con PTY real. La prueba estática
 `test_macos_runs_every_mandatory_linux_e2e_module_in_order` impide que
 la matriz macOS pierda cobertura o mantenga una lista parcial en el futuro.
 Ningún test E2E se omite, adapta ni simula para macOS; una discrepancia
-bloquea el gate y se investiga. **Pendiente CI P-04b** para declarar
-paridad efectiva. Se sigue usando Bash moderno y GNU Homebrew, por lo que
-esto aún no acredita soporte de utilidades BSD nativas.
+bloquea el gate y se investiga. **Verificado en [CI #44508003815](https://github.com/ml0renz0/vcli/actions/runs/44508003815):**
+los 13 módulos se ejecutan con Vault TLS real en macOS y el gate global
+termina verde (187 tests E2E según `docs/REVIVAL.md`). Se sigue usando
+Bash moderno y GNU Homebrew, por lo que esto aún no acredita soporte
+completo de utilidades BSD nativas.
 
 ### P-05a — primer componente probado con date BSD nativo
 
