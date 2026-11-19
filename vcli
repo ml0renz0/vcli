@@ -663,34 +663,26 @@ Usage: $SCRIPTNAME -v <vault_host> -p <vault_port> -t <vault_token> [-i] [-n]
 EOH
 }
 
-# Print commands help
+# Print commands help; sort keys once and keep IFS scoped to callers.
 function commands_help(){
-    local arg="$1"
-    local _cmd
-    local commands
-    commands="${!vcli_commands[@]}"
-    commands=${commands// /|}
+    local arg="$1" command
+    local -a sorted_commands
+    if [[ -n $arg && ${vcli_commands[$arg]+present} ]]; then
+        echo -e "${vcli_commands_help[$arg]}"
+        return 0
+    fi
+    mapfile -t sorted_commands < <(printf '%s\n' "${!vcli_commands[@]}" | LC_ALL=C sort)
     if [[ ! $arg ]]; then
         echo -e "Available commands:\n"
-        backIFS=$IFS
-        IFS=$'|'
-        local _commands
-        _commands=$(echo "$commands" | tr -t '|' '\n' | sort | tr -t '\n' '|')
-        for command in $_commands; do
-            echo -e "$command: $(commands_help "$command")\n"
+        for command in "${sorted_commands[@]}"; do
+            echo -e "$command: ${vcli_commands_help[$command]}\n"
         done
-        IFS=$backIFS
         return
     fi
-    for _cmd in "${!vcli_commands[@]}"; do
-        if [[ "$_cmd" = "$arg" ]]; then
-            echo -e "${vcli_commands_help[$_cmd]}"
-            return 0
-        fi
-    done
     echo -e "unkown '$arg' vcli command. Available commands:"
-    while read -r line ; do        echo "   $line"
-    done< <(echo -e "${commands//|/\\n}") | sort
+    for command in "${sorted_commands[@]}"; do
+        echo "   $command"
+    done
     return 1
 }
 

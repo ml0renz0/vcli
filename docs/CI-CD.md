@@ -442,3 +442,13 @@ El runner macOS también comprueba este contrato tres veces antes de
 la matriz E2E completa; cualquiera de los intentos fallidos bloquea el
 workflow. Se mantiene la prueba original dentro de las 13 suites.
 **Cambio de pruebas únicamente; pendiente confirmación del gate**.
+
+### P-05h — consolidación del listado de ayuda (pendiente CI)
+
+Se añade `tests.cli.test_help_efficiency` a los gates estáticos de
+Ubuntu y macOS para verificar que `commands_help` no altera `IFS`,
+no depende de `tr -t`, preserva los mensajes y ordena una sola vez.
+Los tests E2E del REPL mantienen la validación del comando real.
+Se elimina la ejecución repetida de Bash mediante `$(commands_help ...)`
+para cada nombre; no se atribuye ahorro de tiempo cuantitativo sin
+medirlo con la misma carga de comandos.

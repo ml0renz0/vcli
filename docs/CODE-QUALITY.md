@@ -644,3 +644,18 @@ La regresión aislada prueba llamada exacta al transporte y propagación
 de errores. La E2E con Vault TLS real prueba un PATH con `timeout`
 adulterado y el rechazo de una CA no confiable incluso con batch vacío.
 **No se declaran mejoras de latencia sin benchmark A/B**.
+
+## P-05h — ayuda de comandos sin pipelines repetidos (pendiente CI)
+
+`commands_help` reemplaza `tr | sort | tr`, un `IFS` global temporal y
+hasta una llamada recursiva por comando por **un solo `sort`** sobre
+los nombres del registro y acceso directo a la descripción en el array
+asociativo de Bash. La consulta de un comando conocido no ordena ni
+crea procesos externos; el listado completo mantiene el orden alfabético
+y el error de comando desconocido conserva su código de salida.
+
+`tests/cli/test_help_efficiency.py` exige lista alfabética, salida de ayuda
+equivalente, un único ordenado para el listado, cero ordenados para un
+comando conocido y que `IFS` no cambie. Se ejecuta tanto en Ubuntu como
+en macOS; la suite PTY E2E sigue comprobando el comando `help` real.
+No se han alterado operaciones HTTP, autenticación ni gestión de secretos.
