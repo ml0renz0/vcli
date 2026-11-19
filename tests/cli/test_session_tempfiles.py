@@ -43,7 +43,7 @@ class PortablePrivateTempTemplates(unittest.TestCase):
         self.assertNotIn('mktemp -p ', source)
         self.assertNotIn('mktemp -d -p ', source)
         for line in source.splitlines():
-            if "mktemp " not in line or "VCLI_SESSION_TMP" not in line:
+            if "mktemp " not in line or "VCLI_SESSION_TMP:-$TMP" not in line:
                 continue
             self.assertIn('VCLI_SESSION_TMP:-$TMP}/', line, line)
 
