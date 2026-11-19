@@ -425,3 +425,20 @@ se añade `continue-on-error`, no se elimina el job Vault 1.20.4 ni
 se relaja el gate. GNU `timeout` solo aparece en la infraestructura
 Ubuntu de GitHub Actions, no vuelve a exigirse por `vcli`.
 **Pendiente de validar una nueva ejecución completa**.
+
+### macOS PTY — temporización y señal Ctrl+C (2026-11-19)
+
+En la [CI #44525786805](https://github.com/ml0renz0/vcli/actions/runs/44525786805)
+la integración Linux, los entornos mínimos y el playground finalizaron
+correctamente, pero macOS falló 1/189 E2E:
+`test_05_ctrl_c_discards_partial_input_and_keeps_session`.
+El test enviaba `SIGINT` únicamente al PID principal inmediatamente tras
+recibir el eco del último carácter; en ese momento aún podían ejecutarse
+operaciones de edición del mismo carácter. La prueba ahora espera una breve
+finalización del evento y envía `SIGINT` al **grupo exclusivo del PTY**,
+igual que un Ctrl+C de la terminal, sin relajar las aserciones:
+se exige un nuevo prompt, que el proceso siga vivo y que `help` funcione.
+El runner macOS también comprueba este contrato tres veces antes de
+la matriz E2E completa; cualquiera de los intentos fallidos bloquea el
+workflow. Se mantiene la prueba original dentro de las 13 suites.
+**Cambio de pruebas únicamente; pendiente confirmación del gate**.

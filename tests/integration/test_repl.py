@@ -229,7 +229,14 @@ class InteractiveShellTests(unittest.TestCase):
             # controls between them; a contiguous echoed command is not valid.
             # The unique final '!' proves the full input has been consumed.
             read_until(fd, b"!", timeout=8)
-            os.kill(child.pid, signal.SIGINT)
+            # The echo precedes the editor's final bookkeeping. On macOS,
+            # signaling only the Bash PID at this point can race a foreground
+            # tput subprocess rather than emulate a terminal Ctrl+C.
+            # Let the editor finish this key, then signal its PTY process
+            # group as a real terminal would (not merely the Bash PID).
+            time.sleep(0.15)
+            self.assertIsNone(child.poll(), "REPL exited before Ctrl+C")
+            os.killpg(child.pid, signal.SIGINT)
             read_until(fd, b" >", timeout=8)
             self.assertIsNone(child.poll(), "Ctrl+C must not terminate the session")
             self.send(fd, b"help\n")

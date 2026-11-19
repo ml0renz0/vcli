@@ -96,6 +96,14 @@ python3 -m unittest -q \
     tests.integration.test_repl.InteractiveShellTests.test_interactive_help_and_ctrl_d \
     tests.integration.test_repl.InteractiveShellTests.test_14_history_rewrite_is_atomic_and_private \
     tests.integration.test_repl.InteractiveShellTests.test_17_incomplete_csi_times_out_without_breaking_next_command
+# Recheck the real terminal SIGINT contract several times on the same native
+# macOS runner. A transient signal/PTY regression must fail rather than retry
+# until green; all attempts are mandatory.
+for attempt in 1 2 3; do
+    echo "macOS Ctrl+C PTY contract, attempt $attempt/3"
+    python3 -m unittest -q \
+        tests.integration.test_repl.InteractiveShellTests.test_05_ctrl_c_discards_partial_input_and_keeps_session
+done
 # Identical existing black-box E2E suites, independently checked via Vault API.
 python3 -m unittest -v tests.integration.test_vault \
     tests.integration.test_operations \
