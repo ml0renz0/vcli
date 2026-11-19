@@ -572,3 +572,14 @@ macOS se verifica explícitamente la creación mediante
 Los tests S-01/S-02/S-03, operaciones KV y la matriz E2E siguen siendo
 obligatorios. Este paso no declara portabilidad BSD total: `ln -T`,
 `mv -T`, `stat -c` y otras utilidades GNU todavía se requieren.
+
+## P-05d — validación de inode con stat BSD real
+
+Se introduce `vcli_stat_identity` para comparar inodo, propietario,
+permisos 0600 y enlaces de debug/historial. macOS ejecuta
+`/usr/bin/stat -L -f '%i:%u:%OLp:%l'` nativo, evitando la
+implementación GNU de Homebrew; Linux sigue con `stat -L -c`.
+Las pruebas comparan un archivo y su descriptor abierto, sus permisos
+y el resultado de `/usr/bin/stat` en Mac. Se preservan las comprobaciones
+de enlaces simbólicos/duros y la exigencia de `-ef` adicional en Linux.
+Esto no elimina todavía las dependencias GNU de `ln -T` y `mv -T`.

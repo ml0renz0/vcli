@@ -149,6 +149,15 @@ function prompt(){
 }
 
 # Open once and pin a verified private inode; later pathname swaps are inert.
+# Use native BSD stat for secure inode metadata on Darwin, GNU on Linux.
+function vcli_stat_identity(){
+    if [[ $OSTYPE == darwin* ]]; then
+        /usr/bin/stat -L -f '%i:%u:%OLp:%l' "$1"
+    else
+        stat -L -c '%i:%u:%a:%h' "$1"
+    fi
+}
+
 function vcli_debug_open(){
     [[ -z ${VCLI_DEBUG_FD:-} ]] || return 0
     local staged="" fd="" path_identity="" fd_identity=""
@@ -168,8 +177,8 @@ function vcli_debug_open(){
     if ! { exec {fd}>> "$DEBUGFILE"; }; then return 1; fi
     # macOS /dev/fd can report a synthetic device; -ef may fail even when
     # the inode matches. Keep -ef on Linux, compare inode metadata on macOS.
-    path_identity=$(stat -L -c '%i:%u:%a:%h' "$DEBUGFILE" 2>/dev/null) || path_identity=""
-    fd_identity=$(stat -L -c '%i:%u:%a:%h' "/dev/fd/$fd" 2>/dev/null) || fd_identity=""
+    path_identity=$(vcli_stat_identity "$DEBUGFILE" 2>/dev/null) || path_identity=""
+    fd_identity=$(vcli_stat_identity "/dev/fd/$fd" 2>/dev/null) || fd_identity=""
     if [[ -L $DEBUGFILE || ! -f /dev/fd/$fd || ! -O /dev/fd/$fd ||
           -z $fd_identity || $path_identity != "$fd_identity" ||
           $fd_identity != *:600:1 ]] ||
@@ -530,8 +539,8 @@ function load_history(){
     # Pin the inode before reading; macOS /dev/fd may have a synthetic
     # device number, so compare inode + owner, with -ef additionally on Linux.
     if ! { exec {fd}< "$VCLISTORY"; }; then return 1; fi
-    path_identity=$(stat -L -c '%i:%u' "$VCLISTORY" 2>/dev/null) || path_identity=""
-    fd_identity=$(stat -L -c '%i:%u' "/dev/fd/$fd" 2>/dev/null) || fd_identity=""
+    path_identity=$(vcli_stat_identity "$VCLISTORY" 2>/dev/null) || path_identity=""
+    fd_identity=$(vcli_stat_identity "/dev/fd/$fd" 2>/dev/null) || fd_identity=""
     if [[ -L $VCLISTORY || ! -f /dev/fd/$fd ||
           -z $fd_identity || $path_identity != "$fd_identity" ]] ||
        { [[ $OSTYPE != darwin* ]] && [[ ! $VCLISTORY -ef /dev/fd/$fd ]]; }; then

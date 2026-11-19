@@ -23,7 +23,7 @@ def functions(*names):
 class DebugLogSafety(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.code = functions("vcli_debug_open", "vcli_debug_close", "debug")
+        cls.code = functions("vcli_stat_identity", "vcli_debug_open", "vcli_debug_close", "debug")
 
     def case(self, mode):
         with tempfile.TemporaryDirectory(prefix="vcli-debug-fd-") as tmp:
@@ -93,7 +93,7 @@ exit "$status"
 class HistoryPathSafety(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.code = functions("save_history", "load_history")
+        cls.code = functions("vcli_stat_identity", "save_history", "load_history")
 
     def test_raced_directory_cannot_capture_history(self):
         with tempfile.TemporaryDirectory(prefix="vcli-history-race-") as tmp:

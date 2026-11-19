@@ -354,3 +354,11 @@ conservando el aislamiento 0700 de la sesión. El runner macOS prueba
 `/usr/bin/mktemp` nativo (fichero y directorio) y los contratos
 obligatorios verifican que `-p` no reaparezca en el ejecutable Bash.
 La matriz Vault TLS de Linux/macOS protege la compatibilidad funcional.
+
+### P-05d — stat BSD nativo en validaciones de seguridad
+
+El gate añade `tests.cli.test_stat_portability` en Ubuntu y macOS.
+Los metadatos de los ficheros de debug e historial se obtienen con
+`/usr/bin/stat` BSD en Mac y GNU stat en Linux, y se comparan
+contra los de un descriptor abierto. El resto de suites siguen obligatorias;
+`ln -T` y `mv -T` aún requieren herramientas GNU.
