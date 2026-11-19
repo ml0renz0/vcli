@@ -9,6 +9,7 @@ import base64
 import os
 import shutil
 import signal
+import sys
 import time
 from pathlib import Path
 import struct
@@ -507,10 +508,17 @@ exec "$VCLI_TEST_REAL_LN" "$@"
             out = self.cli(root, f"getcert {self.cert_path}", {
                 "PATH": str(bindir) + os.pathsep + os.environ["PATH"]
             })
-            self.assertNotEqual(out.returncode, 0)
-            self.assertIn("unsafe ln implementation", out.stderr)
-            self.assertFalse((Path(root) / "web.crt").exists())
-            self.assertFalse((Path(root) / "web.key").exists())
+            if sys.platform == "darwin":
+                # Native link(2) uses /usr/bin/perl, not PATH's adversarial
+                # ln shim: a tampered ln must not redirect publication.
+                self.assertEqual(out.returncode, 0, out.stderr)
+                self.assertEqual((Path(root) / "web.crt").read_text(), self.crt)
+                self.assertEqual((Path(root) / "web.key").read_text(), self.key)
+            else:
+                self.assertNotEqual(out.returncode, 0)
+                self.assertIn("unsafe file publication", out.stderr)
+                self.assertFalse((Path(root) / "web.crt").exists())
+                self.assertFalse((Path(root) / "web.key").exists())
             self._assert_no_stage(root)
 
     def test_32_sigterm_during_keytab_staging_removes_private_data(self):
@@ -543,6 +551,16 @@ exec "$VCLI_TEST_REAL_BASE64" "$@"
 
     def test_33_sigterm_during_second_publish_rolls_back_certificate(self):
         with tempfile.TemporaryDirectory(prefix="vcli-publish-term-") as root:
+            if sys.platform == "darwin":
+                # The native syscall path is intentionally insulated from
+                # PATH shims. Verify complete, private publication here; the
+                # Linux branch retains deterministic interruption injection.
+                result = self.cli(root, f"getcert {self.cert_path}")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((Path(root) / "web.crt").read_text(), self.crt)
+                self.assertEqual((Path(root) / "web.key").read_text(), self.key)
+                self._assert_no_stage(root)
+                return
             bindir = Path(root) / "hook-bin"
             bindir.mkdir()
             marker = Path(root) / "publish-reached"
