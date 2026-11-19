@@ -305,6 +305,9 @@ class InteractiveShellTests(unittest.TestCase):
                 # The help header precedes several screens of text. Do not
                 # send Ctrl+D until the REPL has printed its next prompt.
                 read_until(fd, b" >", timeout=8)
+            # The prompt is printed just before Bash enters its one-byte read.
+            # On a canonical PTY, an early Ctrl+D can be consumed as EOF.
+            time.sleep(0.35)
             self.send(fd, b"\x04")
             self.assertEqual(wait_pty_exit(fd, child, timeout=8), 0)
             saved = (Path(home.name) / ".vclistory").read_text(encoding="utf-8")
