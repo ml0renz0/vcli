@@ -477,3 +477,12 @@ El renderer `vcli_emit_http_response` se prueba aisladamente en Ubuntu
 y macOS. `_curl` conserva errores de transporte y resultados inciertos
 sin reintentos, con limpieza común de la respuesta temporal.
 Los E2E Vault TLS, CAS, permisos y errores continúan obligatorios.
+
+### 04-Q HTTP-03 — propiedad de ficheros de petición (pendiente CI)
+
+`_curl` no elimina nunca el fichero de petición recibido de su llamador.
+Cada operación limpia sus propios temporales en éxito y error; el
+transporte conserva responsabilidad exclusiva sobre su wrapper KV2
+y su respuesta temporal. `tests.cli.test_http_payload_ownership`
+se añade a los estáticos Linux/macOS; los E2E Vault TLS, errores,
+CAS, ACL y playground mantienen su carácter obligatorio.

@@ -683,3 +683,19 @@ reintentos automáticos.
 errores HTTP, KV v2/raw, listados y la ruta de limpieza. Los contratos
 aislados son obligatorios en Ubuntu/macOS y no sustituyen E2E Vault TLS.
 No se afirma un ahorro de tiempo sin medición.
+
+## 04-Q HTTP-03 — propiedad explícita de los payloads (pendiente CI)
+
+`_curl` deja de borrar el fichero `data` recibido del llamador: el
+transporte no puede asumir la propiedad de una ruta externa. Solo
+elimina los temporales que crea (`.vcli.payload.*` KV2 y la respuesta
+`.vcli.response.*`). Los productores `_mount`, `_renew_token`, `_mv` y
+`_rm` limpian ahora sus propios ficheros también en los fallos de
+transporte; `_put` ya realizaba esa limpieza.
+
+Los contratos `tests/cli/test_http_payload_ownership.py` comprueban
+KV1 y KV2, éxito y fallo de red, supervivencia exacta del fichero
+externo, eliminación de wrappers y `OUTCOME_UNKNOWN`, además del
+ciclo de vida de los temporales de montaje, renovación y borrado.
+Se ejecutan en Linux/macOS y no sustituyen las suites Vault TLS.
+El objetivo es corrección y seguridad, sin mejora de latencia asumida.

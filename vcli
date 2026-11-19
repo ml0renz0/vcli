@@ -890,13 +890,21 @@ function _renew_token(){
     fi
     payload=$(mktemp "${VCLI_SESSION_TMP:-$TMP}/.vcli.renew.XXXXXX") || return 1
     if [[ -n $increment ]]; then
-        jq -cn --arg value "$increment" '{increment:$value}' > "$payload"
-    else
-        printf '{}\n' > "$payload"
+        if ! jq -cn --arg value "$increment" '{increment:$value}' > "$payload"; then
+            rm -f -- "$payload"
+            return 1
+        fi
+    elif ! printf '{}\n' > "$payload"; then
+        rm -f -- "$payload"
+        return 1
     fi
-    response=$(_curl "/auth/token/renew-self" "$payload" POST) || {
-        echo "vcli: token renewal failed" >&2; return 1;
-    }
+    local request_status=0
+    response=$(_curl "/auth/token/renew-self" "$payload" POST) || request_status=$?
+    rm -f -- "$payload"
+    if (( request_status != 0 )); then
+        echo "vcli: token renewal failed" >&2
+        return 1
+    fi
     jq -e '.auth.renewable == true' <<< "$response" >/dev/null || {
         echo "vcli: token is not renewable" >&2; return 1;
     }
@@ -989,8 +997,8 @@ function _curl(){
     # --header @- is supported by modern curl versions.
     status=$(printf 'X-Vault-Token: %s\n' "$vault_token" | curl "${args[@]}" "$url")
     curl_status=$?
-    [[ -n $payload_file ]] && rm -f "$payload_file"
-    [[ -n $data && $data != '-_list_root_-' && -f $data ]] && rm -f "$data"
+    # Only the KV2 wrapper belongs to the transport; caller owns $data.
+    [[ -n $payload_file ]] && rm -f -- "$payload_file"
     local render_status=0
     if (( curl_status != 0 )); then
         http_code="000"
@@ -1109,13 +1117,19 @@ function _mount(){
         else
             url="/sys/mounts$url"
         fi
-        data=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/.put.XXXXXX")
-        jq -nc --arg d "$url secret backend" --arg v "${VAULT_KV_VERSION:-1}" '{type:"kv",description:$d,options:{version:$v}}' > "$data"
-        if [[ $ignore_http_code ]]; then
-            _curl -i "$url" "$data" "POST"
-        else
-            _curl "$url" "$data" "POST"
+        data=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/.put.XXXXXX") || return 1
+        if ! jq -nc --arg d "$url secret backend" --arg v "${VAULT_KV_VERSION:-1}" '{type:"kv",description:$d,options:{version:$v}}' > "$data"; then
+            rm -f -- "$data"
+            return 1
         fi
+        local request_status=0
+        if [[ $ignore_http_code ]]; then
+            _curl -i "$url" "$data" "POST" || request_status=$?
+        else
+            _curl "$url" "$data" "POST" || request_status=$?
+        fi
+        rm -f -- "$data"
+        (( request_status == 0 )) || return "$request_status"
         [[ ${http_code:-} == 2* ]] || return 1
         echo "mounted '$url'"
     fi
@@ -1704,9 +1718,13 @@ function _mv(){
         _vcli_partial_failure mv 1 2 "$source"; return 1;
     }
     printf '{"versions":[%s]}\n' "$source_version" > "$path_file"
-    _curl "$delete_path" "$path_file" POST || {
-        _vcli_partial_failure mv 1 2 "$source"; return 1;
-    }
+    local delete_status=0
+    _curl "$delete_path" "$path_file" POST || delete_status=$?
+    rm -f -- "$path_file"
+    if (( delete_status != 0 )); then
+        _vcli_partial_failure mv 1 2 "$source"
+        return 1
+    fi
     # A newer version may have been created immediately before the deletion.
     # Detect it; never claim the whole move was successful in that case.
     local after after_version
@@ -1739,7 +1757,10 @@ function _rm(){
     delete_path="${metadata/\/metadata\//\/delete\/}"
     payload=$(mktemp "${VCLI_SESSION_TMP:-$TMP}/.vcli-delete.XXXXXX") || return 1
     printf '{"versions":[%s]}\n' "$version" > "$payload"
-    _curl "$delete_path" "$payload" POST || return 1
+    local delete_status=0
+    _curl "$delete_path" "$payload" POST || delete_status=$?
+    rm -f -- "$payload"
+    (( delete_status == 0 )) || return 1
     after=$(_curl "$metadata") || return 1
     after_version=$(jq -er '.data.current_version | select(type=="number")' <<< "$after") || return 1
     if [[ $after_version != "$version" ]]; then
