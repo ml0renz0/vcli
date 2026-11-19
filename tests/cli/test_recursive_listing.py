@@ -118,7 +118,11 @@ _backup /kv1/sample
             env = os.environ.copy()
             env.update({"HOME": home, "TMP": home, "TMPDIR": home,
                         "MKDIR_LOG": str(Path(home) / "mkdir.log")})
-            result = subprocess.run(["bash", "-c", match.group(0) + shell],
+            link_match = re.search(r"^function vcli_link_exclusive\(\)\{.*?^\}",
+                               SOURCE.read_text(encoding="utf-8"),
+                               re.MULTILINE | re.DOTALL)
+        self.assertIsNotNone(link_match)
+        result = subprocess.run(["bash", "-c", link_match.group(0) + "\n" + match.group(0) + shell],
                                     env=env, capture_output=True, text=True, timeout=20)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((Path(home) / "mkdir.log").read_text().splitlines(),
