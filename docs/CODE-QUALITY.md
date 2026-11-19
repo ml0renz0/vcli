@@ -543,3 +543,18 @@ continúan en los 13 módulos nativos de macOS y Linux.
 No implica soporte BSD completo: `ln -T`, `mv -T`, `stat -c`,
 `mktemp -p`, `base64 --decode` y `timeout` aún necesitan revisión
 sin reducir las garantías de seguridad.
+
+## P-05b — Base64 de binarios Kerberos GNU/BSD
+
+La exportación y lectura de keytabs usaban `base64 --decode` (opción
+larga de GNU). Se cambia a `base64 -d`, aceptada tanto por GNU
+coreutils como por la implementación BSD que incluye macOS. El flujo
+se mantiene binario, preservando bytes NUL y datos no UTF-8; la
+validación posterior con `klist` y los controles de ficheros existentes
+no se alteran. Los tests cubren ambas rutas en el código Bash y
+comparan bytes de salida, además de ejecutar explícitamente
+`/usr/bin/base64 -d` en el runner macOS, sin Homebrew.
+
+La adaptación P-05 no implica aún que `vcli` funcione con todas las
+herramientas BSD; las operaciones `ln -T`, `mv -T` y `stat -c`
+requieren trabajo adicional.

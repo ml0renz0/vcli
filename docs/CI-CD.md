@@ -337,3 +337,12 @@ valida y la fecha se interpreta en UTC y locale C. El test offline
 `tests/cli/test_certificate_date_portability.py` se ejecuta en
 Ubuntu y macOS, y la suite E2E completa mantiene la comprobación
 con Vault TLS real. No equivale todavía a runtime BSD puro.
+
+### P-05b — base64 nativo GNU/BSD
+
+Los tests `tests.cli.test_base64_portability` son obligatorios en
+el job estático de Ubuntu y en el runner macOS; verifican una carga
+binaria con NUL y bytes no UTF-8 mediante `base64 -d`. En Mac se
+comprueba además `/usr/bin/base64` BSD nativo incluso cuando
+Homebrew GNU coreutils está antes en `PATH`. Continúan intactas
+las pruebas E2E PKI/Kerberos con Vault TLS real.

@@ -1790,7 +1790,7 @@ function _vcli_krb_pairs(){
         [[ $principal =~ ^[A-Za-z0-9._/-]+@[A-Za-z0-9._-]+$ && $principal != *..* ]] || return 1
         encoded=$(jq -er --arg k "${stem}_keytab" '.[$k] | select(type=="string")' <<< "$data") || return 1
         file=$(mktemp -p "${VCLI_SESSION_TMP:-$TMP}" .vcli-krb.XXXXXX) || return 1
-        if ! printf '%s' "$encoded" | base64 --decode > "$file" 2>/dev/null ||
+        if ! printf '%s' "$encoded" | base64 -d > "$file" 2>/dev/null ||
            ! klist -kt "$file" 2>/dev/null | grep -Fq "$principal"; then
             rm -f "$file"
             echo "vcli: invalid keytab or principal" >&2
@@ -1824,7 +1824,7 @@ function _getkrb() (
         }
         # Decode into a private staged inode, never into the final pathname.
         if ! (set -o pipefail; printf '%s' "$encoded" |
-              base64 --decode > "$stage/$i"); then
+              base64 -d > "$stage/$i"); then
             rm -rf -- "$stage"
             echo "vcli: keytab staging failed" >&2
             return 1
