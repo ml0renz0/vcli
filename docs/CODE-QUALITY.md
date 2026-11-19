@@ -618,7 +618,29 @@ las syscalls de Darwin incluso en Linux para comprobar sus invariantes;
 los tests previos de inyección de carreras siguen operativos. Las suites
 E2E con Vault real y el playground permanecen obligatorias.
 
-**En validación CI**. No equivale a portabilidad BSD completa: otras
-utilidades, `timeout` y el runtime Bash moderno siguen pendientes o
-dependen de Homebrew. Tampoco protege ante atacantes que controlen
+**Validado:** [CI #44515726584](https://github.com/ml0renz0/vcli/actions/runs/44515726584)
+terminó con los contratos offline, las 13 suites TLS nativas macOS, las
+cuatro versiones Linux y el gate obligatorio verdes. No equivale a
+portabilidad BSD completa: otras utilidades y el runtime Bash moderno
+siguen pendientes o dependen de Homebrew. Tampoco protege ante atacantes que controlen
 directorios padres confiados o puedan ejecutar código con el mismo usuario.
+
+## P-05g — probe HTTP/TLS sin GNU timeout (pendiente de CI)
+
+El arranque deja de exigir `timeout` y de crear un segundo transporte
+TCP mediante `bash -c '</dev/tcp/...'`. `check_connectivity` reutiliza
+`_curl -i -_disable_-f_- /sys/health`, de solo lectura, que ya aplica
+`VCLI_CONNECT_TIMEOUT`, `VCLI_HTTP_TIMEOUT`, `VAULT_CACERT`,
+`VAULT_CAPATH`, mTLS y el override TLS explícito, siempre con URL
+construida a partir de la configuración de Vault.
+
+Los estados HTTP no 2xx (p. ej. un Vault sealed o un ACL 403) indican
+conectividad de transporte y no se confunden con un error TLS o de red:
+curl no recibe `--fail`; un fallo de curl corta el arranque con exit code
+distinto de cero. Se conserva la separación entre conectividad y
+autorización (cada comando comprueba sus permisos).
+
+La regresión aislada prueba llamada exacta al transporte y propagación
+de errores. La E2E con Vault TLS real prueba un PATH con `timeout`
+adulterado y el rechazo de una CA no confiable incluso con batch vacío.
+**No se declaran mejoras de latencia sin benchmark A/B**.

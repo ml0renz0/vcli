@@ -396,3 +396,14 @@ destino exacto. Se amplían pruebas offline contra directorios
 preexistentes, symlinks, colisiones y rutas con espacios. **En CI**:
 las pruebas con Vault TLS, PKI/Kerberos y el gate siguen siendo obligatorias.
 No se declara aún independencia completa de GNU Homebrew.
+
+### P-05g — eliminar GNU timeout del arranque (pendiente CI)
+
+La comprobación inicial usa la misma `_curl` que el resto de los
+comandos: conexión HTTPS real y verificación de CA, respetando mTLS y
+los timeouts propios de curl. Cualquier respuesta HTTP —incluyendo
+403/429/503— significa transporte disponible; los fallos de conexión,
+DNS y TLS cortan la sesión. `timeout` desaparece de las dependencias
+del ejecutable y el job macOS ya no lo exige en el PATH. Se añaden
+tests aislados y E2E contra Vault TLS real. Los benchmarks anteriores
+no se extrapolan al nuevo coste del inicio de sesión.

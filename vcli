@@ -61,7 +61,6 @@ function vcli_session_open(){
 }
 
 declare is_command cmd cmd_history restcmd _key len pos history_index pending_key
-declare timeout="2" # timeout to verify connection to Vault
 declare http_code
 declare vault_host vault_port vault_token current_pwd
 
@@ -75,7 +74,7 @@ declare -a cmd_history tmp_history
 declare cert_warning_threshold="30"
 declare cert_critical_threshold="15"
 # vcli dependencies
-declare DEPENDENCIES="curl jq mktemp timeout"
+declare DEPENDENCIES="curl jq mktemp"
 
 # COLOURS
 # Non-interactive shells and minimal containers may lack TERM/tput.
@@ -117,9 +116,13 @@ function check_dependency(){
 }
 
 function check_connectivity(){
-    if ! timeout $timeout bash -c "</dev/tcp/$vault_host/$vault_port"; then
-        echo "Cannot establish connection to $protocol://$vault_host:$vault_port"
-        exit 1
+    # Reuse the real Vault transport: TLS verification, optional mTLS, and
+    # curl connect/overall deadlines. HTTP 4xx/5xx still means reachable.
+    # -i discards body/status while -_disable_-f_- accepts all HTTP codes;
+    # transport and certificate failures must always abort startup.
+    if ! _curl -i -_disable_-f_- "/sys/health" "" GET >/dev/null; then
+        echo "Cannot establish connection to $protocol://$vault_host:$vault_port" >&2
+        return 1
     fi
 }
 
@@ -2307,7 +2310,7 @@ function main(){
     check_arg "$vault_token" "Vault token"
 
     # Check connectivity
-    check_connectivity
+    check_connectivity || exit 1
 
     # BEGIN
     # initialize variables

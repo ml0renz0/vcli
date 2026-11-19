@@ -34,6 +34,30 @@ class VaultTlsTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("valid-tls", result.stdout)
 
+    def test_startup_uses_curl_not_external_gnu_timeout(self):
+        # Exercise the real TLS health probe with an adversarial timeout
+        # executable in PATH. The CLI must never invoke it.
+        with tempfile.TemporaryDirectory(prefix="vcli-no-gnu-timeout-") as tmp:
+            marker = Path(tmp) / "invoked-timeout"
+            shim = Path(tmp) / "timeout"
+            shim.write_text(
+                '#!/bin/sh\nprintf "used\\n" > "$VCLI_TEST_TIMEOUT_MARKER"\nexit 91\n',
+                encoding="utf-8",
+            )
+            shim.chmod(0o755)
+            result, _ = invoke("", env_extra={
+                "PATH": str(Path(tmp)) + os.pathsep + os.environ["PATH"],
+                "VCLI_TEST_TIMEOUT_MARKER": str(marker),
+            })
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse(marker.exists(), "CLI invoked external GNU timeout")
+
+    def test_empty_batch_startup_rejects_untrusted_vault_tls(self):
+        # A TCP handshake alone is insufficient to trust the Vault endpoint.
+        result, _ = invoke("", env_extra={"VAULT_CACERT": ""})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Cannot establish connection", result.stderr)
+
     def test_unknown_ca_must_fail_closed(self):
         result, _ = invoke(f"cat {self.path}", env_extra={"VAULT_CACERT": ""})
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
