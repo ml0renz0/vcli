@@ -599,3 +599,26 @@ El código de producción permanece con `ln -T` de GNU coreutils,
 porque cambiarlo por `ln` o `mv` sin garantías equivalentes permitiría
 carreras con directorios. La portabilidad GNU-free de publicación
 segura sigue **pendiente**, no implementada.
+
+## P-05f — publicación exacta mediante syscalls nativas en macOS
+
+El CLI conserva `ln -T` y `mv -T` en Linux. macOS usa `link(2)` y
+`rename(2)` mediante `/usr/bin/perl`, sin dependencias de GNU coreutils
+para estas dos operaciones. La capa Bash `vcli_link_exclusive` crea
+hardlinks solo si el destino no existe; `vcli_replace_exact` reemplaza
+el historial por ruta exacta, sin introducir el temporal en un directorio
+que aparezca en una carrera. La dependencia del Perl del sistema macOS
+es **explícita**, se verifica en CI y falla cerrada si no está instalado;
+no se ha introducido Python en producción ni un binario compilado.
+
+Los consumidores son debug, backup, publicación de certificados/keytabs e
+historial. `tests/cli/test_fs_publication.py` contrasta creación, colisiones
+de ficheros/directorios, symlinks y no sobrescritura de víctimas, invocando
+las syscalls de Darwin incluso en Linux para comprobar sus invariantes;
+los tests previos de inyección de carreras siguen operativos. Las suites
+E2E con Vault real y el playground permanecen obligatorias.
+
+**En validación CI**. No equivale a portabilidad BSD completa: otras
+utilidades, `timeout` y el runtime Bash moderno siguen pendientes o
+dependen de Homebrew. Tampoco protege ante atacantes que controlen
+directorios padres confiados o puedan ejecutar código con el mismo usuario.

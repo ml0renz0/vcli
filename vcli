@@ -158,6 +158,41 @@ function vcli_stat_identity(){
     fi
 }
 
+# Files are published at an exact pathname, never inside a raced-in directory.
+# On Darwin use the OS link(2)/rename(2) syscalls via system Perl; BSD
+# ln/mv lack GNU -T. A missing native helper fails closed, not via unsafe ln.
+function vcli_link_exclusive(){
+    if [[ $OSTYPE == darwin* ]]; then
+        [[ -x /usr/bin/perl ]] || {
+            echo 'vcli: secure file publication requires system Perl on macOS' >&2
+            return 1
+        }
+        /usr/bin/perl -e '
+            @ARGV == 2 or die "vcli: expected source and destination\n";
+            link($ARGV[0], $ARGV[1])
+                or die "vcli: exclusive file publication failed: $!\n";
+        ' -- "$1" "$2"
+    else
+        ln -T -- "$1" "$2"
+    fi
+}
+
+function vcli_replace_exact(){
+    if [[ $OSTYPE == darwin* ]]; then
+        [[ -x /usr/bin/perl ]] || {
+            echo 'vcli: secure history replacement requires system Perl on macOS' >&2
+            return 1
+        }
+        /usr/bin/perl -e '
+            @ARGV == 2 or die "vcli: expected source and destination\n";
+            rename($ARGV[0], $ARGV[1])
+                or die "vcli: atomic history replacement failed: $!\n";
+        ' -- "$1" "$2"
+    else
+        mv -T -f -- "$1" "$2"
+    fi
+}
+
 function vcli_debug_open(){
     [[ -z ${VCLI_DEBUG_FD:-} ]] || return 0
     local staged="" fd="" path_identity="" fd_identity=""
@@ -167,7 +202,7 @@ function vcli_debug_open(){
     fi
     if [[ ! -e $DEBUGFILE ]]; then
         staged=$(mktemp -- "${DEBUGFILE}.XXXXXXXX") || return 1
-        if ! ln -T -- "$staged" "$DEBUGFILE"; then
+        if ! vcli_link_exclusive "$staged" "$DEBUGFILE"; then
             rm -f -- "$staged"
             echo "vcli: debug path occupied during creation" >&2
             return 1
@@ -527,8 +562,8 @@ function save_history(){
         printf 'vcli: refusing unsafe history path: %s\n' "$VCLISTORY" >&2
         return 1
     fi
-    # GNU -T refuses a raced-in directory instead of moving history inside.
-    mv -T -f -- "$history_tmp" "$VCLISTORY" || { rm -f -- "$history_tmp"; return 1; }
+    # Exact-path rename refuses a raced-in directory on both platforms.
+    vcli_replace_exact "$history_tmp" "$VCLISTORY" || { rm -f -- "$history_tmp"; return 1; }
 }
 
 # loads history from $HOME/.vclistory
@@ -1457,7 +1492,7 @@ function _backup(){
     fi
     # Exclusive hardlink publication fails closed on collisions and symlinks.
     # Staging and output share TMP's filesystem; the published inode is 0600.
-    if ! ln -T -- "$archive_stage" "$archive"; then
+    if ! vcli_link_exclusive "$archive_stage" "$archive"; then
         rm -f -- "$archive_stage"
         rm -rf -- "$dir"
         echo "vcli: backup destination occupied or cannot be published" >&2
@@ -2026,7 +2061,7 @@ function _vcli_export_preflight(){
 
 # Stage all secret bytes privately before publishing them. Hard links create
 # each destination exclusively (never truncate, replace, or follow symlinks).
-# GNU ln -T is intentional: a raced-in directory cannot become a destination.
+# Exact-path hard links reject raced-in directories on GNU/Linux and macOS.
 # Multi-file exports are not transactions, but partial publishes are rolled back.
 function _vcli_export_publish() (
     local stage="$1"; shift
@@ -2043,26 +2078,25 @@ function _vcli_export_publish() (
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
-    # Verify ln is safe, not merely that its help claims -T support.
-    # A vendor implementation ignoring -T might link *inside* a directory,
-    # exposing a secret. Check both positive and negative behavior privately.
+    # Probe exact-target semantics, including a directory destination; never
+    # trust a vendor ln wrapper silently ignoring -T.
     local probe_link="$stage/.vcli-ln-probe" probe_dir="$stage/.vcli-ln-dir"
-    if ! ln -T -- "$stage/0" "$probe_link" 2>/dev/null ||
+    if ! vcli_link_exclusive "$stage/0" "$probe_link" 2>/dev/null ||
        [[ ! "$probe_link" -ef "$stage/0" ]]; then
-        echo "vcli: secure export requires ln -T no-target-directory support" >&2
+        echo "vcli: secure export requires exclusive exact-path hard links" >&2
         return 1
     fi
     rm -f -- "$probe_link"
     mkdir -- "$probe_dir" || return 1
-    if ln -T -- "$stage/0" "$probe_dir" 2>/dev/null ||
+    if vcli_link_exclusive "$stage/0" "$probe_dir" 2>/dev/null ||
        [[ -e $probe_dir/0 || -L $probe_dir/0 ]]; then
-        echo "vcli: unsafe ln implementation (directory target accepted)" >&2
+        echo "vcli: unsafe file publication (directory target accepted)" >&2
         return 1
     fi
     rmdir -- "$probe_dir" || return 1
 
     for (( i=0; i<${#destinations[@]}; i++ )); do
-        if ! ln -T -- "$stage/$i" "${destinations[i]}"; then
+        if ! vcli_link_exclusive "$stage/$i" "${destinations[i]}"; then
             printf 'vcli: export destination occupied or publication failed: %s\n' \
                 "${destinations[i]}" >&2
             return 1

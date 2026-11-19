@@ -383,3 +383,16 @@ que `/usr/bin/link` no está disponible. Se ha retirado el test
 experimental que presuponía ese binario; la matriz vuelve a exigir
 solo los mecanismos GNU de publicación ya verificados. No se ha
 modificado ni debilitado la protección de los artefactos.
+
+### P-05f — hardlinks exclusivos y renombrado seguro sin GNU -T en macOS
+
+El CLI encapsula las publicaciones en `vcli_link_exclusive` y el
+renombrado de historial en `vcli_replace_exact`. En macOS ambos
+ejecutan `link(2)` / `rename(2)` mediante `/usr/bin/perl` del
+sistema; en Linux se conserva GNU `ln -T` / `mv -T`. Esta dependencia
+se comprueba expresamente en el job macOS y se niega la operación si
+falta, evitando sustituirla por `ln` / `mv` BSD sin seguridad de
+destino exacto. Se amplían pruebas offline contra directorios
+preexistentes, symlinks, colisiones y rutas con espacios. **En CI**:
+las pruebas con Vault TLS, PKI/Kerberos y el gate siguen siendo obligatorias.
+No se declara aún independencia completa de GNU Homebrew.

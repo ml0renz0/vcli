@@ -24,7 +24,10 @@ class BackupPublicationContracts(unittest.TestCase):
         match = re.search(r"^function _backup\(\)\{.*?^\}", code, re.M | re.S)
         if not match:
             raise AssertionError("Missing production _backup function")
-        cls.backup = match.group(0)
+        helper = re.search(r"^function vcli_link_exclusive\(\)\{.*?^\}", code, re.M | re.S)
+        if not helper:
+            raise AssertionError("Missing production vcli_link_exclusive")
+        cls.backup = helper.group(0) + "\n" + match.group(0)
 
     def invoke(self, mode="normal", calls=1):
         with tempfile.TemporaryDirectory(prefix="vcli-backup-publish-") as temp:
@@ -45,13 +48,15 @@ _cat(){
 _vcli_leaves(){
   printf '%s\n' "/kv1/sample/a" "/kv1/sample/b"
 }
-ln(){
-  local dest="@{@: -1}"
+# Inject the collision immediately before the real platform link syscall.
+eval "$(declare -f vcli_link_exclusive | sed '1s/vcli_link_exclusive/vcli_link_exclusive_original/')"
+vcli_link_exclusive(){
+  local dest="$2"
   case "$MODE" in
     symlink) command ln -s -- "$VICTIM" "$dest" || return $? ;;
     existing) printf 'preexisting\n' > "$dest" || return $? ;;
   esac
-  command ln "$@"
+  vcli_link_exclusive_original "$@"
 }
 tar(){
   [[ "$MODE" != tar_fail ]] || return 17

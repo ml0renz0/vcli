@@ -23,7 +23,7 @@ def functions(*names):
 class DebugLogSafety(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.code = functions("vcli_stat_identity", "vcli_debug_open", "vcli_debug_close", "debug")
+        cls.code = functions("vcli_stat_identity", "vcli_link_exclusive", "vcli_debug_open", "vcli_debug_close", "debug")
 
     def case(self, mode):
         with tempfile.TemporaryDirectory(prefix="vcli-debug-fd-") as tmp:
@@ -93,16 +93,18 @@ exit "$status"
 class HistoryPathSafety(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.code = functions("vcli_stat_identity", "save_history", "load_history")
+        cls.code = functions("vcli_stat_identity", "vcli_replace_exact", "save_history", "load_history")
 
     def test_raced_directory_cannot_capture_history(self):
         with tempfile.TemporaryDirectory(prefix="vcli-history-race-") as tmp:
             script = r'''
 VCLISTORY="$TEST_HOME/.vclistory"
 cmd_history=("help" "history")
-mv(){
+# Inject a destination-directory race just before production rename.
+eval "$(declare -f vcli_replace_exact | sed '1s/vcli_replace_exact/vcli_replace_exact_original/')"
+vcli_replace_exact(){
   mkdir -p -- "$VCLISTORY"
-  command mv "$@"
+  vcli_replace_exact_original "$@"
 }
 save_history
 '''
