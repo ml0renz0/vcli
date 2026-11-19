@@ -163,11 +163,22 @@ class InteractiveShellTests(unittest.TestCase):
                 time.sleep(pace)
 
     def end(self, home, fd, child):
-        if child.poll() is None:
-            child.kill()
-            child.wait(timeout=5)
-        os.close(fd)
-        home.cleanup()
+        """Kill the entire dedicated PTY session, then always release fixtures.
+
+        Darwin may retain a child blocked in a terminal read while individual
+        process termination races with subprocess reaping. Each test launches
+        a fresh session, so its process group is exclusively test-owned.
+        """
+        try:
+            if child.poll() is None:
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            child.wait(timeout=10)
+        finally:
+            os.close(fd)
+            home.cleanup()
 
     def expect_help(self, fd, timeout=8):
         """Require a successful 'help', not the unknown-command error header."""

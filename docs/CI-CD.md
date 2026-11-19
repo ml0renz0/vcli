@@ -362,3 +362,14 @@ Los metadatos de los ficheros de debug e historial se obtienen con
 `/usr/bin/stat` BSD en Mac y GNU stat en Linux, y se comparan
 contra los de un descriptor abierto. El resto de suites siguen obligatorias;
 `ln -T` y `mv -T` aún requieren herramientas GNU.
+
+### PTY macOS — limpieza de procesos de prueba
+
+La ejecución E2E P-05d encontró un único error en `test_34` **durante
+el cierre de su fixture PTY**, después de que se verificara el rechazo
+de Ctrl+D dentro de bracketed paste. Cada test REPL ya crea una sesión
+de proceso exclusiva; el arnés ahora finaliza **todo el grupo de esa
+sesión** con SIGKILL, recoge el estado del hijo y libera los recursos
+en un `finally`. Un contrato aislado obliga a que el grupo y el
+directorio temporal desaparezcan. Ningún test funcional se suprime,
+marca como esperado o debilita; el gate sigue siendo obligatorio.
