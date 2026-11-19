@@ -452,3 +452,15 @@ Los tests E2E del REPL mantienen la validación del comando real.
 Se elimina la ejecución repetida de Bash mediante `$(commands_help ...)`
 para cada nombre; no se atribuye ahorro de tiempo cuantitativo sin
 medirlo con la misma carga de comandos.
+
+### P-05h macOS PTY — recuperar procesos bloqueados en teardown
+
+La [CI #44589937624](https://github.com/ml0renz0/vcli/actions/runs/44589937624)
+falló en `test_17_incomplete_csi_times_out_without_breaking_next_command`
+durante `end()`: tras pasar la validación del editor, `child.wait(10)`
+agotó su plazo. La limpieza ahora mata el grupo PTY y también el PID
+principal si permanece vivo; libera el master antes de esperar e intenta
+una última terminación directa acotada si la primera espera expira.
+No se aceptan procesos sobrevivientes ni se silencian los errores.
+Se añade un contrato que simula el fallo de la señal de grupo y verifica
+la limpieza real del hijo. Sin cambios en `vcli` de producción.
