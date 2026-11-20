@@ -860,28 +860,28 @@ function _vcli_login_approle(){
         rm -f "$response_file"; return 1;
     }
     # Never pass the secret_id through process argv.
-    jq -cn --rawfile rid <(printf '%s' "$role_id") \
+    local login_result=0
+    if ! jq -cn --rawfile rid <(printf '%s' "$role_id") \
            --rawfile sid <(printf '%s' "$secret_id") \
-           '{role_id:$rid,secret_id:$sid}' > "$payload_file" || {
-        rm -f "$response_file" "$payload_file"; return 1;
-    }
-    args+=(--request POST --header "Content-Type: application/json"
-        --data-binary "@$payload_file"
-        --output "$response_file" --write-out '%{http_code}')
-    status=$(curl "${args[@]}" "$protocol://$vault_host:$vault_port/v1/auth/approle/login")
-    code=$?
-    rm -f "$payload_file"
-    if (( code != 0 )) || [[ $status != 2* ]]; then
-        rm -f "$response_file"
-        echo "vcli: AppRole login failed" >&2
-        return 1
+           '{role_id:$rid,secret_id:$sid}' > "$payload_file"; then
+        login_result=1
+    else
+        args+=(--request POST --header "Content-Type: application/json"
+            --data-binary "@$payload_file"
+            --output "$response_file" --write-out '%{http_code}')
+        status=$(curl "${args[@]}" "$protocol://$vault_host:$vault_port/v1/auth/approle/login")
+        code=$?
+        if (( code != 0 )) || [[ $status != 2* ]]; then
+            echo "vcli: AppRole login failed" >&2
+            login_result=1
+        elif ! vault_token=$(jq -er '.auth.client_token | select(type=="string" and length>0)' "$response_file"); then
+            echo "vcli: invalid AppRole response" >&2
+            login_result=1
+        fi
     fi
-    vault_token=$(jq -er '.auth.client_token | select(type=="string" and length>0)' "$response_file") || {
-        rm -f "$response_file"
-        echo "vcli: invalid AppRole response" >&2
-        return 1
-    }
-    rm -f "$response_file"
+    # AppRole owns both files, regardless of transport or parsing outcome.
+    rm -f -- "$response_file" "$payload_file"
+    return "$login_result"
 }
 function _renew_token(){
     local increment="${1:-}" payload response

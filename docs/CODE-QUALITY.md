@@ -699,3 +699,18 @@ externo, eliminación de wrappers y `OUTCOME_UNKNOWN`, además del
 ciclo de vida de los temporales de montaje, renovación y borrado.
 Se ejecutan en Linux/macOS y no sustituyen las suites Vault TLS.
 El objetivo es corrección y seguridad, sin mejora de latencia asumida.
+
+## 04-Q HTTP-04 — limpieza común del login AppRole (en CI)
+
+El login AppRole conserva la construcción de credenciales con `jq --rawfile`,
+de modo que role_id y secret_id no aparecen en la línea de comandos.
+Después de crear sus dos ficheros, una única salida libera respuesta y
+payload tanto ante fallo de preparación JSON, transporte, HTTP, parseo
+del token y éxito. La validación mTLS y los fallos de `mktemp` se
+mantienen antes de esa ruta y sin dejar archivos pendientes.
+
+Se amplían los contratos aislados AppRole para inyectar fallo del segundo
+`mktemp`, fallo de `jq`, red fallida, HTTP 403, respuesta sin token y JSON
+malformado. Se comprueba limpieza previa al trap de sesión, ausencia
+de secretos en salida y argumentos y errores diferenciados.
+Siguen siendo obligatorios los E2E de Vault TLS y AppRole real.

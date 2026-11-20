@@ -486,3 +486,11 @@ transporte conserva responsabilidad exclusiva sobre su wrapper KV2
 y su respuesta temporal. `tests.cli.test_http_payload_ownership`
 se añade a los estáticos Linux/macOS; los E2E Vault TLS, errores,
 CAS, ACL y playground mantienen su carácter obligatorio.
+
+### 04-Q HTTP-04 — login AppRole con una sola limpieza (en CI)
+
+Una única salida del login elimina `response_file` y `payload_file`
+después de la creación de ambos. Los tests `test_approle_security`
+incorporan inyección de fallos JSON, HTTP, transporte y respuestas
+inválidas, preservando contratos de secretos fuera de argv y stdout.
+Se mantienen el job macOS, la matriz TLS y el Required CI gate.
