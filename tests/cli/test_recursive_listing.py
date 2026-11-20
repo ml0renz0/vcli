@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 import unittest
 
 SOURCE = Path(__file__).resolve().parents[2] / "vcli"
@@ -145,6 +146,91 @@ _backup /kv1/sample
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
 
+
+
+class LsListingContracts(unittest.TestCase):
+    """Regression contracts for the exact production ls function."""
+
+    @classmethod
+    def setUpClass(cls):
+        source = SOURCE.read_text(encoding="utf-8")
+        match = re.search(r"^function _ls\(\)\{.*?^\}", source, re.M | re.S)
+        if not match:
+            raise AssertionError("Missing production _ls")
+        cls.ls = match.group(0)
+
+    def call_ls(self, command, body='{"data":{"keys":["team/","secret"]}}',
+                fail_http=False, fail_temp=False):
+        with tempfile.TemporaryDirectory(prefix="vcli-ls-test-") as tmp:
+            trace = Path(tmp) / "trace"
+            env = os.environ.copy()
+            env.update({
+                "TMP": tmp, "VCLI_SESSION_TMP": tmp, "TRACE": str(trace),
+                "BODY": body, "FAIL_HTTP": "yes" if fail_http else "no",
+            })
+            stub = r'''
+CYAN="<cyan>"
+NONE="</cyan>"
+current_pwd="/kv1"
+_curl() {
+    printf 'curl\n' >> "$TRACE"
+    [[ "$FAIL_HTTP" != yes ]] || return 22
+    printf '%s\n' "$BODY"
+}
+jq() {
+    printf 'jq\n' >> "$TRACE"
+    command jq "$@"
+}
+_cat() { printf '"kv1/"\n"kv2/"\n'; }
+'''
+            if fail_temp:
+                stub += '\nmktemp() { return 17; }\n'
+            result = subprocess.run(["bash", "-c", self.ls + stub + "\n" + command],
+                                    env=env, capture_output=True, text=True, timeout=8)
+            calls = trace.read_text().splitlines() if trace.exists() else []
+            leftovers = list(Path(tmp).glob("ls.*"))
+            return result, calls, leftovers
+
+    def test_single_http_and_jq_call_with_and_without_color(self):
+        for command, expected in (
+            ('_ls "/kv1/test/"', '<cyan>team</cyan>/\nsecret\n'),
+            ('_ls "-_disable_colors_-" "/kv1/test/"', 'team/\nsecret\n'),
+        ):
+            with self.subTest(command=command):
+                result, calls, leftovers = self.call_ls(command)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, expected)
+                self.assertEqual(calls, ["curl", "jq"])
+                self.assertEqual(leftovers, [])
+
+    def test_http_failure_never_reaches_json_parser_and_cleans_temp(self):
+        for command in ('_ls "/kv1/test/"',
+                        '_ls "-_disable_colors_-" "/kv1/test/"'):
+            with self.subTest(command=command):
+                result, calls, leftovers = self.call_ls(command, fail_http=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(calls, ["curl"])
+                self.assertEqual(leftovers, [])
+
+    def test_invalid_json_and_temp_creation_failure_are_not_success(self):
+        result, calls, leftovers = self.call_ls('_ls "/kv1/test/"',
+                                                  body="not JSON")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(calls, ["curl", "jq"])
+        self.assertEqual(leftovers, [])
+        result, calls, leftovers = self.call_ls('_ls "/kv1/test/"', fail_temp=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls, [])
+        self.assertEqual(leftovers, [])
+
+    def test_root_listing_preserves_root_display_without_http(self):
+        result, calls, leftovers = self.call_ls('_ls "-_disable_colors_-" "/"')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "kv1/\nkv2/\n")
+        self.assertEqual(calls, [])
+        self.assertEqual(leftovers, [])
 
 if __name__ == "__main__":
     unittest.main()

@@ -1193,44 +1193,45 @@ function _cd(){
 
 # ls function
 function _ls(){
-    local url tmp method
-    if [[ $1 == "-_disable_colors_-" ]]; then
-        local disable_colors="yes"
+    local url tmp status=0 disable_colors="" ignore_http_code=""
+    local -a request_flags=()
+    if [[ ${1:-} == "-_disable_colors_-" ]]; then
+        disable_colors=yes
         shift
     fi
-    if [[ "$1" == "-i" ]]; then
-        local ignore_http_code="-i"
+    if [[ ${1:-} == "-i" ]]; then
+        ignore_http_code="-i"
         shift
     fi
-    if [[ ! $1 =~ ^/ ]]; then
-        url="$current_pwd/$1"
+    if [[ ${1:-} != /* ]]; then
+        url="$current_pwd/${1:-}"
     else
         url="$1"
     fi
-    if [[ $url == '/' ]]; then
+    if [[ $url == "/" ]]; then
         if [[ $disable_colors ]]; then
             _cat /sys/mounts "-_list_root_-" | tr -d '"'
         else
             _cat /sys/mounts "-_list_root_-" | tr -d '"' | sed -e "s/\//$CYAN\/$NONE/"
         fi
         return
-    elif [[ $url ]]; then
-        url="$url"
-        method="LIST"
-    else
-        url="$current_pwd"
-        method="LIST"
+    fi
+    [[ -n $ignore_http_code ]] && request_flags+=("$ignore_http_code")
+    # One transport and one owned temporary, regardless of color mode.
+    tmp=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/ls.XXXXXX") || return 1
+    if ! _curl "${request_flags[@]}" "$url" "" LIST > "$tmp"; then
+        rm -f -- "$tmp"
+        return 1
     fi
     if [[ $disable_colors ]]; then
-        tmp=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/ls.XXXXXX")
-        _curl $ignore_http_code "$url" "" "$method" > "$tmp"
-        jq '.data .keys[]' -r < "$tmp"
+        jq -r '.data.keys[]' "$tmp" || status=$?
     else
-        tmp=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/ls.XXXXXX")
-        _curl $ignore_http_code "$url" "" "$method" > "$tmp"
-        jq '.data .keys[]' -r < "$tmp" | sed -e "s/\//$CYAN\/$NONE/"
+        jq -r '.data.keys[]' "$tmp" | sed -e "s/\//$CYAN\/$NONE/"
+        local -a stages=("${PIPESTATUS[@]}")
+        (( stages[0] == 0 && stages[1] == 0 )) || status=1
     fi
-    rm -f "$tmp"
+    rm -f -- "$tmp"
+    return "$status"
 }
 
 # lsrole list roles

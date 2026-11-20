@@ -730,3 +730,19 @@ varios documentos, tipos distintos de objeto, vacías o malformadas
 sin filtrar cuerpos inválidos a stdout. Se mantiene la matriz E2E TLS
 y la comprobación del gate. No se afirma una ganancia cuantificada
 hasta medir un benchmark A/B.
+
+## 04-Q HTTP-06 — ls: transporte y temporales sin duplicación (pendiente CI)
+
+La operación de listado `_ls` realiza ahora una sola petición HTTP
+y utiliza un solo temporal privado tanto en el modo con color como
+en el modo sin color. La ruta de fallo de `_curl` aborta antes de
+ejecutar `jq`; la salida de `jq` y de la tubería de color se comprueba
+antes de retornar, y el temporal se libera también ante fallos.
+Se mantienen los listados raíz, el formato de salida y la flag interna
+`-i`.
+
+Los contratos aislados de `test_recursive_listing.py` cubren ambos
+modos, errores HTTP, JSON inválido, fallo de `mktemp` y ausencia de
+temporales residuales. Se conserva la matriz Linux/macOS/Vault TLS;
+no se atribuye una ganancia de rendimiento sin benchmark A/B.
+
