@@ -199,5 +199,23 @@ class ExtendedVaultContracts(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('"parent-cd"', result.stdout)
 
+
+    def test_15_ls_and_tree_relative_to_absolute_cd(self):
+        self.put("nav-relative-list/alpha", {"marker": "listing-visible"})
+        self.put("nav-relative-list/branch/beta", {"marker": "nested-visible"})
+        command = (
+            f"cd /kv1/{self.prefix}/nav-relative-list\n"
+            "ls\n"
+            "ls branch\n"
+            "tree branch\n"
+            "cat branch/beta"
+        )
+        result, _ = invoke(command)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("alpha", result.stdout)
+        self.assertIn("branch/", result.stdout)
+        self.assertIn("beta", result.stdout)
+        self.assertIn('"nested-visible"', result.stdout)
+
 if __name__ == "__main__":
     unittest.main()

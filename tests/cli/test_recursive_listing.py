@@ -160,20 +160,23 @@ class LsListingContracts(unittest.TestCase):
         cls.ls = match.group(0)
 
     def call_ls(self, command, body='{"data":{"keys":["team/","secret"]}}',
-                fail_http=False, fail_temp=False):
+                fail_http=False, fail_temp=False, cwd="/kv1"):
         with tempfile.TemporaryDirectory(prefix="vcli-ls-test-") as tmp:
             trace = Path(tmp) / "trace"
+            urls_file = Path(tmp) / "urls"
             env = os.environ.copy()
             env.update({
                 "TMP": tmp, "VCLI_SESSION_TMP": tmp, "TRACE": str(trace),
                 "BODY": body, "FAIL_HTTP": "yes" if fail_http else "no",
+                "START": cwd, "URLS": str(urls_file),
             })
             stub = r'''
 CYAN="<cyan>"
 NONE="<none>"
-current_pwd="/kv1"
+current_pwd="$START"
 _curl() {
     printf 'curl\n' >> "$TRACE"
+    printf '%s\n' "$1" >> "$URLS"
     [[ "$FAIL_HTTP" != yes ]] || return 22
     printf '%s\n' "$BODY"
 }
@@ -189,7 +192,8 @@ _cat() { printf '"kv1/"\n"kv2/"\n'; }
                                     env=env, capture_output=True, text=True, timeout=8)
             calls = trace.read_text().splitlines() if trace.exists() else []
             leftovers = list(Path(tmp).glob("ls.*"))
-            return result, calls, leftovers
+            urls = urls_file.read_text().splitlines() if urls_file.exists() else []
+            return result, calls, leftovers, urls
 
     def test_single_http_and_jq_call_with_and_without_color(self):
         for command, expected in (
@@ -197,7 +201,7 @@ _cat() { printf '"kv1/"\n"kv2/"\n'; }
             ('_ls "-_disable_colors_-" "/kv1/test/"', 'team/\nsecret\n'),
         ):
             with self.subTest(command=command):
-                result, calls, leftovers = self.call_ls(command)
+                result, calls, leftovers, _ = self.call_ls(command)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout, expected)
                 self.assertEqual(calls, ["curl", "jq"])
@@ -207,26 +211,70 @@ _cat() { printf '"kv1/"\n"kv2/"\n'; }
         for command in ('_ls "/kv1/test/"',
                         '_ls "-_disable_colors_-" "/kv1/test/"'):
             with self.subTest(command=command):
-                result, calls, leftovers = self.call_ls(command, fail_http=True)
+                result, calls, leftovers, _ = self.call_ls(command, fail_http=True)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(result.stdout, "")
                 self.assertEqual(calls, ["curl"])
                 self.assertEqual(leftovers, [])
 
     def test_invalid_json_and_temp_creation_failure_are_not_success(self):
-        result, calls, leftovers = self.call_ls('_ls "/kv1/test/"',
+        result, calls, leftovers, _ = self.call_ls('_ls "/kv1/test/"',
                                                   body="not JSON")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
         self.assertEqual(calls, ["curl", "jq"])
         self.assertEqual(leftovers, [])
-        result, calls, leftovers = self.call_ls('_ls "/kv1/test/"', fail_temp=True)
+        result, calls, leftovers, _ = self.call_ls('_ls "/kv1/test/"', fail_temp=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(calls, [])
         self.assertEqual(leftovers, [])
 
+
+    def test_list_endpoints_are_canonical_after_cd(self):
+        cases = (
+            ("/kv1/team/", '_ls ""', "/kv1/team/"),
+            ("/kv1/team/", '_ls "nested"', "/kv1/team/nested/"),
+            ("/kv1/team/", '_ls "nested//deep/"', "/kv1/team/nested/deep/"),
+            ("", '_ls "kv1/team"', "/kv1/team/"),
+            ("/kv1/team/", '_ls "/kv1//another//"', "/kv1/another/"),
+        )
+        for cwd, command, endpoint in cases:
+            with self.subTest(cwd=cwd, command=command):
+                result, calls, leftover, urls = self.call_ls(command, cwd=cwd)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(urls, [endpoint])
+                self.assertEqual(calls, ["curl", "jq"])
+                self.assertEqual(leftover, [])
+
+    def test_tree_uses_absolute_paths_after_cd_and_from_root(self):
+        source = SOURCE.read_text(encoding="utf-8")
+        match = re.search(r"^function _tree\(\)\{.*?^\}", source, re.M | re.S)
+        self.assertIsNotNone(match)
+        stub = r'''
+current_pwd="/kv1/team/"
+debug() { :; }
+padecho() { printf '%s\n' "$1"; }
+_vcli_children() {
+  printf '%s\n' "$1" >> "$URLS"
+  [[ "$1" != /kv1/team/sub ]] || printf 'leaf\n'
+}
+_tree sub
+current_pwd=""
+_tree kv1/team/sub
+'''
+        with tempfile.TemporaryDirectory(prefix="vcli-tree-path-") as tmp:
+            env = os.environ.copy()
+            env["URLS"] = str(Path(tmp) / "urls")
+            result = subprocess.run(["bash", "-c", match.group(0) + stub],
+                                    env=env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(Path(env["URLS"]).read_text().splitlines(),
+                             ["/kv1/team/sub", "/kv1/team/sub"])
+            self.assertEqual(result.stdout.splitlines(),
+                             ["sub/", "leaf", "sub/", "leaf"])
+
     def test_root_listing_preserves_root_display_without_http(self):
-        result, calls, leftovers = self.call_ls('_ls "-_disable_colors_-" "/"')
+        result, calls, leftovers, _ = self.call_ls('_ls "-_disable_colors_-" "/"')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "kv1/\nkv2/\n")
         self.assertEqual(calls, [])

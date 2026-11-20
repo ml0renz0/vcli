@@ -763,3 +763,18 @@ Se ejecutan en los jobs de Ubuntu y macOS. Tres contratos E2E en
 `tests/integration/test_operations.py` ejercitan el CLI real contra
 Vault TLS, incluidos `cd /ruta` seguido de `cat relativo`.
 No se atribuyen ahorros de rendimiento sin benchmark.
+
+## 04-Q NAV-02 — ls y tree con rutas canónicas (pendiente CI)
+
+`ls` y `tree` normalizan las rutas relativas a rutas absolutas y
+eliminan separadores duplicados con expansión nativa de Bash. NAV-01
+estableció `current_pwd` con barra final, pero `ls` aún podía
+añadir otra y enviar `//` al endpoint Vault; `tree` conservaba
+en algunos casos rutas relativas sin barra inicial. Los LIST mantienen
+barra final y `tree` visita directorios sin ella (excepto raíz).
+
+Contratos offline comprueban endpoints de `ls` y rutas de `tree`
+con cwd anidado y desde raíz. Un contrato E2E nuevo valida la
+secuencia `cd` absoluto, `ls` relativo, `tree` relativo y
+`cat` relativo sobre Vault TLS. Se conserva el gate de Ubuntu,
+macOS, Alpine, Debian y las cuatro versiones de Vault.

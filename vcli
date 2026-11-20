@@ -1216,10 +1216,13 @@ function _ls(){
         shift
     fi
     if [[ ${1:-} != /* ]]; then
-        url="$current_pwd/${1:-}"
+        url="${current_pwd%/}/${1:-}"
     else
         url="$1"
     fi
+    # Normalize LIST targets; cd stores non-root paths with a final slash.
+    while [[ $url == *'//'* ]]; do url="${url//\/\//\/}"; done
+    [[ $url == / ]] || url="${url%/}/"
     if [[ $url == "/" ]]; then
         if [[ $disable_colors ]]; then
             _cat /sys/mounts "-_list_root_-" | tr -d '"'
@@ -1320,11 +1323,12 @@ function padecho(){
 function _tree(){
     local url depth="${2:-0}" space="${3:-}" echo_space="${4:-}" paths path
     if [[ ${1:-} != /* ]]; then
-        url="$current_pwd${1:-}"
+        url="${current_pwd%/}/${1:-}"
     else
         url="$1"
     fi
-    # Normalize root before recursion, including multiple trailing slashes.
+    # Use absolute canonical paths for recursive LIST and child traversal.
+    while [[ $url == *'//'* ]]; do url="${url//\/\//\/}"; done
     while [[ $url != / && $url == */ ]]; do url=${url%/}; done
     [[ -n ${2:-} ]] && ((depth+=1))
     debug "tree: visiting directory"
