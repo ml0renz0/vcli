@@ -1166,29 +1166,41 @@ function _umount(){
 
 # cd function
 function _cd(){
-    local url="$1"
-    if [[ $url == ".." ]]; then
-        url=${current_pwd%*/}
-        url=${url%/*}/
-    elif [[ $url =~ ^/ ]]; then
-        : # do nothing url is perfect as it is
-    elif [[ $url ]]; then
-        url="$current_pwd/$url/"
-        url=${url//\/\//\/}
-    elif [[ $current_pwd ]]; then
-        url="$current_pwd/"
-        url=${url//\/\//\/}
+    local target="${1:-}" url entries
+    if [[ $target == ".." ]]; then
+        # Parent is derived from the already accepted working directory.
+        url="${current_pwd%/}"
+        url="${url%/*}"
+        url="${url:-/}"
+    elif [[ -z $target || $target == "." ]]; then
+        url="${current_pwd:-/}"
+    elif [[ $target == /* ]]; then
+        url="$target"
     else
-        current_pwd="/"
+        url="${current_pwd%/}/$target"
     fi
-    if [[ $url != "/" ]] && [[ "$1" != ".." ]] && ! _ls "$url" | grep -q "."; then
-        echo "Error! '$url' not found"
-    elif [[ $url != "/" ]]; then
-        current_pwd="$url"
-    else
-        current_pwd=""
+    # Keep relative cat/put paths correct after absolute and relative cd.
+    while [[ $url == *"//"* ]]; do url="${url//\/\//\/}"; done
+    if [[ $url == *"/../"* || $url == *"/./"* || $url == */.. || $url == */. ]]; then
+        echo "vcli: unsupported dot segment in cd path" >&2
+        return 1
     fi
-    debug "cd: cd $1 ; current_pwd=$current_pwd"
+    [[ $url == "/" ]] || url="${url%/}/"
+    if [[ $url != "/" && $target != ".." && $target != "." && -n $target ]]; then
+        # Capture the LIST status separately from its contents: grep -q
+        # previously masked permission/transport failures as success.
+        entries=$(_ls "-_disable_colors_-" "$url") || {
+            echo "vcli: cannot list directory '$url'" >&2
+            return 1
+        }
+        if [[ -z $entries ]]; then
+            echo "vcli: directory '$url' not found" >&2
+            return 1
+        fi
+    fi
+    if [[ $url == "/" ]]; then current_pwd=""; else current_pwd="$url"; fi
+    debug "cd: current_pwd=$current_pwd"
+    return 0
 }
 
 # ls function

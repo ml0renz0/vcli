@@ -179,5 +179,25 @@ class ExtendedVaultContracts(unittest.TestCase):
         self.assertIn("true", result.stdout)
 
 
+
+    def test_12_absolute_cd_without_slash_reads_relative_secret(self):
+        self.put("nav-absolute/child", {"marker": "absolute-cd"})
+        result, _ = invoke(f"cd /kv1/{self.prefix}/nav-absolute\ncat child")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('"absolute-cd"', result.stdout)
+
+    def test_13_missing_cd_reports_failure(self):
+        result, _ = invoke(f"cd /kv1/{self.prefix}/missing-nav")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("cannot list directory", result.stderr)
+
+    def test_14_cd_parent_restores_relative_secret_path(self):
+        self.put("nav-parent/child", {"marker": "parent-cd"})
+        result, _ = invoke(
+            f"cd kv1/{self.prefix}/nav-parent\ncd ..\ncat nav-parent/child"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('"parent-cd"', result.stdout)
+
 if __name__ == "__main__":
     unittest.main()

@@ -746,3 +746,20 @@ modos, errores HTTP, JSON inválido, fallo de `mktemp` y ausencia de
 temporales residuales. Se conserva la matriz Linux/macOS/Vault TLS;
 no se atribuye una ganancia de rendimiento sin benchmark A/B.
 
+## 04-Q NAV-01 — cd: rutas canónicas y errores LIST no silenciados (pendiente CI)
+
+`_cd` conserva ahora el invariante de directorio de trabajo: raíz vacía,
+y rutas no raíz con barra final. Esto evita que una ruta absoluta sin
+barra final rompa una lectura/escritura relativa posterior. Se eliminan
+el uso de `grep -q` para verificar directorios y la aceptación implícita
+de fallos de LIST; errores HTTP y de permisos no alteran `current_pwd`
+y regresan con estado no cero. La navegación padre y raíz no añade
+consultas HTTP, y los segmentos de ruta `/./` y `/../` se rechazan.
+
+Los contratos offline en `tests/cli/test_navigation.py` verifican
+rutas absolutas/relativas, retroceso, raíz, directorio no existente,
+LIST fallido, no mutación de estado y ausencia de peticiones superfluas.
+Se ejecutan en los jobs de Ubuntu y macOS. Tres contratos E2E en
+`tests/integration/test_operations.py` ejercitan el CLI real contra
+Vault TLS, incluidos `cd /ruta` seguido de `cat relativo`.
+No se atribuyen ahorros de rendimiento sin benchmark.
