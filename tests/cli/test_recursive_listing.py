@@ -170,7 +170,7 @@ class LsListingContracts(unittest.TestCase):
             })
             stub = r'''
 CYAN="<cyan>"
-NONE="</cyan>"
+NONE="<none>"
 current_pwd="/kv1"
 _curl() {
     printf 'curl\n' >> "$TRACE"
@@ -193,7 +193,7 @@ _cat() { printf '"kv1/"\n"kv2/"\n'; }
 
     def test_single_http_and_jq_call_with_and_without_color(self):
         for command, expected in (
-            ('_ls "/kv1/test/"', '<cyan>team</cyan>/\nsecret\n'),
+            ('_ls "/kv1/test/"', 'team<cyan>/<none>\nsecret\n'),
             ('_ls "-_disable_colors_-" "/kv1/test/"', 'team/\nsecret\n'),
         ):
             with self.subTest(command=command):
