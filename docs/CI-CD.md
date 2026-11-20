@@ -494,3 +494,10 @@ después de la creación de ambos. Los tests `test_approle_security`
 incorporan inyección de fallos JSON, HTTP, transporte y respuestas
 inválidas, preservando contratos de secretos fuera de argv y stdout.
 Se mantienen el job macOS, la matriz TLS y el Required CI gate.
+
+### 04-Q HTTP-05 — validación/render JSON en una pasada (pendiente CI)
+
+El renderer hace una sola invocación jq para GET/LIST y conserva
+el contrato de JSON único tipo objeto; las pruebas offline verifican
+también payloads concatenados y sin salida parcial, el modo raw y
+KV2. Los E2E Vault TLS y las cuatro versiones siguen obligatorios.

@@ -66,6 +66,46 @@ class HttpResponseRenderContracts(unittest.TestCase):
         r = self.run_render("not-json", status="403")
         self.assertNotEqual(r.returncode, 0)
 
+    def test_get_list_kv2_each_use_a_single_jq_process(self):
+        # Exercise the production function, not a reimplementation of jq.
+        cases = [
+            ('{"data":{"value":1}}', "GET", "", "no", ""),
+            ('{"data":{"keys":["one"]}}', "LIST", "", "no", ""),
+            ('{"data":{"alpha":{},"beta":{}}}', "LIST", "-_list_root_-", "no", ""),
+            ('{"data":{"data":{"value":1},"metadata":{"version":2}}}', "GET", "", "yes", ""),
+            ('{"data":{"data":{"value":1},"metadata":{"version":2}}}', "GET", "", "yes", "raw"),
+        ]
+        for case in cases:
+            with self.subTest(case=case):
+                with tempfile.TemporaryDirectory(prefix="vcli-jq-count-") as tmp:
+                    payload = Path(tmp) / "response"
+                    counter = Path(tmp) / "jq-count"
+                    payload.write_text(case[0], encoding="utf-8")
+                    script = renderer() + """\n
+jq(){
+    printf 'called\\n' >> "$JQ_COUNT"
+    command jq "$@"
+}
+vcli_emit_http_response "$FILE" 200 "$METHOD" "$DATA" "$KV2" "$CAS"
+"""
+                    env = os.environ.copy()
+                    env.update({"FILE": str(payload), "JQ_COUNT": str(counter),
+                                "METHOD": case[1], "DATA": case[2],
+                                "KV2": case[3], "CAS": case[4]})
+                    result = subprocess.run(["bash", "-c", script], env=env,
+                                            capture_output=True, text=True, timeout=8)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(counter.read_text().splitlines(), ["called"])
+
+    def test_reads_reject_multiple_json_documents_without_partial_output(self):
+        for body in ('{"data":{"ok":true}}\n{"data":{"ok":false}}\n',
+                     '{"data":{"ok":true}}\nnull\n', " \n"):
+            with self.subTest(body=body):
+                result = self.run_render(body)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("invalid or empty JSON from Vault", result.stderr)
+
     def test_response_cleanup_after_curl_is_single_path(self):
         source = SOURCE.read_text(encoding="utf-8")
         match = re.search(r"^function _curl\(\)\{.*?^\}", source, re.M | re.S)

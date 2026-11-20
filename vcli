@@ -915,20 +915,25 @@ function _renew_token(){
 function vcli_emit_http_response(){
     local file="$1" status="$2" method="$3" data="$4" kv2="$5" cas="$6"
     if [[ $status == 2* && ( $method == GET || $method == LIST ) ]]; then
-        if [[ ! -s $file ]] ||
-           ! jq -e 'type == "object"' "$file" >/dev/null 2>&1; then
+        # Parse once: a Vault read must contain exactly one JSON object.
+        # Slurp validates the entire body before emitting anything, avoiding
+        # partial output or a second jq process after type verification.
+        local filter='if length == 1 and (.[0] | type) == "object" then .[0] else error("invalid Vault JSON") end'
+        local -a jq_flags=(-s)
+        if [[ $data == '-_list_root_-' ]]; then
+            filter+=' | .data | keys[]'
+            jq_flags+=(-r)
+        elif [[ $kv2 == yes && $method == GET && $cas != raw ]]; then
+            filter+=' | if (.data.data | type) == "object" then .data = .data.data else . end'
+        fi
+        if ! jq "${jq_flags[@]}" "$filter" "$file" 2>/dev/null; then
             echo "vcli: invalid or empty JSON from Vault" >&2
             return 1
         fi
-    fi
-    if [[ $data == '-_list_root_-' ]]; then
+    elif [[ $data == '-_list_root_-' ]]; then
         jq -r '.data | keys[]' "$file"
     elif [[ -s $file ]]; then
-        if [[ $kv2 == yes && $method == GET && $status == 2* && $cas != raw ]]; then
-            jq 'if (.data.data | type) == "object" then .data = .data.data else . end' "$file"
-        else
-            jq '.' "$file"
-        fi
+        jq '.' "$file"
     fi
 }
 

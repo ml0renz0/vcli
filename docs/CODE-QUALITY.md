@@ -714,3 +714,19 @@ Se amplían los contratos aislados AppRole para inyectar fallo del segundo
 malformado. Se comprueba limpieza previa al trap de sesión, ausencia
 de secretos en salida y argumentos y errores diferenciados.
 Siguen siendo obligatorios los E2E de Vault TLS y AppRole real.
+
+## 04-Q HTTP-05 — una ejecución de jq para GET/LIST (pendiente CI)
+
+El renderer de respuestas HTTP combina la validación de un único
+documento JSON de tipo objeto con el formateo en **una sola ejecución
+de `jq -s`**. El filtro valida la totalidad del cuerpo antes de emitir
+salida, evitando respuestas parciales y el segundo proceso jq anterior.
+Se conservan el desenrollado KV2, el modo raw y los listados raíz.
+Los HTTP no exitosos mantienen su comportamiento previo.
+
+Los nuevos contratos de `test_http_response_render.py` exigen una
+única ejecución de jq por lectura exitosa y rechazan respuestas con
+varios documentos, tipos distintos de objeto, vacías o malformadas
+sin filtrar cuerpos inválidos a stdout. Se mantiene la matriz E2E TLS
+y la comprobación del gate. No se afirma una ganancia cuantificada
+hasta medir un benchmark A/B.
