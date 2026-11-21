@@ -79,14 +79,10 @@ están en .playground/fixtures/ (privados y excluidos de Git).
 klist, pero su clave es pública, fija y sintética. **No hay KDC** y
 no puede usarse para demostrar autenticación Kerberos con kinit.
 
-Los formatos cubiertos son los que gestiona actualmente el **vcli
-Bash revival**. Blueprints YAML, reconciliación declarativa, políticas
-gestionadas por descriptores y rotación son **funcionalidades futuras
-del mismo proyecto vcli**, no comandos disponibles en esta entrega.
-La [fase 04-Q](../docs/CODE-QUALITY.md) está en curso: ya documenta
-mediciones A/B y correcciones de seguridad S-01–S-04. El playground
-continúa siendo obligatorio antes del release candidate, pero `smoke`
-no sustituye la auditoría de permisos/carreras ni las pruebas E2E completas.
+Los formatos cubiertos son los de **vcli OG**, el CLI Bash original. Los
+blueprints YAML, la reconciliación declarativa y la rotación pertenecen
+a **Secretwright**, un proyecto independiente. La fase 04-Q está validada
+en CI, pero `smoke` no sustituye las suites E2E completas.
 
 ## ACL y AppRole
 
@@ -116,3 +112,23 @@ Docker remotos. Nunca se conecta a un Vault externo.
 Si Docker falla durante el borrado, los archivos de propiedad se conservan
 para permitir reintentar down. No borres manualmente .playground/ mientras
 haya un contenedor asociado.
+
+
+## Demo asciinema
+
+El job de playground de la CI genera la grabación auténtica vcli-playground.cast
+como artefacto **vcli-playground-asciinema**, con retención de 7 días.
+Usa Vault TLS real y datos ficticios; no publica la grabación en asciinema.org.
+
+Para reproducir: `asciinema play vcli-playground.cast`.
+
+Para regenerarla localmente:
+
+```bash
+scripts/playground.sh up
+scripts/record-playground-demo.sh ./vcli-playground.cast
+asciinema play ./vcli-playground.cast
+scripts/playground.sh down
+```
+El guion real es `scripts/playground-demo.sh`. Solo muestra datos sintéticos,
+y comprueba que un token readonly no puede escribir.

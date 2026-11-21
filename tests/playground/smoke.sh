@@ -49,6 +49,32 @@ if grep -Fq 'FAKE-PRESERVED' <<< "$output"; then
 fi
 scripts/playground.sh smoke
 
+# Opt-in recording, always before destroying the private Vault state.
+if [[ -n ${VCLI_PLAYGROUND_CAST:-} ]]; then
+    scripts/record-playground-demo.sh "$VCLI_PLAYGROUND_CAST"
+    for private in root-token readonly-token role-id secret-id; do
+        secret=$(< ".playground/$private")
+        if [[ -n $secret ]] && grep -Fq -- "$secret" "$VCLI_PLAYGROUND_CAST"; then
+            echo "Refusing to publish an asciicast containing private credentials" >&2
+            exit 1
+        fi
+    done
+    python3 - "$VCLI_PLAYGROUND_CAST" <<'PY'
+import json
+import pathlib
+import sys
+lines = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+header = json.loads(lines[0])
+assert header["version"] in (2, 3)
+events = [json.loads(line) for line in lines[1:]]
+assert len(events) >= 10
+combined = "".join(str(item) for item in events)
+assert "vcli (readonly)" in combined and "vcli (admin)" in combined
+assert "Fin de la demo" in combined
+print("Validated asciinema:", len(events), "terminal events")
+PY
+fi
+
 scripts/playground.sh down
 scripts/playground.sh down
 [[ ! -e .playground && ! -L .playground ]] ||

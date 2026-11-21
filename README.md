@@ -63,6 +63,23 @@ Para batch:
 printf 'cat kv1/demo/app\n' | scripts/playground.sh batch
 ```
 
+## Asciinema del playground actual
+
+El job de playground de la CI genera la grabación auténtica vcli-playground.cast
+como artefacto **vcli-playground-asciinema**, con retención de 7 días.
+Usa Vault TLS real y datos ficticios; no publica la grabación en asciinema.org.
+
+Para reproducir: `asciinema play vcli-playground.cast`.
+
+Para regenerarla localmente:
+
+```bash
+scripts/playground.sh up
+scripts/record-playground-demo.sh ./vcli-playground.cast
+asciinema play ./vcli-playground.cast
+scripts/playground.sh down
+```
+
 ## Desarrollo, calidad y próximos pasos
 
 - [Contrato CLI](docs/CLI-CONTRACT.md): comportamiento observable y garantías.
@@ -74,10 +91,10 @@ printf 'cat kv1/demo/app\n' | scripts/playground.sh batch
   auditoría/release v0.7**.
 - [Catálogo del playground](playground/README.md): rutas, fixtures y recetas.
 
-**Evolución futura (no implementada en v0.7):** blueprints declarativos YAML,
-`validate/plan/apply/drift`, gestión declarativa de accesos, plantillas de
-escenarios SaaS/multiusuario/multiapp y rotación. Pertenecen al roadmap
-posterior de **vcli**, no a otro proyecto ni a funcionalidades disponibles hoy.
+**Separación de alcance:** vcli OG mantiene el CLI Bash original. Los blueprints
+YAML, `validate/plan/apply/drift`, políticas declarativas, plantillas SaaS
+y rotación son trabajo del proyecto independiente **Secretwright**
+(antiguo VCLI Forge).
 
 ## Antecedentes del proyecto
 

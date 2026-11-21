@@ -66,8 +66,8 @@ jobs:
         run: python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_ci_matrix tests.cli.test_command_coverage tests.cli.test_endpoint_encoding tests.cli.test_recursive_listing tests.cli.test_navigation tests.cli.test_backup_publication tests.cli.test_recursive_copy tests.cli.test_put_tempfiles tests.cli.test_session_tempfiles tests.cli.test_approle_security tests.cli.test_local_file_safety tests.cli.test_certificate_date_portability tests.cli.test_base64_portability tests.cli.test_stat_portability tests.cli.test_fs_publication tests.cli.test_connectivity_portability tests.cli.test_help_efficiency tests.cli.test_http_transport_args tests.cli.test_http_response_render tests.cli.test_admin_read tests.cli.test_cat_copy_safety tests.cli.test_http_payload_ownership tests.cli.test_repl_pty_cleanup tests.cli.test_recursive_benchmark
       - name: Bash syntax and ShellCheck
         run: |
-          bash -n ./vcli ./scripts/playground.sh ./scripts/playground-seed.sh ./scripts/bench-compare.sh ./tests/integration/run-raft.sh ./tests/integration/run-macos.sh ./tests/playground/smoke.sh
-          shellcheck --severity=error ./vcli ./scripts/playground.sh ./scripts/playground-seed.sh ./scripts/bench-compare.sh ./tests/integration/run-raft.sh ./tests/integration/run-macos.sh ./tests/playground/smoke.sh
+          bash -n ./vcli ./scripts/playground.sh ./scripts/playground-seed.sh ./scripts/playground-demo.sh ./scripts/record-playground-demo.sh ./scripts/bench-compare.sh ./tests/integration/run-raft.sh ./tests/integration/run-macos.sh ./tests/playground/smoke.sh
+          shellcheck --severity=error ./vcli ./scripts/playground.sh ./scripts/playground-seed.sh ./scripts/playground-demo.sh ./scripts/record-playground-demo.sh ./scripts/bench-compare.sh ./tests/integration/run-raft.sh ./tests/integration/run-macos.sh ./tests/playground/smoke.sh
       - name: Security invariants
         run: python3 tests/integration/test_source_guards.py ./vcli
 
@@ -199,8 +199,21 @@ jobs:
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
           fi
           docker compose version
-      - name: Lifecycle, full synthetic catalog and real VCLI smoke
+      - name: Install asciinema
+        run: |
+          sudo apt-get update -qq -o Acquire::Retries=2
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq asciinema
+      - name: Lifecycle, real VCLI smoke and asciinema recording
+        env:
+          VCLI_PLAYGROUND_CAST: ${{ github.workspace }}/vcli-playground.cast
         run: bash tests/playground/smoke.sh
+      - name: Upload asciinema demo
+        uses: actions/upload-artifact@v4
+        with:
+          name: vcli-playground-asciinema
+          path: vcli-playground.cast
+          if-no-files-found: error
+          retention-days: 7
 
   macos:
     name: Native macOS offline safety contracts (Homebrew GNU runtime)
