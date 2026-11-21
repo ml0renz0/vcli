@@ -823,7 +823,7 @@ y rechazo local de nombres peligrosos. Los fallos 403/404 siguen propagándose
 desde el transporte sin tratarse como un resultado vacío.
 No se crea una nueva dependencia ni se modifica el parser general del CLI.
 
-## 04-Q ADMIN-03 — lecturas y errores administrativos coherentes (pendiente CI)
+## 04-Q ADMIN-03 — lecturas y errores administrativos coherentes (CI validada)
 
 Las cuatro operaciones de lectura administrativa pasan por
 `vcli_admin_read_response`, que mantiene una única petición HTTP y
@@ -841,3 +841,18 @@ múltiples, política vacía y diagnóstico ante transporte fallido.
 Los E2E obligatorios en Vault TLS comprueban mensajes de error de
 403/404 y no filtración de tokens. No se atribuye un incremento
 de rendimiento sin medición A/B.
+
+## 04-Q ADMIN-04 — parser JSON administrativo único (pendiente CI)
+
+`vcli_admin_extract` unifica la validación del documento y la selección
+de campos para listados/detalles de AppRole y ACL. Sustituye al helper de
+listados anterior y elimina la duplicación de dos filtros `jq -sr` en
+`showrole` y `showpol`, sin añadir procesos ni ficheros temporales.
+
+Se mantiene una sola ejecución de `jq` para cada lectura, con exactamente
+un objeto JSON obligatorio, validación previa a emitir cualquier salida
+y compatibilidad de los endpoints y formatos vigentes. Los contratos
+aislados incluyen conteo real de `jq`, tipos malformados, políticas
+multilínea y esquema ACL legado; los E2E sobre Vault TLS permanecen
+obligatorios. La limpieza general de documentación 04-Q se reservará
+para el cierre de la auditoría, después de validar esta tanda.

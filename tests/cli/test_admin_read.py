@@ -1,5 +1,6 @@
 """Isolated ADMIN-01 contracts for the production Bash commands."""
 from __future__ import annotations
+import json
 import os
 from pathlib import Path
 import re
@@ -15,18 +16,19 @@ class AdminReadContracts(unittest.TestCase):
     def setUpClass(cls):
         source = VCLI.read_text(encoding="utf-8")
         parts = []
-        for name in ("vcli_admin_name_valid", "vcli_admin_read_response", "vcli_admin_list_keys", "_lsrole", "_showrole", "_lspol", "_showpol"):
+        for name in ("vcli_admin_name_valid", "vcli_admin_read_response", "vcli_admin_extract", "_lsrole", "_showrole", "_lspol", "_showpol"):
             match = re.search(r"^function " + name + r"\(\)\{.*?^\}", source, re.M | re.S)
             if not match:
                 raise AssertionError("Missing function " + name)
             parts.append(match.group(0))
         cls.commands = "\n".join(parts)
 
-    def call(self, command, response, fail=False):
+    def call(self, command, response, fail=False, count_jq=False):
         with tempfile.TemporaryDirectory(prefix="vcli-admin-") as tmp:
             env = os.environ.copy()
             log = Path(tmp) / "requests"
-            env.update({"BODY": response, "LOG": str(log),
+            jq_trace = Path(tmp) / "jq-trace"
+            env.update({"BODY": response, "LOG": str(log), "JQ_TRACE": str(jq_trace),
                         "FAIL": "yes" if fail else "no"})
             stub = r'''
 _curl() {
@@ -34,12 +36,16 @@ _curl() {
     [[ "$FAIL" != yes ]] || { echo 'partial'; return 22; }
     printf '%s\n' "$BODY"
 }
+jq() { printf 'jq\n' >> "$JQ_TRACE"; command jq "$@"; }
 mktemp() { echo 'unexpected tempfile' >&2; return 99; }
 _cat() { echo 'unexpected second wrapper' >&2; return 98; }
 '''
             result = subprocess.run(["bash", "-c", self.commands + "\n" + stub + "\n" + command],
                                     env=env, capture_output=True, text=True, timeout=8)
             requests = log.read_text().splitlines() if log.exists() else []
+            if count_jq:
+                jq_calls = jq_trace.read_text().splitlines() if jq_trace.exists() else []
+                self.assertEqual(jq_calls, ["jq"], f"{command}: unexpected jq count")
             return result, requests
 
     def test_valid_admin_reads_have_one_request_and_legacy_output(self):
@@ -183,6 +189,43 @@ _curl() { printf 'network\n' >> "$LOG"; return 0; }
                 self.assertIn("vcli: invalid policy response", result.stderr)
                 self.assertEqual(len(requests), 1)
 
+
+
+    def test_one_json_parse_per_admin_read(self):
+        cases = (
+            ("_lsrole", '{"data":{"keys":["role-a"]}}'),
+            ("_lspol", '{"data":{"keys":["policy-a"]}}'),
+            ("_showrole role-a", '{"data":{"token_policies":["default"]}}'),
+            ("_showpol policy-a", '{"data":{"policy":"path \\"kv1/*\\" {}"}}'),
+        )
+        for command, body in cases:
+            with self.subTest(command=command):
+                result, requests = self.call(command, body, count_jq=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(len(requests), 1)
+
+    def test_admin_invalid_root_type_and_field_schema_are_rejected(self):
+        bad = (
+            ("_lsrole", "[]"),
+            ("_lspol", '{"data":{"keys":"not-a-list"}}'),
+            ("_showrole role-a", '{"data":{"token_policies":{}}}'),
+            ("_showpol policy-a", '{"data":{"policy":null}}'),
+            ("_showpol policy-a", '{"policy":42}'),
+        )
+        for command, body in bad:
+            with self.subTest(command=command, body=body):
+                result, requests = self.call(command, body, count_jq=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(len(requests), 1)
+
+    def test_legacy_policy_root_fallback_and_multiline_acl_preserved(self):
+        acl = 'path "kv1/*" {\n  capabilities = ["read"]\n}'
+        body = json.dumps({"policy": acl})
+        result, requests = self.call("_showpol policy-a", body, count_jq=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, acl + "\n")
+        self.assertEqual(requests, ["/sys/policies/acl/policy-a|GET"])
 
 
 if __name__ == "__main__":
