@@ -1,0 +1,353 @@
+name: VCLI trunk validation
+
+on:
+  pull_request:
+  # Trunk-based: no duplicate builds on feature branch push.
+  push:
+    branches: [master]
+    tags: ['v0.7.*']
+  workflow_dispatch:
+    inputs:
+      recursive_benchmark:
+        description: 'Run one-Vault paired recursive benchmark instead of full E2E matrix'
+        type: boolean
+        default: false
+      baseline_ref:
+        description: 'Git commit to compare against (must contain vcli)'
+        type: string
+        default: 'c009d45b2760646363c8e3caa6ea29df2bd6a37b'
+      storage_backend:
+        description: 'Disposable Vault storage profile'
+        type: choice
+        options: ['inmem', 'raft-1', 'raft-3']
+        default: 'inmem'
+      sizes:
+        description: 'Distinct numbers of synthetic secrets (1..1000)'
+        type: string
+        default: '10,100'
+      repeats:
+        description: 'Paired samples (2..20)'
+        type: string
+        default: '4'
+  schedule:
+    - cron: '23 5 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vcli-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  static:
+    name: Syntax, source invariants and isolated tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Ensure quality tools
+        run: |
+          missing=()
+          for cmd in jq curl shellcheck; do
+            command -v "$cmd" >/dev/null || missing+=("$cmd")
+          done
+          if (( ${#missing[@]} )); then
+            sudo apt-get update -qq -o Acquire::Retries=2 -o Acquire::http::Timeout=10
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
+          fi
+          for cmd in jq curl shellcheck; do command -v "$cmd"; done
+      - name: CLI contract and E2E matrix parity (no Vault required)
+        run: python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_ci_matrix tests.cli.test_command_coverage tests.cli.test_endpoint_encoding tests.cli.test_recursive_listing tests.cli.test_navigation tests.cli.test_backup_publication tests.cli.test_recursive_copy tests.cli.test_put_tempfiles tests.cli.test_session_tempfiles tests.cli.test_approle_security tests.cli.test_local_file_safety tests.cli.test_certificate_date_portability tests.cli.test_base64_portability tests.cli.test_stat_portability tests.cli.test_fs_publication tests.cli.test_connectivity_portability tests.cli.test_help_efficiency tests.cli.test_http_transport_args tests.cli.test_http_response_render tests.cli.test_admin_read tests.cli.test_cat_copy_safety tests.cli.test_http_payload_ownership tests.cli.test_repl_pty_cleanup tests.cli.test_recursive_benchmark
+      - name: Bash syntax and ShellCheck
+        run: |
+          bash -n ./vcli ./scripts/playground.sh ./scripts/playground-seed.sh ./scripts/bench-compare.sh ./tests/integration/run-raft.sh ./tests/integration/run-macos.sh ./tests/playground/smoke.sh
+          shellcheck --severity=error ./vcli ./scripts/playground.sh ./scripts/playground-seed.sh ./scripts/bench-compare.sh ./tests/integration/run-raft.sh ./tests/integration/run-macos.sh ./tests/playground/smoke.sh
+      - name: Security invariants
+        run: python3 tests/integration/test_source_guards.py ./vcli
+
+  minimal:
+    name: Minimal Linux ${{ matrix.distro }} CLI
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.recursive_benchmark) }}
+    needs: static
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: alpine
+            image: alpine:3.22
+          - distro: debian
+            image: debian:bookworm-slim
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Test candidate inside minimal distro
+        env:
+          IMAGE: ${{ matrix.image }}
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          docker run --rm \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/repo,readonly" \
+            --workdir /repo \
+            --env "VCLI_DISTRO=$DISTRO" \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            "$IMAGE" /bin/sh -ec '
+              case "$VCLI_DISTRO" in
+                alpine) apk add --no-cache bash curl jq coreutils python3 ca-certificates ;;
+                debian)
+                  apt-get update -qq
+                  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+                    bash curl jq coreutils python3 ca-certificates
+                ;;
+                *) echo "Unknown distro: $VCLI_DISTRO" >&2; exit 1 ;;
+              esac
+              bash -n ./vcli
+              python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_portability
+              python3 tests/cli/bench_startup.py
+            '
+      - name: Real Vault HTTPS and live-read benchmark in minimal distro
+        env:
+          VCLI_TEST_MINIMAL_IMAGE: ${{ matrix.image }}
+          VCLI_TEST_MINIMAL_DISTRO: ${{ matrix.distro }}
+          VCLI_TEST_VAULT_TAG: '2.1.1'
+        run: bash tests/integration/run.sh
+
+  integration:
+    name: Vault ${{ matrix.vault }} integration
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.recursive_benchmark) }}
+    needs: static
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        vault: ['1.20.4', '1.21.4', '2.0.4', '2.1.1']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Ensure runtime dependencies
+        run: |
+          missing=()
+          for cmd in jq curl openssl klist; do
+            command -v "$cmd" >/dev/null || missing+=("$cmd")
+          done
+          if (( ${#missing[@]} )); then
+            for i in "${!missing[@]}"; do
+              [[ ${missing[i]} == klist ]] && missing[i]=krb5-user
+            done
+            # A runner once hung here without output until the 18-minute job
+            # timeout; cap each APT operation and retry transient failures.
+            # GNU timeout is CI-only; vcli itself does not depend on it.
+            installed=no
+            for attempt in 1 2; do
+              echo "::group::APT runtime dependencies: attempt $attempt/2 (${missing[*]})"
+              if timeout --signal=TERM --kill-after=10s 150s sudo apt-get update \
+                   -o Acquire::Retries=2 -o Acquire::http::Timeout=15 &&
+                 timeout --signal=TERM --kill-after=10s 150s sudo env \
+                   DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
+                   --no-install-recommends -o DPkg::Lock::Timeout=30 \
+                   -o Acquire::Retries=2 -o Acquire::http::Timeout=15 \
+                   "${missing[@]}"; then
+                installed=yes
+                echo "::endgroup::"
+                break
+              fi
+              echo "::endgroup::"
+              echo "::warning::APT preparation failed or exceeded a 150s bound (attempt $attempt)"
+              (( attempt == 2 )) || sleep 3
+            done
+            if [[ $installed != yes ]]; then
+              echo "::error::Unable to install required runtime tools; integration remains mandatory"
+              exit 1
+            fi
+          fi
+          for cmd in jq curl openssl klist; do command -v "$cmd"; done
+      - name: Validate production candidate
+        run: bash -n ./vcli
+      - name: Test against real Vault
+        env:
+          VCLI_TEST_VAULT_TAG: ${{ matrix.vault }}
+        run: bash tests/integration/run.sh
+
+  playground:
+    name: Real Vault TLS playground acceptance
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.recursive_benchmark) }}
+    needs: static
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install playground dependencies
+        run: |
+          missing=()
+          for cmd in jq curl openssl klist; do
+            command -v "$cmd" >/dev/null || missing+=("$cmd")
+          done
+          if (( ${#missing[@]} )); then
+            for i in "${!missing[@]}"; do
+              [[ ${missing[i]} == klist ]] && missing[i]=krb5-user
+            done
+            sudo apt-get update -qq -o Acquire::Retries=2
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
+          fi
+          docker compose version
+      - name: Lifecycle, full synthetic catalog and real VCLI smoke
+        run: bash tests/playground/smoke.sh
+
+  macos:
+    name: Native macOS offline safety contracts (Homebrew GNU runtime)
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.recursive_benchmark }}
+    needs: static
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Python for isolated CLI contracts
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install modern Bash and GNU filesystem utilities
+        run: |
+          brew install bash coreutils jq openssl@3 krb5
+          echo "$(brew --prefix bash)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix openssl@3)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix krb5)/bin" >> "$GITHUB_PATH"
+      - name: Verify GNU runtime and production CLI
+        run: |
+          command -v bash jq ln mv stat mktemp curl
+          bash -c '(( BASH_VERSINFO[0] >= 5 ))' || {
+            echo "vcli needs Homebrew Bash, not macOS Bash 3.2" >&2
+            exit 1
+          }
+          test -x /usr/bin/perl
+          /usr/bin/perl -e 'exit 0'
+          ln --version | grep -F "GNU coreutils"
+          mv --version | grep -F "GNU coreutils"
+          stat --version | grep -F "GNU coreutils"
+          mktemp --version | grep -F "GNU coreutils"
+          # Verify BSD mktemp accepts our explicit absolute-path template.
+          native_dir=$(/usr/bin/mktemp -d "$RUNNER_TEMP/vcli-bsd-mktemp.XXXXXXXX")
+          native_file=$(/usr/bin/mktemp "$native_dir/secret.XXXXXXXX")
+          [[ $native_file == "$native_dir/"* && -f $native_file ]]
+          rm -f -- "$native_file"
+          rmdir -- "$native_dir"
+          bash -n ./vcli
+          ./vcli --version
+          ./vcli -h >/dev/null
+      - name: Native macOS offline safety and CLI contracts
+        run: |
+          python3 -m unittest -v \
+            tests.cli.test_cli_contract \
+            tests.cli.test_portability \
+            tests.cli.test_certificate_date_portability \
+            tests.cli.test_base64_portability \
+            tests.cli.test_stat_portability \
+            tests.cli.test_fs_publication \
+            tests.cli.test_connectivity_portability \
+            tests.cli.test_help_efficiency \
+            tests.cli.test_http_transport_args \
+            tests.cli.test_http_response_render \
+            tests.cli.test_admin_read \
+            tests.cli.test_cat_copy_safety \
+            tests.cli.test_http_payload_ownership \
+            tests.cli.test_repl_pty_cleanup \
+            tests.cli.test_put_tempfiles \
+            tests.cli.test_session_tempfiles \
+            tests.cli.test_approle_security \
+            tests.cli.test_backup_publication \
+            tests.cli.test_local_file_safety \
+            tests.cli.test_recursive_listing \
+            tests.cli.test_navigation \
+            tests.cli.test_recursive_copy
+      - name: Native macOS Vault 2.1.1 TLS E2E (no Docker)
+        env:
+          VCLI_TEST_VAULT_TAG: '2.1.1'
+        run: bash tests/integration/run-macos.sh
+
+  gate:
+    name: Required CI gate
+    needs: [static, integration, minimal, playground, macos]
+    if: ${{ always() && !(github.event_name == 'workflow_dispatch' && inputs.recursive_benchmark) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail unless all mandatory jobs succeeded
+        env:
+          STATIC_RESULT: ${{ needs.static.result }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
+          MINIMAL_RESULT: ${{ needs.minimal.result }}
+          PLAYGROUND_RESULT: ${{ needs.playground.result }}
+          MACOS_RESULT: ${{ needs.macos.result }}
+        run: |
+          test "$STATIC_RESULT" = success
+          test "$INTEGRATION_RESULT" = success
+          test "$MINIMAL_RESULT" = success
+          test "$PLAYGROUND_RESULT" = success
+          test "$MACOS_RESULT" = success
+
+  recursive_benchmark:
+    name: Paired recursion benchmark (one disposable TLS Vault)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.recursive_benchmark }}
+    needs: static
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout full history for the baseline reference
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Ensure benchmark runtime
+        run: |
+          missing=()
+          for cmd in jq curl openssl; do
+            command -v "$cmd" >/dev/null || missing+=("$cmd")
+          done
+          if (( ${#missing[@]} )); then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
+          fi
+      - name: Compare CLI revisions with real Vault
+        env:
+          BENCH_REF: ${{ inputs.baseline_ref }}
+          VCLI_BENCH_STORAGE: ${{ inputs.storage_backend }}
+          BENCH_SIZES: ${{ inputs.sizes }}
+          BENCH_REPEATS: ${{ inputs.repeats }}
+        run: |
+          bash scripts/bench-compare.sh "$BENCH_REF" "$BENCH_SIZES" "$BENCH_REPEATS"
+
+  package_candidate:
+    name: Produce release candidate artifact
+    if: startsWith(github.ref, 'refs/tags/v0.7.')
+    needs: gate
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+      - name: Verify release candidate
+        run: bash -n ./vcli
+      - name: Build checksum-verified artifact
+        run: |
+          mkdir -p dist/vcli
+          cp vcli README.md LICENSE dist/vcli/
+          tar -C dist -czf "vcli-${GITHUB_REF_NAME}.tar.gz" vcli
+          sha256sum "vcli-${GITHUB_REF_NAME}.tar.gz" > "vcli-${GITHUB_REF_NAME}.tar.gz.sha256"
+      - name: Upload manual-release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vcli-${{ github.ref_name }}
+          path: |
+            vcli-${{ github.ref_name }}.tar.gz
+            vcli-${{ github.ref_name }}.tar.gz.sha256
+          if-no-files-found: error
