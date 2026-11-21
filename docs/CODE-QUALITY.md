@@ -808,7 +808,7 @@ funciones reales y sus endpoints, salidas, rechazos y ausencia de temporales.
 Los E2E `test_vault.py` verifican Vault TLS con recursos inexistentes y
 tokens inválidos. No se afirma ninguna mejora temporal sin benchmark A/B.
 
-## 04-Q ADMIN-02 — nombres administrativos y autorización (pendiente CI)
+## 04-Q ADMIN-02 — nombres administrativos y autorización (CI validada)
 
 `showrole` y `showpol` verifican los nombres con un helper Bash reutilizable
 antes de llamar a `_curl`: rechaza cadenas vacías (con error específico),
@@ -822,3 +822,22 @@ inválidas. La matriz E2E añade prohibiciones sobre tokens KV de solo lectura
 y rechazo local de nombres peligrosos. Los fallos 403/404 siguen propagándose
 desde el transporte sin tratarse como un resultado vacío.
 No se crea una nueva dependencia ni se modifica el parser general del CLI.
+
+## 04-Q ADMIN-03 — lecturas y errores administrativos coherentes (pendiente CI)
+
+Las cuatro operaciones de lectura administrativa pasan por
+`vcli_admin_read_response`, que mantiene una única petición HTTP y
+devuelve un diagnóstico homogéneo por stderr cuando Vault rechaza
+la operación, sin imprimir una respuesta parcial en stdout.
+
+`lsrole` y `lspol` reutilizan `vcli_admin_list_keys`, que valida
+el documento JSON completo antes de emitir nombres, sin procesos de
+`jq` adicionales. Las consultas de detalle validan también que haya
+exactamente un objeto JSON; `showpol` rechaza documentos de política
+vacíos. Se conservan los endpoints y el formato de las salidas válidas.
+
+Los contratos offline cubren listados vacíos, documentos JSON
+múltiples, política vacía y diagnóstico ante transporte fallido.
+Los E2E obligatorios en Vault TLS comprueban mensajes de error de
+403/404 y no filtración de tokens. No se atribuye un incremento
+de rendimiento sin medición A/B.

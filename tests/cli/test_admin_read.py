@@ -15,7 +15,7 @@ class AdminReadContracts(unittest.TestCase):
     def setUpClass(cls):
         source = VCLI.read_text(encoding="utf-8")
         parts = []
-        for name in ("vcli_admin_name_valid", "_lsrole", "_showrole", "_lspol", "_showpol"):
+        for name in ("vcli_admin_name_valid", "vcli_admin_read_response", "vcli_admin_list_keys", "_lsrole", "_showrole", "_lspol", "_showpol"):
             match = re.search(r"^function " + name + r"\(\)\{.*?^\}", source, re.M | re.S)
             if not match:
                 raise AssertionError("Missing function " + name)
@@ -71,6 +71,7 @@ _cat() { echo 'unexpected second wrapper' >&2; return 98; }
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(result.stdout, "")
                 self.assertEqual(len(requests), 1)
+                self.assertIn("vcli: failed to read", result.stderr)
 
     def test_invalid_json_and_fields_fail_without_partial_output(self):
         cases = (
@@ -143,6 +144,45 @@ _curl() { printf 'network\n' >> "$LOG"; return 0; }
                 result, requests = self.call(command, response)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(requests, [path])
+
+
+    def test_empty_administrative_lists_are_valid(self):
+        cases = (
+            ("_lsrole", '{"data":{"keys":[]}}'),
+            ("_lspol", '{"data":{"keys":[]}}'),
+            ("_lspol", '{"keys":[]}'),
+        )
+        for command, body in cases:
+            with self.subTest(command=command, body=body):
+                result, requests = self.call(command, body)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(len(requests), 1)
+
+    def test_multiple_json_documents_are_rejected_atomically(self):
+        cases = (
+            ("_lsrole", '{"data":{"keys":["first"]}}'),
+            ("_lspol", '{"data":{"keys":["first"]}}'),
+            ("_showrole ci-role", '{"data":{"token_policies":["first"]}}'),
+            ("_showpol ci-policy", '{"data":{"policy":"path \\"kv1/*\\" {}"}}'),
+        )
+        for command, body in cases:
+            with self.subTest(command=command):
+                result, requests = self.call(command, body + "\n" + body)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("vcli: invalid", result.stderr)
+                self.assertEqual(len(requests), 1)
+
+    def test_empty_policy_document_fails_closed(self):
+        for body in ('{"data":{"policy":""}}', '{"policy":""}'):
+            with self.subTest(body=body):
+                result, requests = self.call("_showpol ci-policy", body)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("vcli: invalid policy response", result.stderr)
+                self.assertEqual(len(requests), 1)
+
 
 
 if __name__ == "__main__":

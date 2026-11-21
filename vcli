@@ -1254,12 +1254,35 @@ function _ls(){
 }
 
 # lsrole list roles
+# Read one administrative endpoint. Transport failures get a useful stderr.
+function vcli_admin_read_response(){
+    local -n _vcli_admin_out="$1"
+    local label="$2" endpoint="$3" method="${4:-GET}"
+    _vcli_admin_out=$(_curl "$endpoint" "" "$method") || {
+        printf 'vcli: failed to read %s\n' "$label" >&2
+        return 1
+    }
+}
+
+# A single validated JSON document is required before printing any list item.
+function vcli_admin_list_keys(){
+    local payload="$1" kind="$2"
+    jq -sr --arg kind "$kind" '
+        (if length == 1 and (.[0] | type) == "object"
+         then .[0] else error("invalid administrative JSON") end) |
+        (if $kind == "role" then .data.keys else .data.keys // .keys end) as $keys |
+        if ($keys | type) == "array" and all($keys[]; type == "string")
+        then $keys[] else error("invalid administrative list") end
+    ' <<< "$payload"
+}
+
 function _lsrole(){
     local response
-    response=$(_curl "/auth/approle/role?list=true") || return 1
-    jq -r '(.data.keys) as $keys |
-        if ($keys | type) == "array" and all($keys[]; type == "string")
-        then $keys[] else error("invalid AppRole list") end' <<< "$response"
+    vcli_admin_read_response response "AppRole list" "/auth/approle/role?list=true" || return 1
+    vcli_admin_list_keys "$response" role || {
+        echo "vcli: invalid AppRole list response" >&2
+        return 1
+    }
 }
 
 # showpol list role policies
@@ -1277,11 +1300,18 @@ function _showrole(){
     local role="${1:-}" response policies
     [[ -n $role ]] || { echo "vcli: missing role" >&2; return 1; }
     vcli_admin_name_valid "$role" || { echo "vcli: invalid role name" >&2; return 1; }
-    response=$(_curl "/auth/approle/role/$role") || return 1
-    policies=$(jq -r '(.data.token_policies // .data.policies // []) as $items |
+    vcli_admin_read_response response "AppRole" "/auth/approle/role/$role" || return 1
+    policies=$(jq -sr '
+        (if length == 1 and (.[0] | type) == "object"
+         then .[0] else error("invalid AppRole JSON") end) |
+        (.data.token_policies // .data.policies // []) as $items |
         if (.data | type) == "object" and ($items | type) == "array" and
            all($items[]; type == "string")
-        then $items[] else error("invalid AppRole policies") end' <<< "$response") || return 1
+        then $items[] else error("invalid AppRole policies") end
+    ' <<< "$response") || {
+        echo "vcli: invalid AppRole response" >&2
+        return 1
+    }
     printf 'policies: '
     [[ -z $policies ]] || printf '%s\n' "$policies"
 }
@@ -1289,10 +1319,11 @@ function _showrole(){
 # lspol list policies
 function _lspol(){
     local response
-    response=$(_curl "/sys/policies/acl" "" LIST) || return 1
-    jq -r '(.data.keys // .keys) as $keys |
-        if ($keys | type) == "array" and all($keys[]; type == "string")
-        then $keys[] else error("invalid policy list") end' <<< "$response"
+    vcli_admin_read_response response "policy list" "/sys/policies/acl" LIST || return 1
+    vcli_admin_list_keys "$response" policy || {
+        echo "vcli: invalid policy list response" >&2
+        return 1
+    }
 }
 
 # showpol list policy rules
@@ -1300,9 +1331,17 @@ function _showpol(){
     local policy="${1:-}" response
     [[ -n $policy ]] || { echo "vcli: missing policy" >&2; return 1; }
     vcli_admin_name_valid "$policy" || { echo "vcli: invalid policy name" >&2; return 1; }
-    response=$(_curl "/sys/policies/acl/$policy") || return 1
-    jq -er '(.data.policy // .policy) |
-        if type == "string" then . else error("invalid policy response") end' <<< "$response"
+    vcli_admin_read_response response "policy" "/sys/policies/acl/$policy" || return 1
+    jq -sr '
+        (if length == 1 and (.[0] | type) == "object"
+         then .[0] else error("invalid policy JSON") end) |
+        (.data.policy // .policy) as $value |
+        if ($value | type) == "string" and ($value | length) > 0
+        then $value else error("invalid policy document") end
+    ' <<< "$response" || {
+        echo "vcli: invalid policy response" >&2
+        return 1
+    }
 }
 
 function padecho(){

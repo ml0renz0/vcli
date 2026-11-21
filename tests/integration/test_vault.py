@@ -217,6 +217,7 @@ class RealVaultTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertNotIn(token, result.stdout + result.stderr + history)
                 self.assertNotIn("policies: ", result.stdout)
+                self.assertIn("vcli: failed to read", result.stderr)
 
     def test_12_admin_reads_are_denied_to_kv_readonly_token(self):
         # The CI read-only policy grants KV access, but no administrative APIs.
@@ -228,6 +229,7 @@ class RealVaultTests(unittest.TestCase):
                                     result.stdout + result.stderr)
                 self.assertNotIn(readonly, result.stdout + result.stderr + history)
                 self.assertNotIn("policies: ", result.stdout)
+                self.assertIn("vcli: failed to read", result.stderr)
 
     def test_13_invalid_admin_names_are_rejected_locally(self):
         # Invalid names must not accidentally select the LIST endpoint.
