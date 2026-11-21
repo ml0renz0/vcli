@@ -274,7 +274,7 @@ _tree kv1/team/sub
         with tempfile.TemporaryDirectory(prefix="vcli-tree-path-") as tmp:
             env = os.environ.copy()
             env["URLS"] = str(Path(tmp) / "urls")
-            result = subprocess.run(["bash", "-c", match.group(0) + stub],
+            result = subprocess.run(["bash", "-c", path_resolver() + "\n" + match.group(0) + stub],
                                     env=env, capture_output=True, text=True, timeout=5)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(Path(env["URLS"]).read_text().splitlines(),
