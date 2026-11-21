@@ -243,5 +243,17 @@ class RealVaultTests(unittest.TestCase):
                 self.assertEqual(result.stdout, "")
 
 
+
+    def test_14_failed_copy_never_creates_destination(self):
+        missing = f"kv1/{self.prefix}/missing-copy-source"
+        destination = f"kv1/{self.prefix}/not-written-by-copy"
+        result, _ = invoke(f"cp {missing} {destination}")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("copy source read failed", result.stderr)
+        with self.assertRaises(error.HTTPError) as ctx:
+            api("GET", destination)
+        self.assertEqual(ctx.exception.code, 404)
+
+
 if __name__ == "__main__":
     unittest.main()

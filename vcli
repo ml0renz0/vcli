@@ -1633,32 +1633,19 @@ function _restore(){
 
 # cat function
 function _cat(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    if [[ "$1" == "-i" ]]; then
-        local ignore_http_code="true"
-        shift
-    fi
-    if [[ "$1" == "-_disable_-f_-" ]]; then
-        disable_f="$1"
-        shift
-    fi
-    local url="$1"
-    if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd$1"
-    fi
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    debug "cat:  url=$url"
-    local arg="$2"
-    if [[ $ignore_http_code ]]; then
-        _curl "$disable_f" -i "$url" "$arg"
-    else
-        _curl "$disable_f" "$url" "$arg"
-    fi
+    # Request flags belong to one call, never to a later secret read.
+    local -a flags=()
+    while :; do
+        case "${1:-}" in
+            -i|-_disable_-f_-) flags+=("$1"); shift ;;
+            *) break ;;
+        esac
+    done
+    local url="${1:-}" arg="${2:-}"
+    [[ -n $url ]] || { echo "vcli: missing secret path" >&2; return 1; }
+    [[ $url == /* ]] || url="$current_pwd$url"
+    debug "cat: url=$url"
+    _curl "${flags[@]}" "$url" "$arg"
 }
 
 
@@ -1700,33 +1687,25 @@ function _delsecret(){
 
 # cp function
 function _cp(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local url="$1"
-    local dest="$2"
-    if [[ ! $url =~ ^/ ]]; then
-        url="$current_pwd$url"
-    fi
-    if [[ ! $dest =~ ^/ ]]; then
-        dest="$current_pwd$dest"
-    fi
-    if [[ ! $url ]]; then
-        echo "Error! Missing secret path"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    if [[ ! $dest ]]; then
-        echo "Error! Missing destination"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    debug "cp: url=$url dest=$dest"
-    secret=$(_cat "$url" | jq ".data" )
+    local source destination response payload
+    source=$(_vcli_absolute_path "${1:-}") || {
+        echo "vcli: invalid copy source" >&2; return 1;
+    }
+    destination=$(_vcli_absolute_path "${2:-}") || {
+        echo "vcli: invalid copy destination" >&2; return 1;
+    }
+    # A failed read must never be transformed into a successful jq pipeline.
+    response=$(_cat "$source") || {
+        echo "vcli: copy source read failed" >&2; return 1;
+    }
+    payload=$(jq -ce '.data | select(type == "object")' <<< "$response") || {
+        echo "vcli: invalid copy source data" >&2; return 1;
+    }
     debug "cp: payload redacted"
-    if vcli_is_kv2_path "$dest"; then
-        _put "$dest" "$secret" 0
+    if vcli_is_kv2_path "$destination"; then
+        _put "$destination" "$payload" 0
     else
-        _put "$dest" "$secret"
+        _put "$destination" "$payload"
     fi
 }
 

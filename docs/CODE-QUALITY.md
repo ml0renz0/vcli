@@ -625,7 +625,7 @@ portabilidad BSD completa: otras utilidades y el runtime Bash moderno
 siguen pendientes o dependen de Homebrew. Tampoco protege ante atacantes que controlen
 directorios padres confiados o puedan ejecutar código con el mismo usuario.
 
-## P-05g — probe HTTP/TLS sin GNU timeout (pendiente de CI)
+## P-05g — probe HTTP/TLS sin GNU timeout (CI validada)
 
 El arranque deja de exigir `timeout` y de crear un segundo transporte
 TCP mediante `bash -c '</dev/tcp/...'`. `check_connectivity` reutiliza
@@ -645,7 +645,7 @@ de errores. La E2E con Vault TLS real prueba un PATH con `timeout`
 adulterado y el rechazo de una CA no confiable incluso con batch vacío.
 **No se declaran mejoras de latencia sin benchmark A/B**.
 
-## P-05h — ayuda de comandos sin pipelines repetidos (pendiente CI)
+## P-05h — ayuda de comandos sin pipelines repetidos (CI validada)
 
 `commands_help` reemplaza `tr | sort | tr`, un `IFS` global temporal y
 hasta una llamada recursiva por comando por **un solo `sort`** sobre
@@ -668,9 +668,9 @@ sin token y `_curl` envía el token mediante stdin; no se mezclan secretos.
 La configuración mTLS incompleta falla antes de generar temporales.
 El contrato aislado nuevo verifica defaults, rutas con espacios, opt-in de
 `--insecure` y rechazo de pares mTLS incompletos. Continúan obligatorios
-los E2E de Vault TLS, AppRole y manejo de errores. **Pendiente de CI**.
+los E2E de Vault TLS, AppRole y manejo de errores. **Validado por la matriz CI**.
 
-## 04-Q HTTP-02 — respuesta JSON y limpieza unificadas (pendiente CI)
+## 04-Q HTTP-02 — respuesta JSON y limpieza unificadas (CI validada)
 
 `vcli_emit_http_response` valida y formatea el cuerpo HTTP sin gestionar
 el fichero temporal. `_curl` concentra la limpieza de la respuesta en
@@ -684,7 +684,7 @@ errores HTTP, KV v2/raw, listados y la ruta de limpieza. Los contratos
 aislados son obligatorios en Ubuntu/macOS y no sustituyen E2E Vault TLS.
 No se afirma un ahorro de tiempo sin medición.
 
-## 04-Q HTTP-03 — propiedad explícita de los payloads (pendiente CI)
+## 04-Q HTTP-03 — propiedad explícita de los payloads (CI validada)
 
 `_curl` deja de borrar el fichero `data` recibido del llamador: el
 transporte no puede asumir la propiedad de una ruta externa. Solo
@@ -700,7 +700,7 @@ ciclo de vida de los temporales de montaje, renovación y borrado.
 Se ejecutan en Linux/macOS y no sustituyen las suites Vault TLS.
 El objetivo es corrección y seguridad, sin mejora de latencia asumida.
 
-## 04-Q HTTP-04 — limpieza común del login AppRole (en CI)
+## 04-Q HTTP-04 — limpieza común del login AppRole (CI validada)
 
 El login AppRole conserva la construcción de credenciales con `jq --rawfile`,
 de modo que role_id y secret_id no aparecen en la línea de comandos.
@@ -715,7 +715,7 @@ malformado. Se comprueba limpieza previa al trap de sesión, ausencia
 de secretos en salida y argumentos y errores diferenciados.
 Siguen siendo obligatorios los E2E de Vault TLS y AppRole real.
 
-## 04-Q HTTP-05 — una ejecución de jq para GET/LIST (pendiente CI)
+## 04-Q HTTP-05 — una ejecución de jq para GET/LIST (CI validada)
 
 El renderer de respuestas HTTP combina la validación de un único
 documento JSON de tipo objeto con el formateo en **una sola ejecución
@@ -731,7 +731,7 @@ sin filtrar cuerpos inválidos a stdout. Se mantiene la matriz E2E TLS
 y la comprobación del gate. No se afirma una ganancia cuantificada
 hasta medir un benchmark A/B.
 
-## 04-Q HTTP-06 — ls: transporte y temporales sin duplicación (pendiente CI)
+## 04-Q HTTP-06 — ls: transporte y temporales sin duplicación (CI validada)
 
 La operación de listado `_ls` realiza ahora una sola petición HTTP
 y utiliza un solo temporal privado tanto en el modo con color como
@@ -746,7 +746,7 @@ modos, errores HTTP, JSON inválido, fallo de `mktemp` y ausencia de
 temporales residuales. Se conserva la matriz Linux/macOS/Vault TLS;
 no se atribuye una ganancia de rendimiento sin benchmark A/B.
 
-## 04-Q NAV-01 — cd: rutas canónicas y errores LIST no silenciados (pendiente CI)
+## 04-Q NAV-01 — cd: rutas canónicas y errores LIST no silenciados (CI validada)
 
 `_cd` conserva ahora el invariante de directorio de trabajo: raíz vacía,
 y rutas no raíz con barra final. Esto evita que una ruta absoluta sin
@@ -764,7 +764,7 @@ Se ejecutan en los jobs de Ubuntu y macOS. Tres contratos E2E en
 Vault TLS, incluidos `cd /ruta` seguido de `cat relativo`.
 No se atribuyen ahorros de rendimiento sin benchmark.
 
-## 04-Q NAV-02 — ls y tree con rutas canónicas (pendiente CI)
+## 04-Q NAV-02 — ls y tree con rutas canónicas (CI validada)
 
 `ls` y `tree` normalizan las rutas relativas a rutas absolutas y
 eliminan separadores duplicados con expansión nativa de Bash. NAV-01
@@ -779,7 +779,7 @@ secuencia `cd` absoluto, `ls` relativo, `tree` relativo y
 `cat` relativo sobre Vault TLS. Se conserva el gate de Ubuntu,
 macOS, Alpine, Debian y las cuatro versiones de Vault.
 
-## 04-Q NAV-03 — helper Bash de resolución de rutas (pendiente CI)
+## 04-Q NAV-03 — helper Bash de resolución de rutas (CI validada)
 
 `_vcli_resolve_path` centraliza la normalización de rutas usadas por
 `cd`, `ls`, `tree` y `_vcli_absolute_path`, mediante variable
@@ -842,7 +842,7 @@ Los E2E obligatorios en Vault TLS comprueban mensajes de error de
 403/404 y no filtración de tokens. No se atribuye un incremento
 de rendimiento sin medición A/B.
 
-## 04-Q ADMIN-04 — parser JSON administrativo único (pendiente CI)
+## 04-Q ADMIN-04 — parser JSON administrativo único (CI validada)
 
 `vcli_admin_extract` unifica la validación del documento y la selección
 de campos para listados/detalles de AppRole y ACL. Sustituye al helper de
@@ -856,3 +856,35 @@ aislados incluyen conteo real de `jq`, tipos malformados, políticas
 multilínea y esquema ACL legado; los E2E sobre Vault TLS permanecen
 obligatorios. La limpieza general de documentación 04-Q se reservará
 para el cierre de la auditoría, después de validar esta tanda.
+
+## 04-Q FINAL — auditoría transversal y fallos de lectura (pendiente CI)
+
+Inventario estático de 95 funciones Bash con nombre: no se encontraron
+definiciones duplicadas ni funciones con una sola aparición literal en `vcli`.
+Las referencias dinámicas (traps, dispatch y callbacks) impiden afirmar
+que una función esté muerta basándose únicamente en búsquedas de texto;
+no se eliminó código sin evidencia funcional.
+
+Se corrigieron dos fallos reproducibles:
+
+- `_cat` almacenaba el flag interno para ignorar ciertos códigos HTTP en
+  una variable global, y un probe de `sys/health` podía alterar lecturas
+  posteriores. Los flags ahora son locales y por invocación.
+- `_cp` usaba un pipe entre `_cat` y `jq` que podía ocultar el error de
+  lectura. Ahora comprueba el HTTP antes de validar la estructura JSON
+  y no escribe el destino si falta o falla el origen.
+
+Los contratos offline `test_cat_copy_safety.py` comprueban no filtración
+de flags, código de error, no escritura tras fallo, payload KV1/KV2,
+CAS=0 y ausencia de duplicados. `test_vault.py` añade una verificación
+contra Vault TLS real de que copiar un origen inexistente no crea destino.
+Queda validar la nueva matriz Linux/macOS/Vault; el benchmark A/B de
+recursión permanece opt-in y la RC v0.7 no se publica en esta fase.
+
+### Criterios de salida 04-Q
+
+- Suite obligatoria real TLS en las cuatro versiones de Vault, Alpine,
+  Debian y macOS: ver Required CI gate de la PR #25.
+- Sin pérdida de datos ante fallos de lectura; códigos de salida no cero.
+- No publicar release ni fusionar a `master` antes de aceptar la RC.
+- Sin declarar mejora de latencia que no se haya medido.
