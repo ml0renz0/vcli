@@ -794,7 +794,7 @@ verifican la raíz, rutas anidadas, rechazo de segmentos y no mutación
 del resultado ante fallos. Las suites E2E de Vault TLS siguen siendo
 obligatorias; no se atribuye aún un cambio de rendimiento.
 
-## 04-Q ADMIN-01 — lecturas administrativas sin temporales redundantes (pendiente CI)
+## 04-Q ADMIN-01 — lecturas administrativas sin temporales redundantes (CI validada)
 
 Los comandos `lsrole`, `showrole`, `lspol` y `showpol` consumen la respuesta
 de `_curl` directamente sin un fichero temporal adicional.
@@ -807,3 +807,18 @@ Los contratos aislados en `tests/cli/test_admin_read.py` ejercitan las cuatro
 funciones reales y sus endpoints, salidas, rechazos y ausencia de temporales.
 Los E2E `test_vault.py` verifican Vault TLS con recursos inexistentes y
 tokens inválidos. No se afirma ninguna mejora temporal sin benchmark A/B.
+
+## 04-Q ADMIN-02 — nombres administrativos y autorización (pendiente CI)
+
+`showrole` y `showpol` verifican los nombres con un helper Bash reutilizable
+antes de llamar a `_curl`: rechaza cadenas vacías (con error específico),
+`.` y `..`, separadores de ruta, separadores de consulta/fragmento, espacios
+y controles, sin imponer un alfabeto excesivamente restrictivo a nombres
+válidos. `_curl` sigue siendo el único responsable del percent-encoding.
+
+Los tests aislados prueban los argumentos contra las funciones reales,
+incluyendo rutas de escape y ausencia completa de peticiones ante entradas
+inválidas. La matriz E2E añade prohibiciones sobre tokens KV de solo lectura
+y rechazo local de nombres peligrosos. Los fallos 403/404 siguen propagándose
+desde el transporte sin tratarse como un resultado vacío.
+No se crea una nueva dependencia ni se modifica el parser general del CLI.

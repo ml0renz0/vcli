@@ -19,7 +19,7 @@ Los tests no comprueban el nombre de una función interna ni si se usó
 | Montajes | KV v1, v2, v2 anidado | rutas sin ambigüedad ni datos fuera del montaje |
 | Escrituras compuestas | `addsecret/delsecret/cp/mv` | estado final correcto, sin corrupción |
 | Autorización | solo lectura, token inválido | 403/denegación, nunca mutar ni imprimir token |
-| Administración | `lspol/showpol/lsrole/showrole` | políticas y AppRoles obtenidos de Vault real |
+| Administración | `lspol/showpol/lsrole/showrole` | políticas y AppRoles obtenidos de Vault real; nombres de consulta como segmento único, sin separadores, consultas ni caracteres de control |
 | Privacidad | comandos con secretos | el CLI no debe registrar payloads de comandos sensibles por defecto ni pasar credenciales AppRole por argv; temporales de sesión se limpian al salir normalmente o mediante señales capturables |
 
 ## Matriz de tests

@@ -1263,9 +1263,20 @@ function _lsrole(){
 }
 
 # showpol list role policies
+# Administrative names must stay one API path segment. _curl performs URI encoding.
+function vcli_admin_name_valid(){
+    local name="${1:-}"
+    [[ -n $name && $name != . && $name != .. ]] || return 1
+    case $name in
+        */*|*\\*|*\?*|*'#'*|*[[:space:][:cntrl:]]*) return 1 ;;
+    esac
+    return 0
+}
+
 function _showrole(){
     local role="${1:-}" response policies
     [[ -n $role ]] || { echo "vcli: missing role" >&2; return 1; }
+    vcli_admin_name_valid "$role" || { echo "vcli: invalid role name" >&2; return 1; }
     response=$(_curl "/auth/approle/role/$role") || return 1
     policies=$(jq -r '(.data.token_policies // .data.policies // []) as $items |
         if (.data | type) == "object" and ($items | type) == "array" and
@@ -1288,6 +1299,7 @@ function _lspol(){
 function _showpol(){
     local policy="${1:-}" response
     [[ -n $policy ]] || { echo "vcli: missing policy" >&2; return 1; }
+    vcli_admin_name_valid "$policy" || { echo "vcli: invalid policy name" >&2; return 1; }
     response=$(_curl "/sys/policies/acl/$policy") || return 1
     jq -er '(.data.policy // .policy) |
         if type == "string" then . else error("invalid policy response") end' <<< "$response"

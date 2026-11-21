@@ -218,5 +218,28 @@ class RealVaultTests(unittest.TestCase):
                 self.assertNotIn(token, result.stdout + result.stderr + history)
                 self.assertNotIn("policies: ", result.stdout)
 
+    def test_12_admin_reads_are_denied_to_kv_readonly_token(self):
+        # The CI read-only policy grants KV access, but no administrative APIs.
+        readonly = os.environ["VCLI_TEST_READONLY_TOKEN"]
+        for command in ("lsrole", "lspol", "showrole ci-role", "showpol vcli-ci-ro"):
+            with self.subTest(command=command):
+                result, history = invoke(command, token=readonly)
+                self.assertNotEqual(result.returncode, 0,
+                                    result.stdout + result.stderr)
+                self.assertNotIn(readonly, result.stdout + result.stderr + history)
+                self.assertNotIn("policies: ", result.stdout)
+
+    def test_13_invalid_admin_names_are_rejected_locally(self):
+        # Invalid names must not accidentally select the LIST endpoint.
+        for command in ("showrole ../ci-role", "showpol default?list=true",
+                        "showrole ci-role/role-id", "showpol ../root"):
+            with self.subTest(command=command):
+                result, _ = invoke(command)
+                self.assertNotEqual(result.returncode, 0,
+                                    result.stdout + result.stderr)
+                self.assertIn("invalid", result.stderr)
+                self.assertEqual(result.stdout, "")
+
+
 if __name__ == "__main__":
     unittest.main()

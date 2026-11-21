@@ -15,7 +15,7 @@ class AdminReadContracts(unittest.TestCase):
     def setUpClass(cls):
         source = VCLI.read_text(encoding="utf-8")
         parts = []
-        for name in ("_lsrole", "_showrole", "_lspol", "_showpol"):
+        for name in ("vcli_admin_name_valid", "_lsrole", "_showrole", "_lspol", "_showpol"):
             match = re.search(r"^function " + name + r"\(\)\{.*?^\}", source, re.M | re.S)
             if not match:
                 raise AssertionError("Missing function " + name)
@@ -98,6 +98,51 @@ _cat() { echo 'unexpected second wrapper' >&2; return 98; }
                 self.assertEqual(result.stdout, "")
                 self.assertIn("missing", result.stderr)
                 self.assertEqual(requests, [])
+
+
+    def test_reject_unsafe_role_and_policy_names_before_network(self):
+        unsafe = (
+            ".", "..", "../admin", "team/admin", "/admin", "foo?list=true",
+            "foo#fragment", "foo\\bar", "foo bar", "foo\tbar",
+            "foo\nbar", "foo\rbar",
+        )
+        for command in ("_showrole", "_showpol"):
+            for name in unsafe:
+                with self.subTest(command=command, name=repr(name)):
+                    # Quote the argument for bash: the test controls the fixture.
+                    # Names cannot become Bash code, including embedded quotes.
+                    env_command = command + ' "$ADMIN_NAME"'
+                    with tempfile.TemporaryDirectory(prefix="admin-invalid-") as tmp:
+                        log = Path(tmp) / "calls"
+                        env = os.environ.copy()
+                        env.update({"ADMIN_NAME": name, "LOG": str(log)})
+                        stub = r'''
+_curl() { printf 'network\n' >> "$LOG"; return 0; }
+'''
+                        result = subprocess.run(
+                            ["bash", "-c", self.commands + "\n" + stub + "\n" + env_command],
+                            env=env, text=True, capture_output=True, timeout=8,
+                        )
+                        self.assertNotEqual(result.returncode, 0, result.stdout)
+                        self.assertEqual(result.stdout, "")
+                        self.assertIn("invalid", result.stderr)
+                        self.assertFalse(log.exists(), "unsafe name triggered transport")
+
+    def test_safe_single_segment_names_keep_existing_endpoint_encoding_path(self):
+        cases = (
+            ("_showrole ci-role_9", "/auth/approle/role/ci-role_9|GET"),
+            ("_showpol ops.v2", "/sys/policies/acl/ops.v2|GET"),
+            ("_showpol a+b", "/sys/policies/acl/a+b|GET"),
+            ("_showrole test%25", "/auth/approle/role/test%25|GET"),
+        )
+        for command, path in cases:
+            with self.subTest(command=command):
+                response = ('{"data":{"token_policies":["default"]}}'
+                            if command.startswith("_showrole") else
+                            '{"data":{"policy":"path \\"kv1/*\\" {}"}}')
+                result, requests = self.call(command, response)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(requests, [path])
 
 
 if __name__ == "__main__":
