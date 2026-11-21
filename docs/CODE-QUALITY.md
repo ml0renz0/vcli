@@ -793,3 +793,17 @@ sigue usando raíz vacía o barra final fuera de raíz. Tests aislados
 verifican la raíz, rutas anidadas, rechazo de segmentos y no mutación
 del resultado ante fallos. Las suites E2E de Vault TLS siguen siendo
 obligatorias; no se atribuye aún un cambio de rendimiento.
+
+## 04-Q ADMIN-01 — lecturas administrativas sin temporales redundantes (pendiente CI)
+
+Los comandos `lsrole`, `showrole`, `lspol` y `showpol` consumen la respuesta
+de `_curl` directamente sin un fichero temporal adicional.
+Se propagan fallos HTTP, de transporte y de `jq`; los listados comprueban
+arrays de cadenas antes de imprimir cualquier elemento. `showrole` preserva
+el prefijo `policies: `, pero no lo imprime ante errores. Faltas de argumento
+obligatorio devuelven ahora un estado distinto de cero.
+
+Los contratos aislados en `tests/cli/test_admin_read.py` ejercitan las cuatro
+funciones reales y sus endpoints, salidas, rechazos y ausencia de temporales.
+Los E2E `test_vault.py` verifican Vault TLS con recursos inexistentes y
+tokens inválidos. No se afirma ninguna mejora temporal sin benchmark A/B.

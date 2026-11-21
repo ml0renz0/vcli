@@ -203,5 +203,20 @@ class RealVaultTests(unittest.TestCase):
         self.assertEqual(api("GET", path)["data"]["password"], "canary-123")
 
 
+    def test_11_admin_reads_fail_for_missing_resources_and_invalid_tokens(self):
+        missing = "vcli-admin-missing-" + uuid4().hex[:12]
+        cases = (
+            (f"showrole {missing}", ROOT_TOKEN),
+            (f"showpol {missing}", ROOT_TOKEN),
+            ("lsrole", "ci-invalid-admin-token"),
+            ("lspol", "ci-invalid-admin-token"),
+        )
+        for command, token in cases:
+            with self.subTest(command=command):
+                result, history = invoke(command, token=token)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn(token, result.stdout + result.stderr + history)
+                self.assertNotIn("policies: ", result.stdout)
+
 if __name__ == "__main__":
     unittest.main()

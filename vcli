@@ -1255,54 +1255,42 @@ function _ls(){
 
 # lsrole list roles
 function _lsrole(){
-    local tmp
-    tmp=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/lsrole.XXXXXX")
-    _cat /auth/approle/role?list=true > "$tmp"
-    jq '.data .keys[]' -r < "$tmp"
-    rm "$tmp"
+    local response
+    response=$(_curl "/auth/approle/role?list=true") || return 1
+    jq -r '(.data.keys) as $keys |
+        if ($keys | type) == "array" and all($keys[]; type == "string")
+        then $keys[] else error("invalid AppRole list") end' <<< "$response"
 }
 
 # showpol list role policies
 function _showrole(){
-    local funcname
-    funcname="${FUNCNAME[0]}"
-    local role="$1"
-    local tmp
-    if [[ ! $role ]]; then
-        echo "Error! Missing role"
-        commands_help "${funcname//_/}"
-        return
-    fi
-    tmp=$(mktemp -- "${VCLI_SESSION_TMP:-$TMP}/showrole.XXXXXX")
-    _cat /auth/approle/role/"$role" > "$tmp"
-    echo -n "policies: "
-    jq -r '(.data.token_policies // .data.policies // [])[]' < "$tmp"
-    rm "$tmp"
+    local role="${1:-}" response policies
+    [[ -n $role ]] || { echo "vcli: missing role" >&2; return 1; }
+    response=$(_curl "/auth/approle/role/$role") || return 1
+    policies=$(jq -r '(.data.token_policies // .data.policies // []) as $items |
+        if (.data | type) == "object" and ($items | type) == "array" and
+           all($items[]; type == "string")
+        then $items[] else error("invalid AppRole policies") end' <<< "$response") || return 1
+    printf 'policies: '
+    [[ -z $policies ]] || printf '%s\n' "$policies"
 }
 
 # lspol list policies
 function _lspol(){
-    local tmp
-    tmp=$(mktemp "${VCLI_SESSION_TMP:-$TMP}/.vcli.policies.XXXXXX") || return 1
-    if ! _curl /sys/policies/acl "" LIST > "$tmp"; then
-        cat "$tmp" >&2; rm -f "$tmp"; return 1
-    fi
-    jq -r '(.data.keys // .keys // [])[]' "$tmp"
-    rm -f "$tmp"
+    local response
+    response=$(_curl "/sys/policies/acl" "" LIST) || return 1
+    jq -r '(.data.keys // .keys) as $keys |
+        if ($keys | type) == "array" and all($keys[]; type == "string")
+        then $keys[] else error("invalid policy list") end' <<< "$response"
 }
 
 # showpol list policy rules
 function _showpol(){
-    local policy="$1" tmp
-    if [[ -z $policy ]]; then
-        echo "Error! Missing policy" >&2; return 1
-    fi
-    tmp=$(mktemp "${VCLI_SESSION_TMP:-$TMP}/.vcli.policy.XXXXXX") || return 1
-    if ! _curl "/sys/policies/acl/$policy" > "$tmp"; then
-        cat "$tmp" >&2; rm -f "$tmp"; return 1
-    fi
-    jq -r '.data.policy // .policy // empty' "$tmp"
-    rm -f "$tmp"
+    local policy="${1:-}" response
+    [[ -n $policy ]] || { echo "vcli: missing policy" >&2; return 1; }
+    response=$(_curl "/sys/policies/acl/$policy") || return 1
+    jq -er '(.data.policy // .policy) |
+        if type == "string" then . else error("invalid policy response") end' <<< "$response"
 }
 
 function padecho(){
