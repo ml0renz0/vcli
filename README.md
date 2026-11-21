@@ -68,6 +68,10 @@ printf 'cat kv1/demo/app\n' | scripts/playground.sh batch
 El job de playground de la CI genera la grabación auténtica vcli-playground.cast
 como artefacto **vcli-playground-asciinema**, con retención de 7 días.
 Usa Vault TLS real y datos ficticios; no publica la grabación en asciinema.org.
+Una sola terminal Bash interactiva conduce las sesiones `shell readonly` y
+`shell admin`, con sus correspondientes `exit` visibles. Se capturan los prompts
+y respuestas reales de VCLI sin cortes ni límite de inactividad. La automatización
+de teclas requiere Python 3 solo para la demo; no es un runtime de VCLI.
 
 Para reproducir: `asciinema play vcli-playground.cast`.
 

@@ -62,15 +62,31 @@ if [[ -n ${VCLI_PLAYGROUND_CAST:-} ]]; then
     python3 - "$VCLI_PLAYGROUND_CAST" <<'PY'
 import json
 import pathlib
+import re
 import sys
 lines = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
 header = json.loads(lines[0])
 assert header["version"] in (2, 3)
 events = [json.loads(line) for line in lines[1:]]
 assert len(events) >= 10
-combined = "".join(str(item) for item in events)
-assert "vcli (readonly)" in combined and "vcli (admin)" in combined
-assert "Fin de la demo" in combined
+assert "idle_time_limit" not in header, "recording must preserve real timing"
+combined = "".join(item[2] for item in events if item[1] == "o")
+combined = re.sub(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\([A-Za-z])", "", combined)
+markers = [
+    "scripts/playground.sh shell readonly",
+    "FAKE-VCLI-PASSWORD",  # checked after the 403 by the driver
+    "scripts/playground.sh shell admin",
+    "vcli-playground-reader",
+    "exit 0",
+]
+position = 0
+for marker in markers:
+    position = combined.index(marker, position) + len(marker)
+assert "[403]" in combined
+assert "vcli (readonly) >" not in combined and "vcli (admin) >" not in combined
+for name in ("root-token", "readonly-token", "role-id", "secret-id"):
+    secret = pathlib.Path(".playground", name).read_text().strip()
+    assert not secret or secret not in combined, "private credentials in decoded output"
 print("Validated asciinema:", len(events), "terminal events")
 PY
 fi

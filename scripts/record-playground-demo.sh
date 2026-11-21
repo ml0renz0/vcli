@@ -14,11 +14,16 @@ output="${1:-$ROOT/vcli-playground.cast}"
 [[ $output == /* ]] || output="$ROOT/$output"
 [[ $output == *.cast ]] || { echo 'Output must end in .cast' >&2; exit 2; }
 mkdir -p -- "$(dirname -- "$output")"
-export TERM=xterm-256color COLUMNS=100 LINES=30
+command -v python3 >/dev/null || { echo 'Install python3 for the demo driver' >&2; exit 1; }
+private=$(mktemp -d)
+trap 'rm -rf -- "$private"' EXIT
+export VCLI_DEMO_DONE="$private/done" VCLI_DEMO_OUTPUT="$output"
+export ASCIINEMA_CONFIG_HOME="$private" TERM=xterm-256color COLUMNS=100 LINES=30
 # CI has no controlling terminal: util-linux script supplies the PTY.
 script -q -e -c \
-  "asciinema rec --overwrite --idle-time-limit 1 --title 'vcli OG | Vault TLS playground' --command 'bash scripts/playground-demo.sh' '$output'" \
+  'stty rows 30 cols 100; asciinema rec --overwrite --title "vcli OG | Vault TLS playground" --command "bash scripts/playground-demo.sh" "$VCLI_DEMO_OUTPUT"' \
   /dev/null
+[[ -f $VCLI_DEMO_DONE ]] || { rm -f -- "$output"; echo 'Interactive demo failed' >&2; exit 1; }
 [[ -s $output ]] || { echo 'Recording is empty' >&2; exit 1; }
 chmod 600 -- "$output"
 printf 'Saved asciinema recording: %s\n' "$output"
