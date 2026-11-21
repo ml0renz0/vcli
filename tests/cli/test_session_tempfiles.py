@@ -31,8 +31,11 @@ class TempfileTemplatePortability(unittest.TestCase):
         source = SOURCE.read_text(encoding="utf-8")
         # With -t, GNU mktemp may use TMPDIR instead of -p.
         self.assertNotIn('mktemp -p "${VCLI_SESSION_TMP:-$TMP}" -t', source)
-        for prefix in (".put.", "ls.", "lsrole.", "showrole."):
+        for prefix in (".put.", "ls."):
             self.assertIn('mktemp -- "${VCLI_SESSION_TMP:-$TMP}/' + prefix, source)
+        # ADMIN-01 removed the redundant admin-read scratch files entirely.
+        for prefix in ("lsrole.", "showrole."):
+            self.assertNotIn('mktemp -- "${VCLI_SESSION_TMP:-$TMP}/' + prefix, source)
 
 
 class PortablePrivateTempTemplates(unittest.TestCase):
