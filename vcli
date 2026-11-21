@@ -793,15 +793,28 @@ function _vcli_partial_failure(){
 }
 
 # Common read-only recursion for KV mounts; failures propagate to callers.
+# Resolve Vault paths without subshells; the named result belongs to the caller.
+function _vcli_resolve_path(){
+    local -n _vcli_out="$1"
+    local _vcli_value="${2:-}"
+    [[ -n $_vcli_value ]] || return 1
+    [[ $_vcli_value == /* ]] || _vcli_value="${current_pwd%/}/$_vcli_value"
+    _vcli_value="/${_vcli_value#/}"
+    while [[ $_vcli_value == *'//'* ]]; do
+        _vcli_value="${_vcli_value//\/\//\/}"
+    done
+    if [[ $_vcli_value == *'/../'* || $_vcli_value == *'/./'* ||
+          $_vcli_value == */.. || $_vcli_value == */. ]]; then
+        return 1
+    fi
+    [[ $_vcli_value == / ]] || _vcli_value="${_vcli_value%/}"
+    _vcli_out="$_vcli_value"
+}
+
 function _vcli_absolute_path(){
-    local path="$1"
-    [[ -n $path ]] || return 1
-    [[ $path == /* ]] || path="${current_pwd%/}/$path"
-    path="/${path#/}"
-    while [[ $path == *'//'* ]]; do path="${path//\/\//\/}"; done
-    path="${path%/}"
-    [[ $path != *'/../'* && $path != *'/./'* && $path != */.. && $path != */. ]] || return 1
-    printf '%s\n' "$path"
+    local normalized
+    _vcli_resolve_path normalized "${1:-}" || return 1
+    printf '%s\n' "$normalized"
 }
 function _vcli_children(){
     local response
@@ -1166,29 +1179,23 @@ function _umount(){
 
 # cd function
 function _cd(){
-    local target="${1:-}" url entries
-    if [[ $target == ".." ]]; then
-        # Parent is derived from the already accepted working directory.
-        url="${current_pwd%/}"
-        url="${url%/*}"
-        url="${url:-/}"
-    elif [[ -z $target || $target == "." ]]; then
-        url="${current_pwd:-/}"
-    elif [[ $target == /* ]]; then
-        url="$target"
+    local requested="${1:-}" target url entries
+    if [[ $requested == ".." ]]; then
+        # Parent never needs a new LIST request.
+        target="${current_pwd%/}"
+        target="${target%/*}"
+        target="${target:-/}"
+    elif [[ -z $requested || $requested == "." ]]; then
+        target="${current_pwd:-/}"
     else
-        url="${current_pwd%/}/$target"
+        target="$requested"
     fi
-    # Keep relative cat/put paths correct after absolute and relative cd.
-    while [[ $url == *"//"* ]]; do url="${url//\/\//\/}"; done
-    if [[ $url == *"/../"* || $url == *"/./"* || $url == */.. || $url == */. ]]; then
+    if ! _vcli_resolve_path url "$target"; then
         echo "vcli: unsupported dot segment in cd path" >&2
         return 1
     fi
-    [[ $url == "/" ]] || url="${url%/}/"
-    if [[ $url != "/" && $target != ".." && $target != "." && -n $target ]]; then
-        # Capture the LIST status separately from its contents: grep -q
-        # previously masked permission/transport failures as success.
+    [[ $url == / ]] || url+="/"
+    if [[ $url != / && $requested != ".." && $requested != "." && -n $requested ]]; then
         entries=$(_ls "-_disable_colors_-" "$url") || {
             echo "vcli: cannot list directory '$url'" >&2
             return 1
@@ -1198,7 +1205,7 @@ function _cd(){
             return 1
         fi
     fi
-    if [[ $url == "/" ]]; then current_pwd=""; else current_pwd="$url"; fi
+    if [[ $url == / ]]; then current_pwd=""; else current_pwd="$url"; fi
     debug "cd: current_pwd=$current_pwd"
     return 0
 }
@@ -1215,14 +1222,11 @@ function _ls(){
         ignore_http_code="-i"
         shift
     fi
-    if [[ ${1:-} != /* ]]; then
-        url="${current_pwd%/}/${1:-}"
-    else
-        url="$1"
+    if ! _vcli_resolve_path url "${1:-${current_pwd:-/}}"; then
+        echo "vcli: invalid ls path" >&2
+        return 1
     fi
-    # Normalize LIST targets; cd stores non-root paths with a final slash.
-    while [[ $url == *'//'* ]]; do url="${url//\/\//\/}"; done
-    [[ $url == / ]] || url="${url%/}/"
+    [[ $url == / ]] || url+="/"
     if [[ $url == "/" ]]; then
         if [[ $disable_colors ]]; then
             _cat /sys/mounts "-_list_root_-" | tr -d '"'
@@ -1322,14 +1326,10 @@ function padecho(){
 # display the vault's secret tree
 function _tree(){
     local url depth="${2:-0}" space="${3:-}" echo_space="${4:-}" paths path
-    if [[ ${1:-} != /* ]]; then
-        url="${current_pwd%/}/${1:-}"
-    else
-        url="$1"
+    if ! _vcli_resolve_path url "${1:-${current_pwd:-/}}"; then
+        echo "vcli: invalid tree path" >&2
+        return 1
     fi
-    # Use absolute canonical paths for recursive LIST and child traversal.
-    while [[ $url == *'//'* ]]; do url="${url//\/\//\/}"; done
-    while [[ $url != / && $url == */ ]]; do url=${url%/}; done
     [[ -n ${2:-} ]] && ((depth+=1))
     debug "tree: visiting directory"
     # Do not spawn a basename process for every visited directory.

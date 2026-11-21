@@ -25,6 +25,15 @@ def production_helper():
     return match.group(0)
 
 
+def path_resolver():
+    source = SOURCE.read_text(encoding="utf-8")
+    match = re.search(r"^function _vcli_resolve_path\(\)\{.*?^\}", source,
+                      re.MULTILINE | re.DOTALL)
+    if not match:
+        raise AssertionError("Missing production resolver")
+    return match.group(0)
+
+
 class RecursiveListingContracts(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -86,7 +95,7 @@ _vcli_children(){
 }
 _tree "/kv1/branch///" && _tree "/"
 '''
-        result = subprocess.run(["bash", "-c", match.group(0) + stub],
+        result = subprocess.run(["bash", "-c", path_resolver() + "\n" + match.group(0) + stub],
                                 text=True, capture_output=True, timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.splitlines(),
@@ -157,7 +166,7 @@ class LsListingContracts(unittest.TestCase):
         match = re.search(r"^function _ls\(\)\{.*?^\}", source, re.M | re.S)
         if not match:
             raise AssertionError("Missing production _ls")
-        cls.ls = match.group(0)
+        cls.ls = path_resolver() + "\n" + match.group(0)
 
     def call_ls(self, command, body='{"data":{"keys":["team/","secret"]}}',
                 fail_http=False, fail_temp=False, cwd="/kv1"):

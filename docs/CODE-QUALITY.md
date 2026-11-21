@@ -778,3 +778,18 @@ con cwd anidado y desde raíz. Un contrato E2E nuevo valida la
 secuencia `cd` absoluto, `ls` relativo, `tree` relativo y
 `cat` relativo sobre Vault TLS. Se conserva el gate de Ubuntu,
 macOS, Alpine, Debian y las cuatro versiones de Vault.
+
+## 04-Q NAV-03 — helper Bash de resolución de rutas (pendiente CI)
+
+`_vcli_resolve_path` centraliza la normalización de rutas usadas por
+`cd`, `ls`, `tree` y `_vcli_absolute_path`, mediante variable
+de salida por referencia sin crear un subshell ni procesos externos
+por cada nivel del árbol. Se preservan las rutas absolutas y relativas,
+la reducción de barras repetidas y el rechazo de segmentos `.` y `..`.
+
+La ruta raíz sigue siendo `/`; antes el recorte en
+`_vcli_absolute_path` podía producir una cadena vacía. `current_pwd`
+sigue usando raíz vacía o barra final fuera de raíz. Tests aislados
+verifican la raíz, rutas anidadas, rechazo de segmentos y no mutación
+del resultado ante fallos. Las suites E2E de Vault TLS siguen siendo
+obligatorias; no se atribuye aún un cambio de rendimiento.

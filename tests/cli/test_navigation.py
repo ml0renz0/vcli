@@ -19,6 +19,11 @@ class NavigationContracts(unittest.TestCase):
         if not match:
             raise AssertionError("Missing production _cd")
         cls.cd = match.group(0)
+        resolver = re.search(r"^function _vcli_resolve_path\(\)\{.*?^\}",
+                             code, re.M | re.S)
+        if not resolver:
+            raise AssertionError("Missing production path resolver")
+        cls.resolver = resolver.group(0)
 
     def run_cd(self, lines, initial="", listing="child\n", fail=False):
         with tempfile.TemporaryDirectory(prefix="vcli-nav-") as temp:
@@ -37,7 +42,7 @@ _ls() {
     fi
     printf '%s' "$LISTING"
 }
-''' + self.cd + "\n" + lines + "\n"
+''' + self.resolver + "\n" + self.cd + "\n" + lines + "\n"
             result = subprocess.run(["bash", "-c", shell], env=env,
                                     capture_output=True, text=True, timeout=5)
             calls = log.read_text().splitlines() if log.exists() else []
@@ -109,6 +114,23 @@ printf 'PWD:%s\n' "$current_pwd"
         self.assertEqual(result.stdout, "PWD:/kv1/team/\n")
         self.assertEqual(calls, [])
 
+
+    def test_path_resolver_root_relative_and_unsafe_segments(self):
+        commands = r'''
+current_pwd="/kv1/team/"
+_vcli_resolve_path result "/" && printf 'ROOT:%s\n' "$result"
+_vcli_resolve_path result "nested//deep///" && printf 'NESTED:%s\n' "$result"
+_vcli_resolve_path result "/kv1//other//" && printf 'ABS:%s\n' "$result"
+if _vcli_resolve_path result "/kv1/team/../secret"; then exit 92; fi
+if _vcli_resolve_path result "/kv1/team/./secret"; then exit 93; fi
+if _vcli_resolve_path result ""; then exit 94; fi
+printf 'UNCHANGED:%s\n' "$result"
+'''
+        result, _ = self.run_cd(commands)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout,
+                         "ROOT:/\nNESTED:/kv1/team/nested/deep\n"
+                         "ABS:/kv1/other\nUNCHANGED:/kv1/other\n")
 
 if __name__ == "__main__":
     unittest.main()
