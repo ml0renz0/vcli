@@ -111,6 +111,8 @@ _vcli_absolute_path(){ printf '%s' "$1"; }
 vcli_is_kv2_path(){ return 0; }
 vcli_kv2_metadata_path(){ printf '%s' '/kv2/metadata/foo'; }
 _curl(){
+    # Internal typed Vault endpoints have an explicit private transport flag.
+    [[ ${1:-} == -_api_path_- ]] && shift
     local endpoint="$1" body="@{2:-}"
     if [[ -n $body && -f $body ]]; then
         [[ -s $body ]] || return 69
