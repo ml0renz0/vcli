@@ -779,5 +779,25 @@ class InteractiveShellTests(unittest.TestCase):
         finally:
             self.end(home, fd, child)
 
+    def test_46_version_history_read_uses_interactive_parser(self):
+        """Read an older version over PTY with the same logical KV2 path."""
+        from uuid import uuid4
+        from .test_vault import api
+        prefix = "vcli-version-pty-" + uuid4().hex[:12]
+        path = f"kv2/data/{prefix}/item"
+        api("POST", f"kv2/data/data/{prefix}/item", {"data": {"fixture": "old-pty-snapshot"}})
+        api("POST", f"kv2/data/data/{prefix}/item", {"data": {"fixture": "new-pty-snapshot"}})
+        home, fd, child = self.session(extra_env={
+            "VAULT_KV_VERSION": "2", "VAULT_KV_MOUNTS": "kv2,team/config"
+        })
+        try:
+            self.send(fd, (f"cat --version 1 {path}\n").encode(), pace=0.025)
+            result = read_until(fd, b"old-pty-snapshot", timeout=12)
+            self.assertIn(b"old-pty-snapshot", result)
+            self.assertNotIn(b"new-pty-snapshot", result)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
 if __name__ == "__main__":
     unittest.main()

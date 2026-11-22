@@ -449,6 +449,90 @@ class KV2AdvancedTests(unittest.TestCase):
         self.assertEqual(api("GET", f"kv2/data/{sentinel}")["data"]["data"],
                          {"untouched": True})
 
+
+    def test_21_read_kv2_historical_versions_and_metadata(self):
+        """Compare CLI reads with authoritative Vault API, including nested mounts."""
+        import json
+        mounts = "team,team/config,kv2"
+        for mount in ("kv2", "team/config"):
+            with self.subTest(mount=mount):
+                leaf = f"data/{self.p}/history-{mount.replace('/', '-')}/item"
+                secret = f"{mount}/{leaf}"
+                first = {"generation": 1, "fixture": "not-latest"}
+                latest = {"generation": 2, "fixture": "latest"}
+                for data in (first, latest):
+                    api("POST", f"{mount}/data/{leaf}", {"data": data})
+                oracle1 = api("GET", f"{mount}/data/{leaf}?version=1")
+                oracle2 = api("GET", f"{mount}/data/{leaf}?version=2")
+                self.assertEqual(oracle1["data"]["data"], first)
+                self.assertEqual(oracle2["data"]["data"], latest)
+
+                for number, oracle in ((1, oracle1), (2, oracle2)):
+                    result, _ = invoke(f"cat --version {number} {secret}",
+                                       version=2, mounts=mounts)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(json.loads(result.stdout)["data"], oracle["data"]["data"])
+                normal, _ = invoke(f"cat {secret}", version=2, mounts=mounts)
+                self.assertEqual(normal.returncode, 0, normal.stdout + normal.stderr)
+                self.assertEqual(json.loads(normal.stdout)["data"], latest)
+
+                meta_oracle = api("GET", f"{mount}/metadata/{leaf}")["data"]
+                details, _ = invoke(f"cat --metadata {secret}", version=2, mounts=mounts)
+                self.assertEqual(details.returncode, 0, details.stdout + details.stderr)
+                self.assertEqual(json.loads(details.stdout)["data"], meta_oracle)
+                self.assertEqual(meta_oracle["current_version"], 2)
+
+                rejected = (
+                    f"cat --version 0 {secret}",
+                    f"cat --version -1 {secret}",
+                    f"cat --version bogus {secret}",
+                    f"cat --version 1 {secret}?version=2",
+                    f"cat --version 1 {mount}/data/../{self.p}/secret",
+                    f"cat --metadata {secret}?version=1",
+                    f"cat --version 1 kv1/{self.p}/not-kv2",
+                    f"cat --metadata kv1/{self.p}/not-kv2",
+                )
+                for command in rejected:
+                    with self.subTest(command=command):
+                        result, _ = invoke(command, version=2, mounts=mounts)
+                        self.assertNotEqual(result.returncode, 0,
+                                            result.stdout + result.stderr)
+                self.assertEqual(api("GET", f"{mount}/metadata/{leaf}")["data"],
+                                 meta_oracle, "read-only commands modified metadata")
+
+    def test_22_deleted_and_destroyed_versions_do_not_leak_data(self):
+        """A tombstone is not readable; metadata remains inspectable."""
+        import json
+        mount, mounts = "kv2", "kv2,team/config"
+        leaf = f"metadata/{self.p}/history-lifecycle/item"
+        secret = f"{mount}/{leaf}"
+        api("POST", f"{mount}/data/{leaf}", {"data": {"generation": 1}})
+        api("POST", f"{mount}/data/{leaf}", {"data": {"generation": 2}})
+        api("POST", f"{mount}/delete/{leaf}", {"versions": [2]})
+        expected = api("GET", f"{mount}/metadata/{leaf}")["data"]
+        self.assertTrue(expected["versions"]["2"]["deletion_time"])
+        valid, _ = invoke(f"cat --version 1 {secret}", version=2, mounts=mounts)
+        self.assertEqual(valid.returncode, 0, valid.stdout + valid.stderr)
+        self.assertEqual(json.loads(valid.stdout)["data"], {"generation": 1})
+        deleted, _ = invoke(f"cat --version 2 {secret}", version=2, mounts=mounts)
+        self.assertNotEqual(deleted.returncode, 0)
+        self.assertNotIn('"generation"', deleted.stdout)
+        details, _ = invoke(f"cat --metadata {secret}", version=2, mounts=mounts)
+        self.assertEqual(details.returncode, 0, details.stdout + details.stderr)
+        self.assertEqual(json.loads(details.stdout)["data"], expected)
+
+        # The independent API performs the destructive fixture operation:
+        # the CLI's new history commands must remain read-only.
+        api("POST", f"{mount}/destroy/{leaf}", {"versions": [1]})
+        destroyed, _ = invoke(f"cat --version 1 {secret}", version=2, mounts=mounts)
+        self.assertNotEqual(destroyed.returncode, 0)
+        self.assertNotIn('"generation"', destroyed.stdout)
+        after, _ = invoke(f"cat --metadata {secret}", version=2, mounts=mounts)
+        self.assertEqual(after.returncode, 0, after.stdout + after.stderr)
+        latest_metadata = api("GET", f"{mount}/metadata/{leaf}")["data"]
+        self.assertTrue(latest_metadata["versions"]["1"]["destroyed"])
+        self.assertEqual(json.loads(after.stdout)["data"], latest_metadata)
+
     def test_07_field_updates_increment_versions(self):
         self.put("edit/item",{"x":1,"keep":True})
         self.cli(f'addsecret kv2/{self.p}/edit/item {{"y":2}}')

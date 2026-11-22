@@ -151,3 +151,10 @@ Parte del código en la rama ya intenta resolver estas incidencias, pero los sí
 - `test_20_explicit_api_read_mode_matches_vault_and_rejects_writes` compara con API real y revisa ausencia de efectos colaterales. `test_45_explicit_api_path_read_and_list_in_real_pty` ejercita el parser real. Corrección del fixture equivocado en `test_10` y del marcador de `mount` de la demo SaaS.
 - No se habilitan `put`, `rm`, `rmtree` ni endpoints administrativos bajo `--api-path`. Versiones históricas, undelete y destroy permanecen abiertos.
 - Estado: implementado como candidato, CI completa y aceptación SaaS pendientes; ACC-10 sigue abierto.
+
+## KV2 — lecturas históricas y metadatos (2026-11-23)
+
+- **Incremento posterior a `--api-path`:** `cat --version N <ruta-lógica>` consulta GET KV2 data con el parámetro `version=N`, validando que N sea decimal positivo, ruta sin query arbitraria y montaje KV2 configurado. Presenta datos normalizados como `cat` y falla ante versiones soft-deleted/destroyed.
+- **`cat --metadata <ruta-lógica>`:** GET al endpoint interno KV2 metadata/ con respuesta de historial (current_version, versions, deletion_time, destroyed) sin exponer datos del secreto. Requiere ACL de lectura de metadatos; errores 403/404 no se transforman en éxito.
+- **Regresiones API-first:** `test_21_read_kv2_historical_versions_and_metadata` compara ambas variantes contra Vault TLS independiente (KV2 y montaje anidado, nombres de carpetas reservados), verifica entradas inválidas y ausencia de nuevas versiones. `test_22_deleted_and_destroyed_versions_do_not_leak_data` comprueba estados borrado/destruido. `test_46_version_history_read_uses_interactive_parser` valida PTY real.
+- **Estado:** implementado como candidato, pendiente de CI completa sobre este SHA. `undelete` y `destroy` como operaciones del CLI continúan pendientes; no se fusiona la PR.

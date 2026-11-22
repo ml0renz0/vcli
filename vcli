@@ -306,7 +306,7 @@ declare -A vcli_commands_help=(
         [rmtree]="rmtree [-f] [--purge] path/to/secrets \n  recursively soft-deletes secrets. On KV v2 --purge irreversibly removes ALL versions and metadata below the path. -f skips confirmation; purge never applies to KV v1."
         [backup]="backup path/to/secrets \n  backs up Vault /path to $TMP folder"
         [restore]="restore /local/dir/file \n  restores Vault backup"
-        [cat]="cat [--api-path] path/to/secret \n  reads a logical secret; --api-path reads a KV2 data/ endpoint and returns raw Vault JSON (read-only)"
+        [cat]="cat [--api-path] path/to/secret | cat --version N path/to/secret | cat --metadata path/to/secret \n  reads active or historical KV2 data; --metadata reads KV2 metadata and all version states; --api-path reads an explicit KV2 data/ endpoint and returns raw Vault JSON"
         [cp]="cp path/to/secret path/to/other_secret \n  copies contents of path to path $current_pwd/path/to/other_secret"
         [getcert]="getcert path/to/secret \n  downloads certificate CRT and KEY stored in $current_pwd/path/to/secret"
         [getcertlist]="getcertlist path/to/certificates \n  recovers certs.list with certificates found in $current_pwd/path/to/certificates"
@@ -806,6 +806,36 @@ function vcli_validate_kv2_api_read_path(){
     target="$resolved"
 }
 
+# Read KV2 history without exposing raw query-string interpolation to the CLI.
+# A logical path must resolve to a configured KV2 mount, including nested mounts.
+function vcli_kv2_history_read(){
+    local mode="$1" option="$2" requested="$3" path="" metadata
+    if [[ -z $requested || $requested == *'?'* || $requested == *'#'* ]] ||
+       ! _vcli_resolve_path path "$requested"; then
+        echo "vcli: invalid KV v2 history path" >&2
+        return 2
+    fi
+    if ! vcli_is_kv2_path "$path"; then
+        echo "vcli: history reads require a configured KV v2 secret path" >&2
+        return 2
+    fi
+    case "$mode" in
+        version)
+            if [[ ! $option =~ ^[1-9][0-9]*$ ]]; then
+                echo "vcli: --version requires a positive decimal integer" >&2
+                return 2
+            fi
+            # Only trusted decimal digits enter the Vault query string.
+            _cat "$path?version=$option"
+            ;;
+        metadata)
+            metadata=$(vcli_kv2_metadata_path "$path") || return 1
+            _curl -_api_path_- "$metadata" "" GET
+            ;;
+        *) echo "vcli: unknown history read mode" >&2; return 2 ;;
+    esac
+}
+
 # Encode path components but do not encode / or the query delimiter ?.
 function vcli_encode_endpoint(){
     local raw="${1#/}" path query encoded
@@ -1152,14 +1182,23 @@ function run_cmd(){
             backup)                 backIFS=$IFS; IFS=$' ' ; _backup "$arg1"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
             restore)                backIFS=$IFS; IFS=$' ' ; _restore "$arg1"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
             cat)
-                if [[ $arg1 == --api-path ]]; then
-                    [[ -n $arg2 && -z $arg3 ]] || { echo "Usage: cat --api-path KV2/data/path" >&2; return 2; }
-                    local api_path=""
-                    vcli_validate_kv2_api_read_path GET "$arg2" api_path || return 2
-                    _cat -_api_path_- "$api_path"
-                else
-                    _cat "$arg1"
-                fi
+                case "$arg1" in
+                    --api-path)
+                        [[ -n $arg2 && -z $arg3 ]] || { echo "Usage: cat --api-path KV2/data/path" >&2; return 2; }
+                        local api_path=""
+                        vcli_validate_kv2_api_read_path GET "$arg2" api_path || return 2
+                        _cat -_api_path_- "$api_path"
+                        ;;
+                    --version)
+                        [[ -n $arg2 && -n $arg3 ]] || { echo "Usage: cat --version N KV2/logical/path" >&2; return 2; }
+                        vcli_kv2_history_read version "$arg2" "$arg3"
+                        ;;
+                    --metadata)
+                        [[ -n $arg2 && -z $arg3 ]] || { echo "Usage: cat --metadata KV2/logical/path" >&2; return 2; }
+                        vcli_kv2_history_read metadata "" "$arg2"
+                        ;;
+                    *) _cat "$arg1" ;;
+                esac
             ;;
             put)                    _put "$arg1" "$arg2 $arg3" ;;
             addsecret)              _addsecret "$arg1" "$arg2 $arg3" ;;

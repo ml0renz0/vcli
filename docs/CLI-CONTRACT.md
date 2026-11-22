@@ -89,6 +89,8 @@ montaje automáticamente ni valida el tipo de cada mount en tiempo de uso.
 | Comando clásico | Traducción KV v2 | Semántica observable |
 | --- | --- | --- |
 | `cat PATH` | GET `mount/data/path` | Solo el objeto de la versión activa; datos nulos, destruidos o inválidos implican fallo, nunca éxito con metadatos en lugar del secreto |
+| `cat --version N PATH` | GET `mount/data/path?version=N` | Lee la versión histórica positiva N, sin modificar Vault. Si está soft-deleted o destruida, falla; rutas lógicas incluso con carpeta `data/` |
+| `cat --metadata PATH` | GET `mount/metadata/path` | Presenta metadatos y versiones sin leer secretos; requiere ACL `read` sobre metadata y sigue disponible tras un soft-delete |
 | `ls PATH` | LIST `mount/metadata/path` | Lista nombres, **incluidos los soft-deleted** mientras Vault conserve metadatos; no prueba que puedan leerse |
 | `tree PATH` | LIST `mount/metadata/path` recursivo | Estructura de nombres, no estados ni valores; mount vacío y ruta inexistente necesitan distinguirse por la información del mount |
 | `put PATH JSON` | POST `mount/data/path` con `data` y CAS | Crea una versión; CAS a partir de `current_version` de metadata, 0 al crear; una carrera debe fallar sin reintentar la escritura |
@@ -115,9 +117,10 @@ explícita y tests de historial/recuperación. Véase
    demás se rechaza antes de contactar Vault. La implementación interna
    sigue usando `-_api_path_-` y conserva la separación de transporte.
    Se exige aceptación real Vault TLS y PTY antes de cerrar.
-2. **Operaciones históricas de KV v2:** el CLI todavía no expone comandos
-   específicos y consistentes para leer una versión, ver metadatos,
-   recuperar versiones borradas (`undelete`) o destruir una versión
+2. **Operaciones históricas de KV v2:** `cat --version N` y
+   `cat --metadata` están implementadas como candidatas de solo lectura,
+   pendientes de aceptación. Siguen faltando recuperación de versiones
+   borradas (`undelete`) y destrucción de versiones concretas
    (`destroy`). `rm --purge` **no** sustituye estas operaciones.
 3. **Autodescubrimiento:** `VAULT_KV_MOUNTS` es una declaración del cliente,
    no una consulta autoritativa del servidor. Hay que contrastar
