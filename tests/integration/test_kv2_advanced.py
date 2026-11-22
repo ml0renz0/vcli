@@ -280,6 +280,42 @@ class KV2AdvancedTests(unittest.TestCase):
         self.assertEqual(self.meta(root + "/deleted"), deleted_before)
         self.assertEqual(self.get("outside/sentinel"), {"fixture": "untouched"})
 
+    def test_16_rmtree_purge_removes_every_version_and_tombstone(self):
+        """Permanent recursive KV2 deletion must erase metadata, not just data."""
+        root = "purge-tree"
+        self.put(root + "/active", {"generation": 1})
+        self.put(root + "/active", {"generation": 2})
+        self.put(root + "/deleted", {"generation": 1})
+        self.put(root + "/deep/leaf", {"generation": 1})
+        self.put("outside/purge-sentinel", {"keep": True})
+        api("DELETE", f"kv2/data/{self.p}/{root}/deleted")
+        self.assertEqual(self.meta(root + "/active")["current_version"], 2)
+        self.assertTrue(self.meta(root + "/deleted")["versions"]["1"]["deletion_time"])
+
+        command = f"rmtree -f --purge kv2/{self.p}/{root}"
+        done, _ = invoke(command, version=2)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("Permanently purged 3 KV v2 secret(s)", done.stdout)
+        for leaf in ("active", "deleted", "deep/leaf"):
+            with self.subTest(leaf=leaf):
+                with self.assertRaises(error.HTTPError) as missing:
+                    api("GET", f"kv2/metadata/{self.p}/{root}/{leaf}")
+                self.assertEqual(missing.exception.code, 404)
+        self.assertEqual(self.get("outside/purge-sentinel"), {"keep": True})
+
+    def test_17_rmtree_purge_rejects_kv1_and_entire_mount(self):
+        """A destructive mode must never fall back to a KV1 DELETE."""
+        from .test_vault import api
+        prefix = self.p + "/not-purged"
+        api("POST", f"kv1/{prefix}/keep", {"keep": True})
+        for cmd in (f"rmtree -f --purge kv1/{prefix}",
+                    "rmtree -f --purge kv2",
+                    "rmtree -f --purge team/config"):
+            with self.subTest(cmd=cmd):
+                done, _ = invoke(cmd, version=2)
+                self.assertNotEqual(done.returncode, 0)
+        self.assertEqual(api("GET", f"kv1/{prefix}/keep")["data"], {"keep": True})
+
     def test_07_field_updates_increment_versions(self):
         self.put("edit/item",{"x":1,"keep":True})
         self.cli(f'addsecret kv2/{self.p}/edit/item {{"y":2}}')
