@@ -209,6 +209,22 @@ El backup sigue siendo de valores vigentes, no snapshots del historial KV2.
 Las mediciones de tiempo se registran en el job, sin declarar objetivos
 de rendimiento hasta disponer de resultados reales.
 
+## Demo asciinema SaaS (adicional)
+
+Con `VCLI_PLAYGROUND_PROFILE=saas scripts/playground.sh up`, el grabador
+selecciona automáticamente `vcli-playground-saas.cast`. El workflow de escala
+adjunta `vcli-playground-saas-asciinema` tras validar la grabación, antes de
+los backups de miles de hojas. Mantiene una sola terminal real y cubre los
+43 comandos públicos: inventario de tenants, auditoría de los cuatro estados
+X.509, pares defectuosos, keytabs auténticos sintéticos y corruptos, 403/404,
+rotación de 18 coincidencias, migración y recuperación de un tenant de 270
+hojas y el recorrido completo de utilidades. No usa cortes ni prompts falsos.
+Los fallos de Kerberos no equivalen a autenticar contra un KDC; `klist` y la
+coincidencia exacta del principal comprueban el contenido local.
+
+Los sabores persistentes se validan también en `test_enterprise.py`, antes de
+la demo estándar. Una prueba de escala es independiente de la grabación.
+
 ## Demo asciinema
 
 El job de playground de la CI genera la grabación auténtica vcli-playground.cast

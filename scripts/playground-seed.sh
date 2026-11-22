@@ -147,7 +147,7 @@ seed_enterprise() {
 
 # Stable manual reproduction fixtures, independent of the scale catalogue.
 seed_flavours() (
-    local f="$STATE/fixtures" encoded bad pair stem days
+    local f="$STATE/fixtures" encoded alternate bad pair stem days
     encoded=$(base64 < "$f/http.keytab" | tr -d '\n')
     for stem in healthy warning critical; do
         case "$stem" in healthy) days=90;; warning) days=20;; critical) days=3;; esac
@@ -206,8 +206,9 @@ CNF
 
     pair=$(jq -nc --arg kt "$encoded" '{http_principal:"HTTP/service.example.test@EXAMPLE.TEST",http_keytab:$kt}')
     api POST kv1/flavours/kerberos/valid/http "$pair" >/dev/null
+    alternate='BQIAAABXAAIADEVYQU1QTEUuVEVTVAAESFRUUAASb3RoZXIuZXhhbXBsZS50ZXN0AAAAAWVT8QABABIAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f'
     api POST kv1/flavours/kerberos/valid/multiple \
-        "$(jq -nc --arg kt "$encoded" '{first_principal:"HTTP/service.example.test@EXAMPLE.TEST",first_keytab:$kt,second_principal:"HTTP/service.example.test@EXAMPLE.TEST",second_keytab:$kt}')" >/dev/null
+        "$(jq -nc --arg kt "$encoded" --arg other "$alternate" '{first_principal:"HTTP/service.example.test@EXAMPLE.TEST",first_keytab:$kt,second_principal:"HTTP/other.example.test@EXAMPLE.TEST",second_keytab:$other}')" >/dev/null
     api POST kv1/flavours/kerberos/invalid/bad-base64 \
         '{"http_principal":"HTTP/service.example.test@EXAMPLE.TEST","http_keytab":"INVALID@@@"}' >/dev/null
     bad=$(printf 'not a keytab' | base64 | tr -d '\n')
@@ -230,7 +231,7 @@ CNF
     api POST kv1/flavours/json/exact '{"nested":{"b":2,"a":1},"value":"a  b"}' >/dev/null
     api POST kv1/flavours/json/different '{"nested":{"a":1,"b":2},"value":"a b"}' >/dev/null
     api POST kv1/flavours/json/types '{"string":"001","number":1,"float":1.5,"bool":true,"null":null,"array":[1,false,{"a":"b"}],"unicode":"Madrid — 日本","empty":{}}' >/dev/null
-    api POST kv1/flavours/json/empty '{}' >/dev/null
+    api POST kv1/flavours/json/empty '{"object":{},"array":[],"string":""}' >/dev/null
     api POST kv1/flavours/collision/src/a '{"source":true}' >/dev/null
     api POST kv1/flavours/collision/src/z '{"source":true}' >/dev/null
     api POST kv1/flavours/collision/dest/z '{"sentinel":true}' >/dev/null

@@ -177,6 +177,71 @@ class EnterpriseContracts(unittest.TestCase):
         self.assertEqual(actual, values)
         return path
 
+    def test_all_persistent_flavours(self):
+        root = "kv1/flavours"
+        good = self.snapshot(root + "/pki/valid")
+        self.assertEqual(set(good), {"healthy", "warning", "critical", "expired", "multiple"})
+        out = self.cli("getallcertexpiration " + root + "/pki/valid", readonly=True)
+        for leaf, status in (("healthy", "OK"), ("warning", "WARNING"),
+                             ("critical", "CRITICAL"), ("expired", "EXPIRED")):
+            self.assertRegex(out, r"/" + root + "/pki/valid/" + leaf
+                             + r"\): -?\d+ days to renew certificate \[" + status + r"\]")
+        self.assertNotIn("[OK]", self.cli("getallcertexpiration " + root + "/pki/valid -oo",
+                                        readonly=True))
+        self.assertNotIn("[WARNING]", self.cli("getallcertexpiration " + root + "/pki/valid -ow",
+                                             readonly=True))
+        critical = self.cli("getallcertexpiration " + root + "/pki/valid -oc", readonly=True)
+        self.assertNotIn("[CRITICAL]", critical)
+        self.assertNotIn("[EXPIRED]", critical)
+        self.cli("getcert " + root + "/pki/valid/multiple", readonly=True)
+        for stem in ("first", "second"):
+            for suffix in ("crt", "key"):
+                file = self.work / (stem + "." + suffix)
+                self.assertEqual(file.read_text(), good["multiple"][stem + "_" + suffix])
+                self.assertEqual(file.stat().st_mode & 0o777, 0o600)
+                file.unlink()
+        for leaf in ("key-mismatch", "malformed", "missing-key", "extra-key"):
+            self.cli("getcert " + root + "/pki/invalid/" + leaf, readonly=True, success=False)
+        self.assertFalse(list(self.work.glob("*.crt")))
+        self.assertFalse(list(self.work.glob("*.key")))
+
+        import base64
+        valid = self.read(root + "/kerberos/valid/multiple")
+        out = self.cli("getallkrblist " + root + "/kerberos/valid", readonly=True)
+        for stem in ("first", "second"):
+            self.assertIn(valid[stem + "_principal"], out)
+        self.cli("getkrb " + root + "/kerberos/valid/multiple", readonly=True)
+        for stem in ("first", "second"):
+            file = self.work / (valid[stem + "_principal"].replace("/", "_") + ".keytab")
+            self.assertEqual(file.read_bytes(), base64.b64decode(valid[stem + "_keytab"]))
+            self.assertEqual(file.stat().st_mode & 0o777, 0o600)
+            file.unlink()
+        for leaf in ("bad-base64", "corrupt-keytab", "wrong-principal", "prefix-principal",
+                     "unsafe-principal", "missing-keytab", "extra-keytab", "shell-metachar"):
+            for command in ("getkrb", "getprinc"):
+                self.cli(command + " " + root + "/kerberos/invalid/" + leaf,
+                         readonly=True, success=False)
+        self.assertFalse(list(self.work.glob("*.keytab")))
+        self.assertEqual(self.read(root + "/json/empty"), {"object": {}, "array": [], "string": ""})
+        typed = self.read(root + "/json/types")
+        self.assertIs(typed["bool"], True)
+        self.assertIsNone(typed["null"])
+        self.assertEqual(typed["string"], "001")
+        self.assertEqual(typed["number"], 1)
+        self.assertEqual(typed["array"], [1, False, {"a": "b"}])
+        for mount in ("kv2", "team/config"):
+            prefix = mount + "/flavours/lifecycle/"
+            meta = self.api("GET", self.endpoint(prefix + "versioned", listing=True))["data"]
+            self.assertEqual(meta["current_version"], 2)
+            self.assertTrue(meta["cas_required"])
+            self.assertEqual(self.read(prefix + "versioned"), {"revision": 2})
+            for leaf, destroyed in (("soft-deleted", False), ("destroyed", True)):
+                self.missing(prefix + leaf)
+                meta = self.api("GET", self.endpoint(prefix + leaf, listing=True))["data"]
+                self.assertEqual(meta["versions"]["1"]["destroyed"], destroyed)
+                if not destroyed:
+                    self.assertTrue(meta["versions"]["1"]["deletion_time"])
+
     def test_enterprise_recursion_full_catalog(self):
         manifest = expected_paths()
         originals = {root: self.snapshot(root) for root in manifest}

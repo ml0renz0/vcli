@@ -10,7 +10,11 @@ command -v asciinema >/dev/null || { echo 'Install asciinema first' >&2; exit 1;
     echo 'Run scripts/playground.sh up first' >&2
     exit 1
 }
-output="${1:-$ROOT/vcli-playground.cast}"
+profile=standard
+if [[ -f .playground/profile ]]; then profile=$(<.playground/profile); fi
+default="$ROOT/vcli-playground.cast"
+if [[ $profile == saas ]]; then default="$ROOT/vcli-playground-saas.cast"; fi
+output="${1:-$default}"
 [[ $output == /* ]] || output="$ROOT/$output"
 [[ $output == *.cast ]] || { echo 'Output must end in .cast' >&2; exit 2; }
 mkdir -p -- "$(dirname -- "$output")"

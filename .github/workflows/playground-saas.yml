@@ -5,6 +5,11 @@ on:
     paths:
       - 'scripts/playground-seed-saas.py'
       - 'scripts/playground.sh'
+      - 'scripts/playground-seed.sh'
+      - 'scripts/playground-demo.sh'
+      - 'scripts/record-playground-demo.sh'
+      - 'vcli'
+      - 'tests/playground/test_enterprise.py'
       - 'tests/playground/test_saas.py'
       - 'tests/cli/test_saas_manifest.py'
       - '.github/workflows/playground-saas.yml'
@@ -27,13 +32,47 @@ jobs:
       - name: Install playground requirements
         run: |
           sudo apt-get update -qq -o Acquire::Retries=2
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq jq curl openssl krb5-user
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq jq curl openssl krb5-user asciinema
           docker compose version
           python3 tests/cli/test_saas_manifest.py
       - name: Seed the additive SaaS profile
         env:
           VCLI_PLAYGROUND_PROFILE: saas
         run: scripts/playground.sh up
+      - name: Record complete interactive SaaS demo
+        run: scripts/record-playground-demo.sh vcli-playground-saas.cast
+      - name: Validate the continuous cast and private credential exclusion
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, re
+          rows = pathlib.Path("vcli-playground-saas.cast").read_text().splitlines()
+          header = json.loads(rows[0])
+          assert header["version"] in (2, 3)
+          assert "idle_time_limit" not in header
+          events = [json.loads(row) for row in rows[1:]]
+          output = "".join(e[2] for e in events if e[1] == "o")
+          output = re.sub(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\([A-Za-z])", "", output)
+          for value in ("tenant-032", "[OK]", "[WARNING]", "[CRITICAL]", "[EXPIRED]",
+                        "invalid keytab or principal", "certificate/private key mismatch",
+                        "Vault backup restored:", "FAKE-SHARED-ROTATED", "[403]", "[404]",
+                        "scripts/playground.sh shell readonly", "scripts/playground.sh shell admin",
+                        "exit 0"):
+              assert value in output, f"Missing SaaS demo marker: {value}"
+          for name in ("root-token", "readonly-token", "role-id", "secret-id"):
+              secret = pathlib.Path(".playground", name).read_text().strip()
+              assert not secret or secret not in output, "Credential in cast"
+          assert len(events) > 100
+          print("Validated continuous SaaS recording")
+          PY
+      - name: Upload the verified SaaS asciicast
+        uses: actions/upload-artifact@v4
+        with:
+          name: vcli-playground-saas-asciinema
+          path: vcli-playground-saas.cast
+          if-no-files-found: error
+          retention-days: 7
+      - name: Validate persistent flavours
+        run: python3 tests/playground/test_enterprise.py EnterpriseContracts.test_all_persistent_flavours
       - name: Run full live SaaS backup and tenant recovery contracts
         run: python3 tests/playground/test_saas.py
       - name: Remove disposable Vault
