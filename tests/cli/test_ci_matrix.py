@@ -138,6 +138,24 @@ class VaultMatrixParity(unittest.TestCase):
         self.assertEqual(fragments[4:], test_modules()[0],
                          "macOS must run the same 13 unmodified E2E suites as Linux")
 
+    def test_current_documentation_tracks_mandatory_e2e_modules(self):
+        """Current support claims must match the same modules guarded in CI.
+
+        Historical milestones below the current summary can retain old counts.
+        """
+        root = RUNNER.parents[2]
+        readme = (root / "README.md").read_text(encoding="utf-8")
+        guide = (root / "docs" / "CI-CD.md").read_text(encoding="utf-8")
+        summary = guide.split("## Trunk-based development", 1)[0]
+        count = len(MANDATORY)
+        self.assertIn(f"{count} módulos E2E", readme)
+        self.assertIn(f"{count} módulos E2E", summary)
+        self.assertIn("static + integration + minimal + playground + macos", guide)
+        for obsolete in ("12 suites E2E", "170 tests", "portabilidad nativa BSD/macOS"):
+            with self.subTest(obsolete=obsolete):
+                self.assertNotIn(obsolete, summary)
+        self.assertNotIn("está en validación", readme.split("## Probarlo", 1)[0])
+
     def test_manual_benchmark_does_not_repeat_full_vault_matrix(self):
         workflow = (RUNNER.parents[2] / ".github" / "workflows" / "ci.yml").read_text()
         condition = "!(github.event_name == 'workflow_dispatch' && inputs.recursive_benchmark)"

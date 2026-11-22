@@ -29,14 +29,16 @@ real**; no sustituirlo por una implementación Python o Go.
   inseguros, destinos existentes y archivos parcialmente escritos.
 
 **Compatibilidad verificada en CI:** Vault 1.20.4, 1.21.4, 2.0.4 y 2.1.1
-desde Ubuntu; todas las suites E2E también se ejecutan en Alpine 3.22 y
+desde Ubuntu; los mismos **13 módulos E2E** se ejecutan en Alpine 3.22 y
 Debian bookworm-slim con Vault 2.1.1. Esto **no** certifica otros entornos ni
 todos los casos de uso. La PR de desarrollo sigue pendiente de auditoría final.
 
-**macOS:** la CI ejecuta pruebas offline y E2E contra Vault 2.1.1 nativo
-con TLS en macOS 15, usando Bash moderno y GNU coreutils de Homebrew.
-La ampliación a los 13 módulos E2E de Linux está en validación; no se ha
-acreditado compatibilidad con utilidades BSD nativas. Véase [CI/CD](docs/CI-CD.md).
+**macOS:** la CI ejecuta pruebas offline y los mismos **13 módulos E2E**
+contra Vault 2.1.1 nativo con TLS en macOS 15; esta paridad ya está validada.
+Utiliza Bash moderno y GNU coreutils de Homebrew, aunque algunas operaciones
+sensibles usan `date`, `stat`, `base64`, `mktemp` o syscalls nativas BSD.
+**No** se ha acreditado un runtime completamente libre de GNU.
+Véase [CI/CD](docs/CI-CD.md).
 
 ## Probarlo con un Vault real, sin tocar producción
 

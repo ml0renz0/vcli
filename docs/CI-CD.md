@@ -8,6 +8,12 @@ Esta documentación se refiere al **revival de vcli (candidato v0.7)**. Las
 capacidades declarativas futuras pertenecen al roadmap posterior del mismo
 proyecto y no están implementadas en el candidato actual.
 
+**Estado vigente (22-11-2026):** Ubuntu, Alpine, Debian y macOS ejecutan los
+mismos 13 módulos E2E frente a Vault TLS real. macOS utiliza Bash y parte
+de las herramientas GNU de Homebrew; los hitos P-01–P-05 siguientes registran
+la evolución histórica, no requisitos aún pendientes salvo que se indique.
+La fase 04-Q y la auditoría final siguen abiertas.
+
 ## Flujo de validación
 
 ```text
@@ -40,6 +46,11 @@ PR / merge a master / manual / cron semanal
      │ up → smoke → reset → smoke → down (Bash real)     │
      └─────────┬─────────────────────────────────────────┘
                │
+     ┌─────────▼─────────────────────────────────────────┐
+     │ macOS 15: Bash moderno + Vault 2.1.1 TLS nativo  │
+     │ 13 módulos E2E + contratos offline; sin Docker    │
+     └─────────┬─────────────────────────────────────────┘
+               │
      ┌─────────▼──────────┐
      │ gate REQUIRED      │
      │ *todo* debe pasar  │
@@ -62,7 +73,8 @@ Los tokens de test nunca proceden de GitHub Secrets ni de un Vault externo.
 | Syntax/quality | `bash -n`, ShellCheck severidad error | PR obligatorio |
 | Source guard | No `eval` en transporte, no `curl -k` fijo, sin secretos de prueba al arrancar | PR obligatorio |
 | Contratos CLI | Ayuda, versión, flags inválidos, errores de configuración y salida sin credenciales | PR obligatorio |
-| Linux mínimo | Alpine 3.22 (musl) y Debian bookworm-slim (glibc): **las 12 suites E2E completas (170 tests por distribución)**, con KV v1/v2, TLS/mTLS avanzado, CAS, concurrencia, fault injection, ACL, PKI/Kerberos y 38 PTY, contra Vault HTTPS 2.1.1 | PR obligatorio |
+| Linux mínimo | Alpine 3.22 (musl) y Debian bookworm-slim (glibc): **13 módulos E2E compartidos**, con KV v1/v2, TLS/mTLS avanzado, CAS, concurrencia, fault injection, ACL, PKI/Kerberos y PTY, contra Vault HTTPS 2.1.1 | PR obligatorio |
+| macOS nativo | macOS 15 con Bash moderno, GNU Homebrew, Vault 2.1.1 TLS sin Docker y **13 módulos E2E compartidos**, además de contratos de portabilidad BSD puntuales | PR obligatorio |
 | Playground local | Docker Compose con Vault TLS real, catálogo sintético completo KV/X.509/keytab, AppRole/ACL, `up` repetible, `smoke`, `reset`, `down` y eliminación de estado; CLI Bash + oráculo API | PR obligatorio |
 | Rendimiento CLI | Benchmark del arranque `--version`: 2 warmups + 12 muestras, p50/p95 informativos y presupuesto p95 conservador de 2500 ms por contenedor | PR obligatorio |
 | Rendimiento con Vault | 2 warmups + 10 invocaciones nuevas `vcli -n` para `cat` KV v1 HTTPS; verificación del valor vía JSON y p50/p95, límite de bloqueo conservador p95 8000 ms | PR obligatorio |
@@ -76,17 +88,17 @@ Los tokens de test nunca proceden de GitHub Secrets ni de un Vault externo.
 | Privacidad | el payload secreto no debe guardarse en `.vclistory` | PR obligatorio |
 | REPL PTY smoke | abrir consola, ejecutar `help`, salir con `Ctrl+D` | PR obligatorio |
 
-La matriz de Ubuntu ejecuta las **12 suites E2E (170 tests)** en cada una de
-cuatro versiones de Vault; Alpine 3.22 y Debian bookworm-slim ejecutan **las
-mismas 12 suites y 170 tests** contra una instancia TLS real independiente
-de Vault 2.1.1 por distribución. La cobertura incluye KV v1/v2, ACL/AppRole,
+La matriz de Ubuntu ejecuta los **13 módulos E2E** en cada una de
+cuatro versiones de Vault; Alpine 3.22, Debian bookworm-slim y macOS 15
+ejecutan los mismos módulos contra instancias TLS reales independientes
+de Vault 2.1.1, sin omisiones por plataforma. La cobertura incluye KV v1/v2, ACL/AppRole,
 CAS, concurrencia, TLS avanzado/mTLS, fault injection, restauraciones,
 PKI/Kerberos y 38 regresiones PTY en Linux. Una prueba estática adicional
 (`tests.cli.test_ci_matrix`) exige paridad exacta de módulos entre el
-runner Ubuntu y los clientes mínimos para impedir regresiones de cobertura.
+runner Ubuntu, los clientes mínimos y macOS para impedir regresiones de cobertura.
 
 **Límites**: no se garantiza aún equivalencia de otras versiones Vault en
-Alpine/Debian, portabilidad nativa BSD/macOS, comportamiento visual Unicode
+Alpine/Debian/macOS, portabilidad macOS sin GNU Homebrew, comportamiento visual Unicode
 o al redimensionar terminales, ni operaciones no contempladas por los
 contratos actuales. Los datos del benchmark corresponden solo al CI.
 
@@ -108,13 +120,14 @@ contratos actuales. Los datos del benchmark corresponden solo al CI.
 5. **PKI y Kerberos**: ya existen fixtures sintéticos, comparación de claves,
    permisos 0600, exportación, casos malformados y recorridos. Revisar
    dependencias y errores de disco en la auditoría. Nunca usar secretos reales.
-6. **Fault injection**: las doce suites E2E incluyen distintos errores TLS,
+6. **Fault injection**: los 13 módulos E2E incluyen distintos errores TLS,
    HTTP, pérdida de respuesta y fallos parciales. Añadir únicamente escenarios
    ausentes y mantener la regla de no reintentar escrituras ambiguas.
 7. **Compatibilidad OS**: Ubuntu con cuatro versiones de Vault reales; en
    Alpine 3.22 (musl) y Debian bookworm-slim (glibc), CLI offline y **todas
-   las 12 suites E2E (170 tests)** contra Vault HTTPS 2.1.1. Continúan
-   pendientes BSD/macOS, Unicode/ancho de cursor, redimensionamientos,
+   los 13 módulos E2E** contra Vault HTTPS 2.1.1. La paridad de esos
+   módulos también está validada en macOS 15. Continúan pendientes la
+   ejecución sin GNU Homebrew, Unicode/ancho de cursor, redimensionamientos,
    pruebas largas de carga y otras versiones de Vault en distribuciones
    mínimas. Revisar periódicamente dependencias e imágenes de base.
 8. **Playground local con Vault real (previo al RC)**: Docker Compose y
@@ -202,8 +215,8 @@ El contenedor cliente utiliza `--network host` únicamente para alcanzar
 pública del fixture se montan en modo solo lectura. Se pasan exclusivamente
 tokens de prueba generados para ese Vault temporal.
 
-Las doce suites de `tests.integration` utilizadas en Ubuntu se ejecutan ahora
-también sin exclusiones en Alpine y Debian, con un Vault HTTPS 2.1.1 efímero.
+Los 13 módulos de `tests.integration` utilizados en Ubuntu se ejecutan
+sin exclusiones en Alpine, Debian y macOS, con Vault HTTPS 2.1.1 efímero.
 Cubren KV v1/v2, navegación, ACL, operaciones compuestas, backup/restore,
 certificados, keytabs, CAS, concurrencia, TLS avanzado/mTLS, expiración de
 tokens y fallos de respuesta o cortes de red. Se comprueba el efecto por la
@@ -217,20 +230,20 @@ JSON/valor del resultado de cada lectura. Registra mediana/p95; el máximo
 p95 de **8000 ms** detecta bloqueos severos, no sirve como SLA de producción
 ni comparación concluyente entre distribuciones/hardware.
 
-El `Required CI gate` exige `static + integration + minimal + playground`. En
-[CI #40793127176](https://github.com/ml0renz0/vcli/actions/runs/40793127176)
+El `Required CI gate` exige `static + integration + minimal + playground + macos`.
+En el hito histórico [CI #40793127176](https://github.com/ml0renz0/vcli/actions/runs/40793127176)
 pasaron 170 E2E por instancia: cuatro Vault en Ubuntu y otros dos Vault 2.1.1
 desde Alpine y Debian (**1020 ejecuciones E2E**). También se ejecutan
 los contratos CLI offline y un benchmark de lecturas reales. El gate
-estático incorpora una prueba de paridad de listas de suites para impedir
-desalineación futura. La cobertura multicontenedor no acredita compatibilidad
-nativa con BSD/macOS ni garantiza ausencia de regresiones fuera de las
+estático incorpora pruebas de paridad de módulos entre Linux y macOS para
+impedir desalineación futura. La cobertura no acredita un entorno macOS
+completamente libre de GNU ni garantiza ausencia de regresiones fuera de las
 operaciones concretas verificadas.
 
 ### Ejecución local
 
 ```bash
-python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_portability tests.cli.test_ci_matrix
+python3 -m unittest -v tests.cli.test_cli_contract tests.cli.test_ci_matrix tests.cli.test_stat_portability tests.cli.test_fs_publication
 python3 tests/cli/bench_startup.py
 bash -n vcli scripts/playground.sh scripts/playground-seed.sh tests/playground/smoke.sh
 # Requiere Docker y runtime Bash:
@@ -245,11 +258,13 @@ scripts/playground.sh down
 ```
 
 La matriz real y el playground ya están integrados en el gate obligatorio.
-Se mantienen limitaciones documentadas de portabilidad BSD/macOS, Unicode,
+Se mantienen limitaciones documentadas de portabilidad macOS sin GNU, Unicode,
 terminal y operaciones no cubiertas por los contratos. El merge **no**
 equivale a declarar estable vcli 0.7: quedan la fase 04-Q y la auditoría final.
 
 ## P-01: validación de contratos offline sobre macOS real
+
+*Hito histórico: el soporte actual incluye Vault TLS y 13 módulos E2E, véase P-04b.*
 
 El job obligatorio `macos-15` de la matriz utiliza **Bash moderno** y
 `coreutils` instalados con Homebrew (anteponiendo `gnubin` al PATH).
@@ -397,7 +412,7 @@ preexistentes, symlinks, colisiones y rutas con espacios. **En CI**:
 las pruebas con Vault TLS, PKI/Kerberos y el gate siguen siendo obligatorias.
 No se declara aún independencia completa de GNU Homebrew.
 
-### P-05g — eliminar GNU timeout del arranque (pendiente CI)
+### P-05g — eliminar GNU timeout del arranque (CI obligatoria validada)
 
 La comprobación inicial usa la misma `_curl` que el resto de los
 comandos: conexión HTTPS real y verificación de CA, respetando mTLS y
@@ -443,7 +458,7 @@ la matriz E2E completa; cualquiera de los intentos fallidos bloquea el
 workflow. Se mantiene la prueba original dentro de las 13 suites.
 **Cambio de pruebas únicamente; pendiente confirmación del gate**.
 
-### P-05h — consolidación del listado de ayuda (pendiente CI)
+### P-05h — consolidación del listado de ayuda (CI obligatoria validada)
 
 Se añade `tests.cli.test_help_efficiency` a los gates estáticos de
 Ubuntu y macOS para verificar que `commands_help` no altera `IFS`,
@@ -465,20 +480,20 @@ No se aceptan procesos sobrevivientes ni se silencian los errores.
 Se añade un contrato que simula el fallo de la señal de grupo y verifica
 la limpieza real del hijo. Sin cambios en `vcli` de producción.
 
-### 04-Q HTTP-01 — opciones TLS compartidas (pendiente CI)
+### 04-Q HTTP-01 — opciones TLS compartidas (CI obligatoria validada)
 
 `tests.cli.test_http_transport_args` corre tanto en Ubuntu como en macOS.
 AppRole y `_curl` comparten solo opciones TLS, no credenciales ni manejo de
 respuestas. Se preservan íntegramente la matriz Vault TLS y el gate global.
 
-### 04-Q HTTP-02 — respuesta JSON y temporal (pendiente CI)
+### 04-Q HTTP-02 — respuesta JSON y temporal (CI obligatoria validada)
 
 El renderer `vcli_emit_http_response` se prueba aisladamente en Ubuntu
 y macOS. `_curl` conserva errores de transporte y resultados inciertos
 sin reintentos, con limpieza común de la respuesta temporal.
 Los E2E Vault TLS, CAS, permisos y errores continúan obligatorios.
 
-### 04-Q HTTP-03 — propiedad de ficheros de petición (pendiente CI)
+### 04-Q HTTP-03 — propiedad de ficheros de petición (CI obligatoria validada)
 
 `_curl` no elimina nunca el fichero de petición recibido de su llamador.
 Cada operación limpia sus propios temporales en éxito y error; el
@@ -495,7 +510,7 @@ incorporan inyección de fallos JSON, HTTP, transporte y respuestas
 inválidas, preservando contratos de secretos fuera de argv y stdout.
 Se mantienen el job macOS, la matriz TLS y el Required CI gate.
 
-### 04-Q HTTP-05 — validación/render JSON en una pasada (pendiente CI)
+### 04-Q HTTP-05 — validación/render JSON en una pasada (CI obligatoria validada)
 
 El renderer hace una sola invocación jq para GET/LIST y conserva
 el contrato de JSON único tipo objeto; las pruebas offline verifican
