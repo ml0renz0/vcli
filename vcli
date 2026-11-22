@@ -1569,8 +1569,17 @@ function _backup(){
 
 # restore vault backup
 function _restore(){
-    local archive="${1:-}" listing entry relative payload types entry_type
+    local archive="${1:-}" cache rc
     [[ -f $archive && -r $archive ]] || { echo "Missing backup file" >&2; return 1; }
+    cache=$(mktemp -d "${VCLI_SESSION_TMP:-$TMP}/.vcli-restore.XXXXXX") || return 1
+    # The session also owns this private cache on signal/exit.
+    if _vcli_restore_cached "$archive" "$cache"; then rc=0; else rc=$?; fi
+    rm -rf -- "$cache" || return 1
+    return "$rc"
+}
+
+function _vcli_restore_cached(){
+    local archive="$1" cache="$2" listing entry relative payload types entry_type
     listing=$(tar -tzf "$archive") || return 1
     types=$(tar -tvzf "$archive") || return 1
     while IFS= read -r entry_type; do
@@ -1579,7 +1588,7 @@ function _restore(){
             echo "Unsupported archive member type" >&2; return 1;;
         esac
     done <<< "$types"
-    # Validate every entry before writing anything; never extract to the local disk.
+    # Validate every entry before writing anything; never use archive paths on disk.
     while IFS= read -r entry; do
         [[ -n $entry ]] || continue
         relative="${entry#./}"
@@ -1598,6 +1607,8 @@ function _restore(){
     done <<< "$listing"
     # Full preflight before any write: reject duplicate paths and non-object JSON.
     local -A seen_entries=()
+    local -a restore_paths=()
+    local total=0 completed=0
     while IFS= read -r entry; do
         [[ -n $entry ]] || continue
         relative="${entry#./}"
@@ -1606,28 +1617,24 @@ function _restore(){
             echo "Duplicate archive member: $relative" >&2; return 1
         fi
         seen_entries["$relative"]=1
-        payload=$(tar -xOzf "$archive" "$entry") || return 1
-        jq -e 'type == "object"' <<< "$payload" >/dev/null || {
+        # Numeric filenames only: archive member names never become local paths.
+        # Spool once, validate before the first write, then reuse the same bytes.
+        (umask 077; tar -xOzf "$archive" -- "$entry" > "$cache/$total") || return 1
+        jq -e 'type == "object"' "$cache/$total" >/dev/null || {
             echo "Invalid JSON object in archive: $relative" >&2; return 1;
         }
+        restore_paths+=("$relative")
+        (( total+=1 ))
     done <<< "$listing"
-    local completed=0 total=0
-    while IFS= read -r entry; do
-        relative="${entry#./}"
-        [[ -n $relative && $relative != . && $relative != */ ]] && (( total+=1 ))
-    done <<< "$listing"
-    while IFS= read -r entry; do
-        [[ -n $entry ]] || continue
-        relative="${entry#./}"
-        [[ -n $relative && $relative != . && $relative != */ ]] || continue
-        payload=$(tar -xOzf "$archive" "$entry") || {
+    for relative in "${restore_paths[@]}"; do
+        payload=$(<"$cache/$completed") || {
             _vcli_partial_failure restore "$completed" "$total" "$relative"; return 1;
         }
         _put "/$relative" "$payload" || {
             _vcli_partial_failure restore "$completed" "$total" "$relative"; return 1;
         }
         (( completed+=1 ))
-    done <<< "$listing"
+    done
     printf "Vault backup restored: %s\n" "$archive"
 }
 
