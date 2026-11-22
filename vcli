@@ -1389,21 +1389,48 @@ function _tree(){
         return 1
     fi
     [[ -n ${2:-} ]] && ((depth+=1))
-    debug "tree: visiting directory"
-    # Do not spawn a basename process for every visited directory.
     local node="${url##*/}"
-    [[ $url == / ]] && node="/"
-    padecho "$node/" "$depth" "$space" "$echo_space   "
-    # Use the shared LIST validator. Failed subtrees must abort traversal,
-    # rather than silently produce an incomplete successful tree.
-    paths=$(_vcli_children "$url") || return 1
+    [[ $url == / ]] && node=""
+    padecho "${node}/" "$depth" "$space" "$echo_space   "
+    if [[ $url == / ]]; then
+        # There is no LIST / endpoint. Root has mount points, like ls /.
+        paths=$(_ls "-_disable_colors_-" "/") || return 1
+        while IFS= read -r path; do
+            [[ -n $path ]] && padecho "$path" "$((depth+1))" "$space` " "$echo_space   "
+        done <<< "$paths"
+        return 0
+    fi
+    # A mount exists even when its first LIST returns 404 (empty KV).
+    # A nested missing path or an ACL/transport failure must still fail.
+    if [[ $url != */*/* ]]; then
+        local roots data_file code
+        roots=$(_ls "-_disable_colors_-" "/") || return 1
+        if grep -Fxq -- "${url#/}/" <<< "$roots"; then
+            data_file=$(mktemp "${VCLI_SESSION_TMP:-$TMP}/.vcli-tree.XXXXXX") || return 1
+            if ! _curl "$url/" "" LIST > "$data_file"; then
+                code=$http_code
+                rm -f -- "$data_file"
+                if [[ $code == 404 ]]; then
+                    padecho "(empty)" "$((depth+1))" "$space` " "$echo_space   "
+                    return 0
+                fi
+                return 1
+            fi
+            paths=$(jq -r 'if (.data.keys | type) == "array" then .data.keys[] else error("invalid LIST") end' "$data_file") || { rm -f -- "$data_file"; return 1; }
+            rm -f -- "$data_file"
+        else
+            paths=$(_vcli_children "$url") || return 1
+        fi
+    else
+        paths=$(_vcli_children "$url") || return 1
+    fi
     while IFS= read -r path; do
         [[ -n $path ]] || continue
         space=${space/+/ }
         if [[ $path == */ ]]; then
             _tree "$url/$path" "$depth" "$space+ " "$echo_space   " || return 1
         else
-            padecho "$path" "$((depth+1))" "$space\` " "$echo_space   "
+            padecho "$path" "$((depth+1))" "$space` " "$echo_space   "
         fi
     done <<< "$paths"
 }
