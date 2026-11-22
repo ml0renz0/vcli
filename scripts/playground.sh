@@ -160,7 +160,10 @@ api() {
     if (($#)); then
         opts+=(-H 'Content-Type: application/json' --data "$1")
     fi
-    curl "${opts[@]}" "$ADDRESS/v1/$path"
+    if ! curl "${opts[@]}" "$ADDRESS/v1/$path"; then
+        printf 'playground: Vault API request failed: %s %s\n' "$method" "$path" >&2
+        return 1
+    fi
 }
 
 health() {

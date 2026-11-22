@@ -35,6 +35,11 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq jq curl openssl krb5-user asciinema
           docker compose version
           python3 tests/cli/test_saas_manifest.py
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path("scripts/playground-demo.sh").read_text()
+          compile(source.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0], "playground-demo.sh", "exec")
+          PY
       - name: Seed the additive SaaS profile
         env:
           VCLI_PLAYGROUND_PROFILE: saas
