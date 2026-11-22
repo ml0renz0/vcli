@@ -2666,11 +2666,16 @@ function main(){
                             [[ $vcli_paste_mode == yes ]] ||
                                 vcli_apply_navigation "$_ss3_key"
                         fi
-                    elif [[ $_key == "b" ]]; then
+                    elif [[ $_key == "b" ]]; then # Alt+Left
                         [[ $vcli_paste_mode == yes ]] || vcli_move_word_left
-                    elif [[ $_key == "f" ]]; then
+                    elif [[ $_key == "f" ]]; then # Alt+Right
                         [[ $vcli_paste_mode == yes ]] || vcli_move_word_right
-                    elif [[ $_key == 
+                    elif [[ $_key == $'\x7f' ]]; then # Alt+Backspace
+                        [[ $vcli_paste_mode == yes ]] || vcli_delete_previous_word
+                    else
+                        # Preserve the ordinary/control key after a lone ESC.
+                        pending_key=$_key
+                    fi
                 fi
                 unset ENDHIST
             ;;
@@ -2752,7 +2757,11 @@ function main(){
                 fi
             ;;
             
-                            vcli_clear_editor
+            $'\x17') # Ctrl+W or Ctrl+Backspace
+                vcli_delete_previous_word
+            ;;
+            $'\x15') # Ctrl+U
+                vcli_clear_editor
                 printf '\r'
                 prompt
                 vcli_tput el
