@@ -148,3 +148,4 @@ jobs:
           retire_if_unchanged "$reports" e4c901e4aed53b38ca4c21786159c77795fd9bb2
           retire_if_unchanged "$branding" 865d7c0322e966a77655e19c76d73708c7916ab0
           retire_if_unchanged "docs/enable-asciinema-pages" b5bc63babe52643c61c10812e97d8f43b3e43bdb
+          retire_if_unchanged "fix/pages-artifact-visibility" 25bd7654d0a9e6999e105f235efdb425f350b70a
