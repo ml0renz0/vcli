@@ -89,7 +89,7 @@ class ExtendedVaultContracts(unittest.TestCase):
             lines = output.splitlines()
             self.assertTrue(lines and lines[0] == "/", output)
             self.assertEqual(len(lines), len(expected) + 1, output)
-            self.assertTrue(all(line.startswith(" \` ") for line in lines[1:]), output)
+            self.assertTrue(all(line.lstrip().startswith("` ") for line in lines[1:]), output)
             entries = [line.rsplit(None, 1)[-1] for line in lines[1:]]
             self.assertEqual(len(entries), len(set(entries)), "Duplicate mounts in root tree")
             self.assertEqual(set(entries), expected, "Tree omits or invents mountpoints")
@@ -124,6 +124,7 @@ class ExtendedVaultContracts(unittest.TestCase):
                     self.assertEqual(ctx.exception.code, 404)
                     for command in ("ls", "tree"):
                         output, _ = invoke(f"{command} {path}",
+                                           version=2 if path == kv2 else 1,
                                            mounts=f"kv2,team/config,{kv2}")
                         self.assertNotEqual(output.returncode, 0,
                                             f"{command} falsely reported success: {output.stdout}")
@@ -141,6 +142,7 @@ class ExtendedVaultContracts(unittest.TestCase):
                     self.assertEqual(api("LIST", raw_endpoint)["data"]["keys"], ["sentinel"])
                     for command in ("ls", "tree"):
                         output = self.command(f"{command} {path}",
+                                              version=2 if path == kv2 else 1,
                                               mounts=f"kv2,team/config,{kv2}")
                         self.assertIn("sentinel", output)
 
