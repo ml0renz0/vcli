@@ -123,7 +123,14 @@ Los interruptores de debug se prueban sin tráfico autenticado ni volcado de sec
 **Para grabar localmente, usa un playground recién creado, solo con datos
 sintéticos.** No hagas reset automático de un laboratorio con trabajo propio.
 
-Para reproducir: `asciinema play vcli-playground.cast`.
+Para reproducir: `asciinema play --speed 0.5 vcli-playground.cast`.
+
+El [visor web con velocidad ajustable](docs/asciinema-player.html) está preparado
+para GitHub Pages: una vez activado Pages desde `master/docs`, se reproducirán
+los casts publicados automáticamente tras superar la CI en `master`.
+Durante la PR, los enlaces a los artefactos de Actions del apartado anterior
+son la fuente verificada de las grabaciones.
+
 
 Para regenerarla localmente:
 

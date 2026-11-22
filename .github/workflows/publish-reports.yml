@@ -1,0 +1,68 @@
+name: Publish verified vcli reports
+
+# Activates when this file reaches the default branch.
+# The workflow_run event holds write permission: never run PR code here.
+on:
+  workflow_run:
+    workflows: [VCLI trunk validation, SaaS playground scale acceptance]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vcli-publish-reports
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+         github.event.workflow_run.head_branch == github.event.repository.default_branch &&
+         github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Render only verified reports, using trusted default-branch code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          WORKFLOW: ${{ github.event.workflow_run.name }}
+        run: |
+          set -euo pipefail
+          mkdir -p reports/demo
+          if [[ "$WORKFLOW" == 'VCLI trunk validation' ]]; then
+            gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" > reports/ci-jobs.json
+            python3 scripts/render-ci-reports.py jobs reports/ci-jobs.json reports/ci-times.svg
+            gh run download "$RUN_ID" -R "$REPO" \
+              -n vcli-playground-asciinema -D reports/demo
+            test -s reports/demo/vcli-playground.cast
+          elif [[ "$WORKFLOW" == 'SaaS playground scale acceptance' ]]; then
+            gh run download "$RUN_ID" -R "$REPO" -n vcli-saas-metrics -D reports
+            gh run download "$RUN_ID" -R "$REPO" \
+              -n vcli-playground-saas-asciinema -D reports/demo
+            test -s reports/demo/vcli-playground-saas.cast
+            python3 scripts/render-ci-reports.py saas \
+              reports/vcli-saas-metrics.json reports/saas-times.svg
+          else
+            exit 1
+          fi
+      - name: Publish snapshot, without re-running the whole test matrix
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add reports/
+          if git diff --cached --quiet; then
+            echo 'Reports unchanged'
+            exit 0
+          fi
+          git commit -m 'docs(reports): refresh verified measurements and casts [skip ci]'
+          git push origin "HEAD:${{ github.event.repository.default_branch }}"

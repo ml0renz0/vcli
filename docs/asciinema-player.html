@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>vcli · demos de terminal</title>
+<link rel="icon" href="../assets/branding/favicon.svg">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/asciinema-player@3/dist/bundle/asciinema-player.css">
+<style>
+body{font-family:system-ui,sans-serif;background:#0a1410;color:#e5f7e8;max-width:1050px;margin:2rem auto;padding:1rem}
+h1{color:#69f52b}label{margin-right:1rem}select{padding:.6rem;background:#173122;color:white;border:1px solid #69f52b}
+#player{margin-top:1.5rem}small{color:#b1c6b7}
+</style>
+</head>
+<body>
+<h1>vcli · Vault TLS en acción</h1>
+<p>Grabaciones verificadas con Vault real y datos sintéticos. Puedes ralentizar la reproducción sin ralentizar las pruebas.</p>
+<label for="demo">Grabación:</label>
+<select id="demo"><option value="vcli-playground.cast">Playground</option><option value="vcli-playground-saas.cast">SaaS multitenant</option></select>
+<label for="speed">Velocidad:</label>
+<select id="speed"><option value="1">1×</option><option value="0.75">0,75×</option><option value="0.5" selected>0,5×</option><option value="0.25">0,25×</option></select>
+<div id="player"></div>
+<p><small>Necesita GitHub Pages y las grabaciones publicadas tras ejecutar con éxito en master.</small></p>
+<script src="https://cdn.jsdelivr.net/npm/asciinema-player@3/dist/bundle/asciinema-player.min.js"></script>
+<script>
+let playback;
+function show() {
+  if (playback) { playback.dispose(); playback=null; }
+  const name=document.getElementById('demo').value;
+  const speed=Number(document.getElementById('speed').value);
+  const url='https://raw.githubusercontent.com/ml0renz0/vcli/master/reports/demo/'+name;
+  playback=AsciinemaPlayer.create(url,document.getElementById('player'),
+    {speed,controls:true,autoPlay:false,fit:'width',idleTimeLimit:8});
+}
+document.getElementById('demo').addEventListener('change',show);
+document.getElementById('speed').addEventListener('change',show);
+show();
+</script>
+</body>
+</html>
