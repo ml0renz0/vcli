@@ -55,5 +55,38 @@ class EndpointEncodingContracts(unittest.TestCase):
                 self.assertEqual(self.encode(raw), expected)
 
 
+    def test_kv2_reserved_logical_segments_always_get_typed_endpoints(self):
+        """A folder named data/metadata/delete is not an API selector."""
+        source = SOURCE.read_text(encoding="utf-8")
+        functions = []
+        for name in ("vcli_match_kv2_mount", "vcli_kv_path"):
+            match = re.search(rf"^function {name}\(\)\{{.*?^\}}", source, re.M | re.S)
+            self.assertIsNotNone(match, name)
+            functions.append(match.group(0))
+        script = "\n".join(functions) + """
+VAULT_KV_VERSION=2
+VAULT_KV_MOUNTS=team,team/config,kv2
+for mount in kv2 team/config; do
+  for segment in data metadata delete; do
+    for method in GET LIST POST; do
+      printf '%s|%s|%s\\n' "$mount" "$method" \
+        "$(vcli_kv_path "$mount/$segment/folder/item" "$method")"
+    done
+  done
+done
+"""
+        proc = subprocess.run(["bash", "-c", script], text=True,
+                              capture_output=True, timeout=8)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        actual = proc.stdout.splitlines()
+        expected = []
+        for mount in ("kv2", "team/config"):
+            for segment in ("data", "metadata", "delete"):
+                for method in ("GET", "LIST", "POST"):
+                    layer = "metadata" if method == "LIST" else "data"
+                    expected.append(f"{mount}|{method}|{mount}/{layer}/{segment}/folder/item")
+        self.assertEqual(actual, expected)
+
+
 if __name__ == "__main__":
     unittest.main()

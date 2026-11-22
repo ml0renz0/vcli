@@ -316,6 +316,79 @@ class KV2AdvancedTests(unittest.TestCase):
                 self.assertNotEqual(done.returncode, 0)
         self.assertEqual(api("GET", f"kv1/{prefix}/keep")["data"], {"keep": True})
 
+
+    def test_18_reserved_names_are_literal_kv2_folders_in_nested_mounts(self):
+        """ACC-10: compare normal CLI reads/LIST with authoritative KV2 API."""
+        import json
+        mounts = "team,team/config,kv2"  # exercises longest prefix
+        for mount in ("kv2", "team/config"):
+            for name in ("data", "metadata", "delete"):
+                with self.subTest(mount=mount, literal=name):
+                    leaf = f"{name}/{self.p}/literal"
+                    value = {"literal_folder": name, "mount": mount}
+                    api("POST", f"{mount}/data/{leaf}", {"data": value})
+                    self.assertEqual(api("GET", f"{mount}/data/{leaf}")["data"]["data"], value)
+                    read, _ = invoke(f"cat {mount}/{leaf}", version=2, mounts=mounts)
+                    self.assertEqual(read.returncode, 0, read.stdout + read.stderr)
+                    self.assertEqual(json.loads(read.stdout)["data"], value)
+                    listing, _ = invoke(
+                        f"ls {mount}/{name}/{self.p}", version=2, mounts=mounts)
+                    self.assertEqual(listing.returncode, 0, listing.stdout + listing.stderr)
+                    self.assertEqual(listing.stdout.strip(), "literal")
+
+    def test_19_reserved_names_support_safe_copy_recursive_purge_and_move(self):
+        """Use only isolated Vault TLS fixtures and verify final server state."""
+        mounts = "team,team/config,kv2"
+        source = f"data/{self.p}/copy-src"
+        destination = f"metadata/{self.p}/copy-dest"
+        sentinel = f"delete/{self.p}/sentinel"
+        api("POST", f"kv2/data/{sentinel}", {"data": {"untouched": True}})
+        for name in ("one", "deep/two"):
+            api("POST", f"kv2/data/{source}/{name}", {"data": {"id": name}})
+        cp, _ = invoke(f"cptree kv2/{source} kv2/{destination}",
+                       version=2, mounts=mounts)
+        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
+        for name in ("one", "deep/two"):
+            self.assertEqual(api("GET", f"kv2/data/{destination}/{name}")["data"]["data"],
+                             {"id": name})
+        purge, _ = invoke(f"rmtree -f --purge kv2/{source}",
+                          version=2, mounts=mounts)
+        self.assertEqual(purge.returncode, 0, purge.stdout + purge.stderr)
+        for name in ("one", "deep/two"):
+            with self.assertRaises(error.HTTPError) as gone:
+                api("GET", f"kv2/metadata/{source}/{name}")
+            self.assertEqual(gone.exception.code, 404)
+            self.assertEqual(api("GET", f"kv2/data/{destination}/{name}")["data"]["data"],
+                             {"id": name})
+        self.assertEqual(api("GET", f"kv2/data/{sentinel}")["data"]["data"],
+                         {"untouched": True})
+
+        src = f"metadata/{self.p}/move/from"
+        dst = f"data/{self.p}/move/to"
+        api("POST", f"team/config/data/{src}", {"data": {"move": True}})
+        moved, _ = invoke(f"mv team/config/{src} team/config/{dst}",
+                           version=2, mounts=mounts)
+        self.assertEqual(moved.returncode, 0, moved.stdout + moved.stderr)
+        self.assertEqual(api("GET", f"team/config/data/{dst}")["data"]["data"],
+                         {"move": True})
+        original = api("GET", f"team/config/metadata/{src}")["data"]
+        self.assertTrue(original["versions"]["1"]["deletion_time"])
+
+        target = f"delete/{self.p}/remove/item"
+        api("POST", f"kv2/data/{target}", {"data": {"remove": True}})
+        removed, _ = invoke(f"rm kv2/{target}", version=2, mounts=mounts)
+        self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
+        self.assertTrue(api("GET", f"kv2/metadata/{target}")["data"]["versions"]["1"]["deletion_time"])
+        permanently, _ = invoke(f"rm --purge --yes kv2/{target}",
+                                 version=2, mounts=mounts)
+        self.assertEqual(permanently.returncode, 0,
+                         permanently.stdout + permanently.stderr)
+        with self.assertRaises(error.HTTPError) as gone:
+            api("GET", f"kv2/metadata/{target}")
+        self.assertEqual(gone.exception.code, 404)
+        self.assertEqual(api("GET", f"kv2/data/{sentinel}")["data"]["data"],
+                         {"untouched": True})
+
     def test_07_field_updates_increment_versions(self):
         self.put("edit/item",{"x":1,"keep":True})
         self.cli(f'addsecret kv2/{self.p}/edit/item {{"y":2}}')
