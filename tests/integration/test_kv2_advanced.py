@@ -241,6 +241,45 @@ class KV2AdvancedTests(unittest.TestCase):
         with self.assertRaises(error.HTTPError) as missing:
             api("GET", f"kv2/metadata/{self.p}/{leaf}")
         self.assertEqual(missing.exception.code, 404)
+    def test_14_deleted_version_is_not_a_successful_cat_or_backup(self):
+        """ACC-10/KV2: API metadata is authoritative; tombstones are not data."""
+        leaf = "tombstone/item"
+        secret = f"kv2/{self.p}/{leaf}"
+        self.put(leaf, {"active": True})
+        api("DELETE", f"kv2/data/{self.p}/{leaf}")
+        meta = self.meta(leaf)
+        self.assertEqual(meta["current_version"], 1)
+        self.assertTrue(meta["versions"]["1"]["deletion_time"])
+        listed, _ = invoke(f"ls kv2/{self.p}/tombstone", version=2)
+        self.assertEqual(listed.returncode, 0, listed.stdout + listed.stderr)
+        self.assertIn("item", listed.stdout)
+        read, _ = invoke(f"cat {secret}", version=2)
+        self.assertNotEqual(read.returncode, 0, read.stdout + read.stderr)
+        self.assertNotIn('"metadata"', read.stdout)
+        self.assertNotIn('"active"', read.stdout)
+        backup, _ = invoke(f"backup kv2/{self.p}/tombstone", version=2)
+        self.assertNotEqual(backup.returncode, 0,
+                            "A tombstone may not yield a successful archive")
+        self.assertEqual(self.meta(leaf)["current_version"], 1)
+
+    def test_15_rmtree_skips_previously_deleted_versions_without_purging(self):
+        """Already-deleted KV2 metadata survives idempotent recursive cleanup."""
+        root = "mixed-deletion"
+        self.put(root + "/active", {"fixture": "active"})
+        self.put(root + "/deleted", {"fixture": "deleted"})
+        self.put("outside/sentinel", {"fixture": "untouched"})
+        api("DELETE", f"kv2/data/{self.p}/{root}/deleted")
+        deleted_before = self.meta(root + "/deleted")
+        result, _ = invoke(f"rmtree -f kv2/{self.p}/{root}", version=2)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("already deleted", result.stdout)
+        for leaf in ("active", "deleted"):
+            meta = self.meta(root + "/" + leaf)
+            self.assertEqual(meta["current_version"], 1)
+            self.assertTrue(meta["versions"]["1"]["deletion_time"])
+        self.assertEqual(self.meta(root + "/deleted"), deleted_before)
+        self.assertEqual(self.get("outside/sentinel"), {"fixture": "untouched"})
+
     def test_07_field_updates_increment_versions(self):
         self.put("edit/item",{"x":1,"keep":True})
         self.cli(f'addsecret kv2/{self.p}/edit/item {{"y":2}}')
