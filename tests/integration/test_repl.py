@@ -755,6 +755,29 @@ class InteractiveShellTests(unittest.TestCase):
         finally:
             self.end(home, fd, child)
 
+    def test_45_explicit_api_path_read_and_list_in_real_pty(self):
+        """The option works through the actual interactive Bash parser."""
+        from uuid import uuid4
+        from .test_vault import api
+        prefix = "vcli-api-pty-" + uuid4().hex[:12]
+        marker = "pty-raw-api-marker"
+        api("POST", f"kv2/data/data/{prefix}/item", {"data": {"marker": marker}})
+        home, fd, child = self.session(extra_env={
+            "VAULT_KV_VERSION": "2", "VAULT_KV_MOUNTS": "kv2,team/config"
+        })
+        try:
+            self.send(fd, (f"cat --api-path kv2/data/data/{prefix}/item\n").encode(),
+                      pace=0.025)
+            result = read_until(fd, marker.encode(), timeout=12)
+            self.assertIn(marker.encode(), result)
+            time.sleep(0.2)
+            self.send(fd, (f"ls --api-path kv2/metadata/data/{prefix}\n").encode(),
+                      pace=0.025)
+            listing = read_until(fd, b"item", timeout=12)
+            self.assertIn(b"item", listing)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
 
 if __name__ == "__main__":
     unittest.main()

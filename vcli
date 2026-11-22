@@ -293,7 +293,7 @@ declare -A vcli_commands_help=(
         [mount]="mount path/to/mount \n  creates mount $current_pwd/path/to/mount"
         [umount]="umount path/to/mount \n  destroys mount $current_pwd/path/to/mount"
         [cd]="cd path/to/secret \n  changes to directory $current_pwd/path/to/secret"
-        [ls]="ls path/to/secret \n  lists paths and secrets on $current_pwd/path/to/secret"
+        [ls]="ls [--api-path] path/to/secret \n  lists logical paths; --api-path lists a KV2 metadata/ endpoint (read-only)"
         [lsrole]="lsrole \n  lists Vault roles"
         [showrole]="showrole myrole \n  shows Vault role named myrole"
         [renew-token]="renew-token [increment] \n  renews current Vault token (e.g. 45s, 5m)"
@@ -306,7 +306,7 @@ declare -A vcli_commands_help=(
         [rmtree]="rmtree [-f] [--purge] path/to/secrets \n  recursively soft-deletes secrets. On KV v2 --purge irreversibly removes ALL versions and metadata below the path. -f skips confirmation; purge never applies to KV v1."
         [backup]="backup path/to/secrets \n  backs up Vault /path to $TMP folder"
         [restore]="restore /local/dir/file \n  restores Vault backup"
-        [cat]="cat path/to/secret \n  shows contents of secret $current_pwd/path/to/secret"
+        [cat]="cat [--api-path] path/to/secret \n  reads a logical secret; --api-path reads a KV2 data/ endpoint and returns raw Vault JSON (read-only)"
         [cp]="cp path/to/secret path/to/other_secret \n  copies contents of path to path $current_pwd/path/to/other_secret"
         [getcert]="getcert path/to/secret \n  downloads certificate CRT and KEY stored in $current_pwd/path/to/secret"
         [getcertlist]="getcertlist path/to/certificates \n  recovers certs.list with certificates found in $current_pwd/path/to/certificates"
@@ -775,6 +775,37 @@ function vcli_kv_path(){
     esac
 }
 
+# Public --api-path is restricted to typed, read-only KV2 endpoints.
+# Do not infer API intent from user-defined folder names.
+function vcli_validate_kv2_api_read_path(){
+    local method="$1" requested="$2" resolved="" rest
+    local -n target="$3"
+    if [[ -z $requested || $requested == *'?'* || $requested == *'#'* ]] ||
+       ! _vcli_resolve_path resolved "$requested"; then
+        echo "vcli: invalid --api-path (query strings and dot segments are unsupported)" >&2
+        return 2
+    fi
+    if ! vcli_match_kv2_mount "$resolved"; then
+        echo "vcli: --api-path requires a configured KV v2 mount" >&2
+        return 2
+    fi
+    rest="${resolved#"/$VCLI_KV_MOUNT/"}"
+    case "$method:$rest" in
+        GET:data/*)
+            [[ -n ${rest#data/} ]] || {
+                echo "vcli: --api-path GET requires a secret below KV2 data/" >&2
+                return 2
+            }
+            ;;
+        LIST:metadata|LIST:metadata/*) ;;
+        *)
+            echo "vcli: --api-path supports GET on KV2 data/ or LIST on KV2 metadata/ only" >&2
+            return 2
+            ;;
+    esac
+    target="$resolved"
+}
+
 # Encode path components but do not encode / or the query delimiter ?.
 function vcli_encode_endpoint(){
     local raw="${1#/}" path query encoded
@@ -1081,12 +1112,27 @@ function run_cmd(){
             commands_help "$cmd"
             return 1
         fi
+        # Never treat the flag as a path in a destructive or mutating command.
+        if [[ $cmd != cat && $cmd != ls && ( $arg1 == --api-path ||
+              $arg2 == --api-path || $arg3 == --api-path ) ]]; then
+            echo "vcli: --api-path is read-only and supported only by cat and ls" >&2
+            return 2
+        fi
         # Record even when a read fails. add_cmd excludes sensitive write payloads.
         add_cmd "$cmd $arg1 $arg2 $arg3" || true
         local command_status=0
         case $cmd in
             cd)                     _cd "$arg1" ;;
-            ls)                     _ls "$arg1" ;;
+            ls)
+                if [[ $arg1 == --api-path ]]; then
+                    [[ -n $arg2 && -z $arg3 ]] || { echo "Usage: ls --api-path KV2/metadata/path" >&2; return 2; }
+                    local api_path=""
+                    vcli_validate_kv2_api_read_path LIST "$arg2" api_path || return 2
+                    _ls -_api_path_- "$api_path"
+                else
+                    _ls "$arg1"
+                fi
+            ;;
             lsrole)                 _lsrole ;;
             showrole)               _showrole "$arg1" ;;
             renew-token)            _renew_token "$arg1" ;;
@@ -1105,7 +1151,16 @@ function run_cmd(){
             ;;
             backup)                 backIFS=$IFS; IFS=$' ' ; _backup "$arg1"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
             restore)                backIFS=$IFS; IFS=$' ' ; _restore "$arg1"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
-            cat)                    _cat "$arg1" ;;
+            cat)
+                if [[ $arg1 == --api-path ]]; then
+                    [[ -n $arg2 && -z $arg3 ]] || { echo "Usage: cat --api-path KV2/data/path" >&2; return 2; }
+                    local api_path=""
+                    vcli_validate_kv2_api_read_path GET "$arg2" api_path || return 2
+                    _cat -_api_path_- "$api_path"
+                else
+                    _cat "$arg1"
+                fi
+            ;;
             put)                    _put "$arg1" "$arg2 $arg3" ;;
             addsecret)              _addsecret "$arg1" "$arg2 $arg3" ;;
             delsecret)              _delsecret "$arg1" "$arg2" ;;
@@ -1288,6 +1343,10 @@ function _ls(){
     fi
     if [[ ${1:-} == "-i" ]]; then
         ignore_http_code="-i"
+        shift
+    fi
+    if [[ ${1:-} == "-_api_path_-" ]]; then
+        request_flags+=("-_api_path_-")
         shift
     fi
     if ! _vcli_resolve_path url "${1:-${current_pwd:-/}}"; then
@@ -1808,7 +1867,7 @@ function _cat(){
     local -a flags=()
     while :; do
         case "${1:-}" in
-            -i|-_disable_-f_-) flags+=("$1"); shift ;;
+            -i|-_disable_-f_-|-_api_path_-) flags+=("$1"); shift ;;
             *) break ;;
         esac
     done

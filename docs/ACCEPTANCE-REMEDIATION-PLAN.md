@@ -143,3 +143,11 @@ Parte del código en la rama ya intenta resolver estas incidencias, pero los sí
 - **Candidato:** los comandos públicos interpretan rutas lógicas; `_curl -_api_path_-` es privado para los endpoints de metadatos/borrado y las verificaciones de destino. Se mantiene CAS, borrado por versión y selección de montaje más específico.
 - **Compatibilidad:** `cat kv2/data/...` se interpreta como carpeta literal `data/`, no como endpoint HTTP crudo.
 - **Estado:** implementado; CI y aceptación Vault TLS pendientes.
+
+## ACC-10 — `--api-path` explícito para lecturas (2026-11-22)
+
+- Requisito aprobado: usar endpoints KV2 explícitos sin confundir las carpetas `data/`, `metadata/` y `delete/` con la API.
+- Se propone `cat --api-path <mount>/data/<secret>` para GET crudo y `ls --api-path <mount>/metadata/<folder>` para LIST, exclusivamente para montajes KV2 configurados; quedan prohibidas mutaciones con este flag.
+- `test_20_explicit_api_read_mode_matches_vault_and_rejects_writes` compara con API real y revisa ausencia de efectos colaterales. `test_45_explicit_api_path_read_and_list_in_real_pty` ejercita el parser real. Corrección del fixture equivocado en `test_10` y del marcador de `mount` de la demo SaaS.
+- No se habilitan `put`, `rm`, `rmtree` ni endpoints administrativos bajo `--api-path`. Versiones históricas, undelete y destroy permanecen abiertos.
+- Estado: implementado como candidato, CI completa y aceptación SaaS pendientes; ACC-10 sigue abierto.

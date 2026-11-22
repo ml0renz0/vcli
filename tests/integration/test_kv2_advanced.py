@@ -170,12 +170,14 @@ class KV2AdvancedTests(unittest.TestCase):
         """data/ is a user folder; raw API endpoints are internal only."""
         import json
         leaf = "data/" + self.p + "/routing/raw-path"
-        self.put(leaf, {"literal": True}, mount="team/config")
+        # Seed exactly the requested logical path, avoiding double prefix.
+        api("POST", f"team/config/data/{leaf}", {"data": {"literal": True}})
+        self.assertEqual(api("GET", f"team/config/data/{leaf}")["data"]["data"],
+                         {"literal": True})
         result, _ = invoke(f"cat team/config/{leaf}", version=2,
                            mounts="team,team/config,kv2")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(json.loads(result.stdout)["data"], {"literal": True})
-        self.assertEqual(self.get(leaf, mount="team/config"), {"literal": True})
 
     def test_08_backup_restore_creates_new_versions_after_soft_delete(self):
         import os
@@ -333,6 +335,58 @@ class KV2AdvancedTests(unittest.TestCase):
                         f"ls {mount}/{name}/{self.p}", version=2, mounts=mounts)
                     self.assertEqual(listing.returncode, 0, listing.stdout + listing.stderr)
                     self.assertEqual(listing.stdout.strip(), "literal")
+
+    def test_20_explicit_api_read_mode_matches_vault_and_rejects_writes(self):
+        """Explicit API reads match Vault directly and cannot mutate secrets."""
+        import json
+        mounts = "team,team/config,kv2"
+        for mount in ("kv2", "team/config"):
+            leaf = f"data/{self.p}/explicit-api-{mount.replace('/', '-')}/item"
+            value = {"mode": "read-only", "mount": mount}
+            api("POST", f"{mount}/data/{leaf}", {"data": value})
+            oracle = api("GET", f"{mount}/data/{leaf}")
+            self.assertEqual(oracle["data"]["data"], value)
+
+            logical, _ = invoke(f"cat {mount}/{leaf}", version=2, mounts=mounts)
+            self.assertEqual(logical.returncode, 0, logical.stdout + logical.stderr)
+            self.assertEqual(json.loads(logical.stdout)["data"], value)
+
+            explicit, _ = invoke(f"cat --api-path {mount}/data/{leaf}",
+                                 version=2, mounts=mounts)
+            self.assertEqual(explicit.returncode, 0, explicit.stdout + explicit.stderr)
+            raw = json.loads(explicit.stdout)
+            self.assertEqual(raw["data"]["data"], oracle["data"]["data"])
+            self.assertEqual(raw["data"]["metadata"]["version"],
+                             oracle["data"]["metadata"]["version"])
+
+            prefix = leaf.rsplit("/", 1)[0]
+            direct_listing = api("LIST", f"{mount}/metadata/{prefix}")["data"]["keys"]
+            listed, _ = invoke(f"ls --api-path {mount}/metadata/{prefix}",
+                               version=2, mounts=mounts)
+            self.assertEqual(listed.returncode, 0, listed.stdout + listed.stderr)
+            self.assertEqual(listed.stdout.strip().splitlines(), direct_listing)
+
+            forbidden = (
+                f"cat --api-path {mount}/metadata/{leaf}",
+                f"ls --api-path {mount}/data/{prefix}",
+                f"cat --api-path {mount}/delete/{leaf}",
+                f"cat --api-path {mount}/data/../{leaf}",
+                f"cat --api-path {mount}/data/{leaf}?version=1",
+                f"rm --api-path {mount}/data/{leaf}",
+                f'put --api-path {mount}/data/{leaf} {{"overwrite":true}}',
+            )
+            for command in forbidden:
+                with self.subTest(mount=mount, command=command):
+                    rejected, _ = invoke(command, version=2, mounts=mounts)
+                    self.assertNotEqual(rejected.returncode, 0,
+                                        rejected.stdout + rejected.stderr)
+            self.assertEqual(api("GET", f"{mount}/data/{leaf}")["data"]["data"], value)
+            self.assertEqual(api("GET", f"{mount}/metadata/{leaf}")["data"]["current_version"], 1)
+
+        for path in ("sys/mounts", "kv1/example", "kv2/data", "kv2/metadata"):
+            with self.subTest(invalid=path):
+                result, _ = invoke(f"cat --api-path {path}", version=2, mounts=mounts)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_19_reserved_names_support_safe_copy_recursive_purge_and_move(self):
         """Use only isolated Vault TLS fixtures and verify final server state."""

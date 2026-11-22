@@ -276,7 +276,7 @@ class SaaSContracts(unittest.TestCase):
         self.cli("showrole saas-tenant-001", b"saas-tenant-001")
         self.cli("lspol", b"saas-tenant-032")
         self.cli("showpol saas-tenant-001", b"capabilities")
-        self.cli("mount", b"mounted paths:")
+        self.cli("mount", b"mounted paths (first-level content only):")
         self.cli("mount " + self.prefix, b"mounted")
         self.cli("umount " + self.prefix, code=b"204")
 

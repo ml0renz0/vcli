@@ -74,8 +74,13 @@ para ocultar regresiones. Verificar estado final mediante la API de Vault.
 
 ## KV v2 — revisión semántica de la adaptación del CLI (2026-11-22)
 
-**Regla de interfaz:** `vcli` recibe rutas lógicas (`kv2/equipo/secreto`), no debe
-pedir al usuario que conozca `/data/`, `/metadata/` o `/delete/`.
+**Regla de interfaz:** `vcli` recibe rutas lógicas (`kv2/equipo/secreto`) por
+defecto. La opción pública `--api-path` es explícita y **solo de lectura**:
+`cat --api-path kv2/data/equipo/secreto` consulta el endpoint KV2 de datos y
+devuelve el JSON crudo de Vault; `ls --api-path kv2/metadata/equipo` usa
+el endpoint KV2 de listado. No se admiten consultas con `?`, operaciones
+administrativas, KV1 ni escrituras/borrados con ese flag. Sin el flag,
+`kv2/data/equipo/secreto` significa una carpeta literal llamada `data`.
 La selección de motor KV v2 se hace actualmente con
 `VAULT_KV_VERSION=2` y `VAULT_KV_MOUNTS`, incluido prefijo más largo
 para montajes anidados. Esta configuración **no descubre** versiones de
@@ -103,13 +108,13 @@ explícita y tests de historial/recuperación. Véase
 
 ### Brechas que permanecen abiertas
 
-1. **Rutas lógicas y API tipada (candidato pendiente de CI):** los segmentos
-   `data/`, `metadata/` y `delete/` se consideran nombres literales de
-   carpeta en todos los comandos públicos. Las llamadas internas a Vault
-   usan `-_api_path_-` para endpoints ya tipados, sin reescritura KV2.
-   Esto sustituye la interpretación implícita de endpoints crudos mediante
-   `cat`. La aceptación con Vault TLS y la regresión de rutas reservadas
-   siguen siendo obligatorias antes de declarar el cambio validado.
+1. **Rutas lógicas/API tipada (candidato pendiente de CI):** los segmentos
+   `data/`, `metadata/` y `delete/` son carpetas literales sin flag.
+   `--api-path` solo admite GET de `data/` con `cat` y LIST de
+   `metadata/` con `ls`, en un montaje KV2 configurado; para todo lo
+   demás se rechaza antes de contactar Vault. La implementación interna
+   sigue usando `-_api_path_-` y conserva la separación de transporte.
+   Se exige aceptación real Vault TLS y PTY antes de cerrar.
 2. **Operaciones históricas de KV v2:** el CLI todavía no expone comandos
    específicos y consistentes para leer una versión, ver metadatos,
    recuperar versiones borradas (`undelete`) o destruir una versión

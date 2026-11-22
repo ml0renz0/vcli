@@ -20,6 +20,9 @@ real**; no sustituirlo por una implementación Python o Go.
   navegación/autocompletado; pruebas PTY con terminales básicos.
 - KV v1 y KV v2 configurables, montajes anidados, lectura/escritura,
   listados, recorridos, operaciones compuestas y backup/restore.
+  Las rutas del CLI son lógicas por defecto; `cat --api-path` y
+  `ls --api-path` aceptan endpoints KV2 tipados en modo solo lectura,
+  sin reinterpretar carpetas llamadas `data`, `metadata` o `delete`.
 - Autenticación mediante token o AppRole, consulta de políticas y roles,
   acceso de solo lectura y tratamiento explícito de permisos insuficientes.
 - HTTPS verificado, CA personalizada, opciones de mTLS y manejo de fallos
