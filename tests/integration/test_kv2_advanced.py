@@ -331,10 +331,18 @@ class KV2AdvancedTests(unittest.TestCase):
                     read, _ = invoke(f"cat {mount}/{leaf}", version=2, mounts=mounts)
                     self.assertEqual(read.returncode, 0, read.stdout + read.stderr)
                     self.assertEqual(json.loads(read.stdout)["data"], value)
+                    # The suite may already have created sibling paths here
+                    # (e.g. test_10's routing/). Vault's LIST is the oracle.
+                    parent = f"{name}/{self.p}"
+                    expected = api("LIST", f"{mount}/metadata/{parent}")["data"]["keys"]
+                    self.assertIn("literal", expected)
                     listing, _ = invoke(
-                        f"ls {mount}/{name}/{self.p}", version=2, mounts=mounts)
+                        f"ls {mount}/{parent}", version=2, mounts=mounts)
                     self.assertEqual(listing.returncode, 0, listing.stdout + listing.stderr)
-                    self.assertEqual(listing.stdout.strip(), "literal")
+                    actual = listing.stdout.strip().splitlines()
+                    self.assertEqual(len(actual), len(set(actual)), "duplicate LIST entries")
+                    self.assertEqual(set(actual), set(expected),
+                                     "vcli LIST disagrees with the Vault API")
 
     def test_20_explicit_api_read_mode_matches_vault_and_rejects_writes(self):
         """Explicit API reads match Vault directly and cannot mutate secrets."""
