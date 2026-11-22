@@ -2189,17 +2189,35 @@ function _getallcertlist(){
 # shows all certificate's expiration dates
 # Reuse the validated response rather than re-reading matched certs.
 function _getallcertexpiration(){
-    local root leaves path data option=""
+    local root leaves path data option="" result=0 scanned=0
     if [[ ${1:-} == -o* ]]; then option="$1"; shift; fi
     root=$(_vcli_absolute_path "${1:-}") || return 1
     [[ ${2:-} == -o* ]] && option="$2"
-    leaves=$(_vcli_leaves "$root") || return 1
-    while IFS= read -r path; do
-        [[ -n $path ]] || continue
-        data=$(_vcli_pki_json "$path") || return 1
-        jq -e 'any(keys[]; endswith("_crt"))' <<< "$data" >/dev/null || continue
-        vcli_cert_expiration_from_data "$path" "$option" "$data" || return 1
-    done <<< "$leaves"
+    # The notification runs independently of LIST/GET latency; no added
+    # delay on fast operations or alteration of recorded benchmark timing.
+    ( sleep 5; printf 'vcli: scanning certificates under %s; large trees may take time...\n' "$root" >&2 ) &
+    local notice_pid=$!
+    if ! leaves=$(_vcli_leaves "$root"); then
+        result=1
+    else
+        while IFS= read -r path; do
+            [[ -n $path ]] || continue
+            ((scanned+=1))
+            if ! data=$(_vcli_pki_json "$path"); then result=1; break; fi
+            jq -e 'any(keys[]; endswith("_crt"))' <<< "$data" >/dev/null || continue
+            if ! vcli_cert_expiration_from_data "$path" "$option" "$data"; then
+                result=1
+                break
+            fi
+        done <<< "$leaves"
+    fi
+    # Kill the delayed notification whenever work finishes, including errors.
+    kill "$notice_pid" 2>/dev/null || :
+    wait "$notice_pid" 2>/dev/null || :
+    if (( result != 0 )); then
+        printf 'vcli: certificate scan stopped after %d secret(s)\n' "$scanned" >&2
+    fi
+    return "$result"
 }
 
 # download certificates crt and key
