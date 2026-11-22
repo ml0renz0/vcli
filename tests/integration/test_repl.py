@@ -678,5 +678,83 @@ class InteractiveShellTests(unittest.TestCase):
             self.end(home, fd, child)
 
 
+    def test_41_tab_path_completion_uses_one_separator(self):
+        """ACC-03: type TAB on a PTY against Vault LIST, then execute it."""
+        from uuid import uuid4
+        from .test_vault import api
+        prefix = "vcli-tab-" + uuid4().hex[:12]
+        api("POST", "kv1/" + prefix + "/cubbyhole/leaf", {"fixture": True})
+        home, fd, child = self.session()
+        try:
+            self.send(fd, ("ls kv1/" + prefix + "/cub").encode() + b"\t",
+                      pace=0.025)
+            completed = ("ls kv1/" + prefix + "/cubbyhole/").encode()
+            out = read_until(fd, completed, timeout=10)
+            self.assertIn(completed, out, "TAB did not complete the Vault directory")
+            self.assertNotIn(b"ls  ", out, "TAB inserted an extra separator")
+            self.send(fd, b"\n", pace=0.03)
+            result = read_until(fd, b"leaf", timeout=10)
+            self.assertIn(b"leaf", result, "Completed LIST did not execute")
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
+    def test_42_help_completes_command_name_on_pty(self):
+        """ACC-04: the completed help topic must actually render its help."""
+        home, fd, child = self.session()
+        try:
+            self.send(fd, b"help tr\t\n", pace=0.035)
+            out = read_until(fd, b"prints vault's secrets tree", timeout=10)
+            self.assertIn(b"tree path/to/secret", out)
+            self.assertNotIn(b"unkown 'tr'", out)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
+    def test_43_history_bang_dollar_expands_preceding_vault_command(self):
+        """ACC-05: real PTY + Vault LIST, and exact expanded history line."""
+        from uuid import uuid4
+        from .test_vault import api
+        prefix = "vcli-lastarg-" + uuid4().hex[:12]
+        api("POST", "kv1/" + prefix + "/branch/leaf", {"fixture": True})
+        home, fd, child = self.session()
+        try:
+            path = "kv1/" + prefix + "/branch"
+            self.send(fd, ("ls " + path + "\n").encode(), pace=0.025)
+            self.assertIn(b"leaf", read_until(fd, b"leaf", timeout=10))
+            time.sleep(0.15)
+            self.send(fd, b"tree !$\n", pace=0.035)
+            tree = read_until(fd, b"leaf", timeout=10)
+            self.assertIn(b"leaf", tree)
+            time.sleep(0.15)
+            self.send(fd, b"history\n", pace=0.035)
+            recorded = read_until(fd, ("#2: tree " + path).encode(), timeout=10)
+            self.assertIn(("#2: tree " + path).encode(), recorded)
+            self.assertNotIn(b"#2: tree !$", recorded)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
+    def test_44_verbose_exposes_method_status_only_after_toggle(self):
+        """ACC-07: observe real TLS requests, never tokens or secret values."""
+        from uuid import uuid4
+        from .test_vault import api
+        prefix = "vcli-verbose-" + uuid4().hex[:12]
+        api("POST", "kv1/" + prefix + "/leaf", {"canary": "private-canary"})
+        home, fd, child = self.session()
+        try:
+            self.send(fd, b"verbose\n", pace=0.03)
+            read_until(fd, b"verbose mode ON", timeout=8)
+            self.send(fd, ("ls kv1/" + prefix + "\n").encode(), pace=0.025)
+            result = read_until(fd, b"vcli: HTTP LIST -> 200", timeout=10)
+            self.assertNotIn(b"private-canary", result)
+            self.assertNotIn(os.environ["VCLI_TEST_READONLY_TOKEN"].encode(), result)
+            self.send(fd, b"verbose\n", pace=0.03)
+            read_until(fd, b"verbose mode OFF", timeout=8)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
+
 if __name__ == "__main__":
     unittest.main()
