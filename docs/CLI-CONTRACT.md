@@ -91,6 +91,7 @@ montaje automáticamente ni valida el tipo de cada mount en tiempo de uso.
 | `rm PATH` | POST `mount/delete/path`, versión explícita | Borrado reversible de la versión activa; si ya estaba borrada devuelve diagnóstico y error, sin reintentar |
 | `rm --purge [--yes] PATH` | DELETE `mount/metadata/path` | **Irreversible**: borra todos los datos versionados y metadata de ese único path; requiere confirmación o `--yes` |
 | `rmtree -f PATH` | Descubre hojas + `rm` por hoja | Soft-delete de versiones activas; hojas ya borradas se omiten sin purga; un error 403/5xx/transporte sigue siendo error |
+| `rmtree [-f] --purge PATH` | LIST recursivo + GET de metadatos de todas las hojas + DELETE `mount/metadata/leaf` por hoja | Elimina permanentemente **todas** las versiones y metadatos de cada secreto KV2, incluidas hojas previamente soft-deleted. Sin `-f` pide escribir `PURGE`; con `-f` omite confirmación. Prohibido para KV1, mounts completos y rutas reservadas. Preflight sin atomicidad: errores posteriores pueden producir resultado `PARTIAL` |
 | `cp`, `cptree`, `mv` | GET + POST CAS=0, y en `mv` soft-delete exacto | No atomicidad entre secretos ni copias del historial; se informa de resultados parciales; los destinos con metadata previa no se pisan |
 | `backup`, `find`, `replace` | LIST de metadata y GET de datos | No deben convertir tombstones en secretos válidos. Si aparecen versiones borradas, se falla de forma explícita antes que ocultar pérdidas de datos |
 
