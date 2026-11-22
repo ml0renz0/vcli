@@ -622,6 +622,26 @@ exec "$VCLI_TEST_REAL_LN" "$@"
             self.assertFalse((Path(root) / "web.crt").exists())
             self.assertFalse((Path(root) / "web.key").exists())
 
+    def test_34_kerberos_requires_exact_principal_not_prefix(self):
+        path = f"kv1/{self.prefix}/prefix-principal"
+        api("POST", path, {"http_principal": self.principal.removesuffix(".TEST"),
+                           "http_keytab": base64.b64encode(self.kt).decode("ascii")})
+        with tempfile.TemporaryDirectory() as root:
+            for command in ("getprinc", "krbinfo", "getkrblist", "getkrb"):
+                out = self.cli(root, f"{command} {path}")
+                self.assertNotEqual(out.returncode, 0)
+                self.assertIn("invalid keytab or principal", out.stderr)
+            self.assertFalse(list(Path(root).glob("*.keytab")))
+
+    def test_35_expiration_reports_critical_and_omits_at_configured_threshold(self):
+        with tempfile.TemporaryDirectory() as root:
+            out = self.cli(root, f"getcertexpiration {self.cert_path}")
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertIn("[CRITICAL]", out.stdout)
+            omit = self.cli(root, f"getcertexpiration {self.cert_path} -oc")
+            self.assertEqual(omit.returncode, 0, omit.stderr)
+            self.assertNotIn("[CRITICAL]", omit.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

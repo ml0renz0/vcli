@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import ssl
 import stat
+import struct
 import sys
 from urllib.parse import urlsplit
 
@@ -42,7 +43,28 @@ def fake(*parts):
     return "FAKE-" + hashlib.sha256("/".join(parts).encode()).hexdigest()[:24]
 
 
-def records(tenant, certificates, keytab):
+def keytab_for(principal):
+    name, realm = principal.rsplit("@", 1)
+    parts = name.split("/")
+    def counted(text):
+        encoded = text.encode("ascii")
+        return struct.pack(">H", len(encoded)) + encoded
+    entry = (struct.pack(">H", len(parts)) + counted(realm)
+             + b"".join(counted(p) for p in parts)
+             + struct.pack(">IIBHH", 1, 1700000000, 1, 18, 32)
+             + hashlib.sha256(("PUBLIC-SYNTHETIC-" + principal).encode()).digest())
+    return base64.b64encode(b"\x05\x02" + struct.pack(">i", len(entry)) + entry).decode()
+
+
+def cert_state(env, region):
+    if env == "development":
+        return "healthy"
+    if env == "staging":
+        return "critical" if region == "ap-south" else "warning"
+    return {"eu-west": "healthy", "us-east": "critical", "ap-south": "expired"}[region]
+
+
+def records(tenant, certificates):
     """Yield (mount, relative path, current object, previous object or None)."""
     for env in ENVS:
         for region in REGIONS:
@@ -70,11 +92,12 @@ def records(tenant, certificates, keytab):
                     "limits": {"cpu": "500m", "memory": "512Mi"},
                     "optional_endpoint": None}, None
                 if svc == "identity":
+                    principal = f"HTTP/{tenant}.{env}.{region}.example.test@EXAMPLE.TEST"
                     yield "kv1", path + "/legacy/kerberos/http", {
-                        "http_principal": "HTTP/service.example.test@EXAMPLE.TEST",
-                        "http_keytab": keytab}, None
+                        "http_principal": principal,
+                        "http_keytab": keytab_for(principal)}, None
                 elif svc == "payments":
-                    yield "kv1", path + "/legacy/pki/ingress", certificates[env], None
+                    yield "kv1", path + "/legacy/pki/ingress", certificates[cert_state(env, region)], None
                 else:
                     value = (dict(SHARED) if svc in ("billing", "catalog") else
                              {"username": svc + "_worker",
@@ -92,12 +115,10 @@ def seed(state, address):
     private(state / "ca.pem")
     context = ssl.create_default_context(cafile=str(state / "ca.pem"))
     certificates = {}
-    for env in ENVS:
-        stem = "enterprise_" + env
-        certificates[env] = {
+    for stem in ("healthy", "warning", "critical", "expired"):
+        certificates[stem] = {
             stem + "_crt": (state / "fixtures" / (stem + ".crt")).read_text(),
             stem + "_key": (state / "fixtures" / (stem + ".key")).read_text()}
-    keytab = base64.b64encode((state / "fixtures" / "http.keytab").read_bytes()).decode()
 
     def tenant_worker(tenant):
         conn = http.client.HTTPSConnection("127.0.0.1", info.port, context=context, timeout=30)
@@ -111,7 +132,7 @@ def seed(state, address):
                     raise RuntimeError(f"Vault seed HTTP {response.status}: {path}")
 
             count = revisions = 0
-            for mount, path, value, previous in records(tenant, certificates, keytab):
+            for mount, path, value, previous in records(tenant, certificates):
                 if previous is not None:
                     post(endpoint(mount, path), {"data": previous, "options": {"cas": 0}})
                     revisions += 1

@@ -1874,7 +1874,7 @@ function _krbinfo(){
 
 # download keytab to /tmp
 function _vcli_krb_pairs(){
-    local data="$1" stem principal encoded file
+    local data="$1" stem principal encoded file listing line found
     local -a stems
     mapfile -t stems < <(jq -r 'keys[] | select(endswith("_principal")) | .[:-10]' <<< "$data")
     (( ${#stems[@]} )) || return 1
@@ -1885,12 +1885,22 @@ function _vcli_krb_pairs(){
         encoded=$(jq -er --arg k "${stem}_keytab" '.[$k] | select(type=="string")' <<< "$data") || return 1
         file=$(mktemp "${VCLI_SESSION_TMP:-$TMP}/.vcli-krb.XXXXXX") || return 1
         if ! printf '%s' "$encoded" | base64 -d > "$file" 2>/dev/null ||
-           ! klist -kt "$file" 2>/dev/null | grep -Fq "$principal"; then
+           ! listing=$(LC_ALL=C klist -k "$file" 2>/dev/null); then
             rm -f "$file"
             echo "vcli: invalid keytab or principal" >&2
             return 1
         fi
         rm -f "$file"
+        # Match the complete principal field, not a substring or file/header.
+        found=no
+        while IFS= read -r line; do
+            if [[ $line =~ ^[[:space:]]*[0-9]+[[:space:]]+([^[:space:]]+)[[:space:]]*$ &&
+                  ${BASH_REMATCH[1]} == "$principal" ]]; then
+                found=yes
+                break
+            fi
+        done <<< "$listing"
+        [[ $found == yes ]] || { echo "vcli: invalid keytab or principal" >&2; return 1; }
     done
     (( $(jq '[keys[] | select(endswith("_keytab"))] | length' <<< "$data") == ${#stems[@]} ))
 }
@@ -2027,10 +2037,17 @@ function _getcertexpiration(){
         end=$(printf '%s\n' "$crt" | openssl x509 -noout -enddate 2>/dev/null) || return 1
         expiration=$(vcli_cert_expiry_epoch "$end") || return 1
         days=$(( (expiration-now)/86400 ))
-        [[ $option == -oo && $days -gt 30 ]] && continue
-        [[ $option == -ow && $days -le 30 && $days -gt 7 ]] && continue
-        [[ $option == -oc && $days -le 7 ]] && continue
-        printf '%s (%s): %d days to renew certificate\n' "$stem" "$path" "$days"
+        # Compare seconds so just-expired certificates are never classified OK.
+        local remaining=$((expiration-now)) status
+        if (( remaining <= 0 )); then status=EXPIRED
+        elif (( remaining <= cert_critical_threshold*86400 )); then status=CRITICAL
+        elif (( remaining <= cert_warning_threshold*86400 )); then status=WARNING
+        else status=OK
+        fi
+        [[ $option == -oo && $status == OK ]] && continue
+        [[ $option == -ow && $status == WARNING ]] && continue
+        [[ $option == -oc && ( $status == CRITICAL || $status == EXPIRED ) ]] && continue
+        printf '%s (%s): %d days to renew certificate [%s]\n' "$stem" "$path" "$days" "$status"
     done
 }
 

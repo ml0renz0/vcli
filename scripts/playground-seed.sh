@@ -145,6 +145,106 @@ seed_enterprise() {
         '{"username":"backup","password":"FAKE-KEEP-BACKUP"}' >/dev/null
 }
 
+# Stable manual reproduction fixtures, independent of the scale catalogue.
+seed_flavours() (
+    local f="$STATE/fixtures" encoded bad pair stem days
+    encoded=$(base64 < "$f/http.keytab" | tr -d '\n')
+    for stem in healthy warning critical; do
+        case "$stem" in healthy) days=90;; warning) days=20;; critical) days=3;; esac
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+            -nodes -days "$days" -sha256 -subj "/CN=$stem.example.test" \
+            -addext "subjectAltName=DNS:$stem.example.test,DNS:alt.$stem.example.test" \
+            -keyout "$f/$stem.key" -out "$f/$stem.crt" >/dev/null 2>&1
+    done
+    # openssl ca supports explicit past validity rather than fake metadata.
+    local ca_dir
+    ca_dir=$(mktemp -d "$STATE/.expired-XXXXXXXX")
+    trap 'rm -rf -- "$ca_dir"' EXIT
+    (
+        cd "$ca_dir"
+        openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+            -subj /CN=expired.example.test -keyout "$f/expired.key" -out req.pem >/dev/null 2>&1
+        touch index
+        mkdir new
+        printf '01\n' >serial
+        cat >ca.cnf <<'CNF'
+[ca]
+default_ca=local
+[local]
+database=index
+new_certs_dir=new
+serial=serial
+default_md=sha256
+policy=pol
+[pol]
+commonName=supplied
+[extensions]
+subjectAltName=DNS:expired.example.test
+CNF
+        openssl ca -selfsign -batch -config ca.cnf -keyfile "$f/expired.key" \
+            -in req.pem -startdate 20200101000000Z -enddate 20200102000000Z \
+            -extensions extensions -notext -out "$f/expired.crt" >/dev/null 2>&1
+    )
+    chmod 600 -- "$f/"*.key "$f/"*.crt
+    for stem in healthy warning critical expired; do
+        pair=$(jq -nc --arg s "$stem" --rawfile crt "$f/$stem.crt" \
+            --rawfile key "$f/$stem.key" '{($s+"_crt"):$crt,($s+"_key"):$key}')
+        api POST "kv1/flavours/pki/valid/$stem" "$pair" >/dev/null
+    done
+    # A valid object with several pairs; negative pairs remain separate.
+    api POST kv1/flavours/pki/valid/multiple \
+        "$(jq -nc --rawfile a "$f/healthy.crt" --rawfile ak "$f/healthy.key" \
+             --rawfile b "$f/critical.crt" --rawfile bk "$f/critical.key" \
+             '{first_crt:$a,first_key:$ak,second_crt:$b,second_key:$bk}')" >/dev/null
+    api POST kv1/flavours/pki/invalid/key-mismatch \
+        "$(jq -nc --rawfile crt "$f/healthy.crt" --rawfile key "$f/critical.key" '{tls_crt:$crt,tls_key:$key}')" >/dev/null
+    api POST kv1/flavours/pki/invalid/malformed '{"tls_crt":"NOT PEM","tls_key":"NOT PEM"}' >/dev/null
+    api POST kv1/flavours/pki/invalid/missing-key \
+        "$(jq -nc --rawfile crt "$f/healthy.crt" '{tls_crt:$crt}')" >/dev/null
+    api POST kv1/flavours/pki/invalid/extra-key \
+        "$(jq -nc --rawfile crt "$f/healthy.crt" --rawfile key "$f/healthy.key" '{tls_crt:$crt,tls_key:$key,extra_key:$key}')" >/dev/null
+
+    pair=$(jq -nc --arg kt "$encoded" '{http_principal:"HTTP/service.example.test@EXAMPLE.TEST",http_keytab:$kt}')
+    api POST kv1/flavours/kerberos/valid/http "$pair" >/dev/null
+    api POST kv1/flavours/kerberos/valid/multiple \
+        "$(jq -nc --arg kt "$encoded" '{first_principal:"HTTP/service.example.test@EXAMPLE.TEST",first_keytab:$kt,second_principal:"HTTP/service.example.test@EXAMPLE.TEST",second_keytab:$kt}')" >/dev/null
+    api POST kv1/flavours/kerberos/invalid/bad-base64 \
+        '{"http_principal":"HTTP/service.example.test@EXAMPLE.TEST","http_keytab":"INVALID@@@"}' >/dev/null
+    bad=$(printf 'not a keytab' | base64 | tr -d '\n')
+    api POST kv1/flavours/kerberos/invalid/corrupt-keytab \
+        "$(jq -nc --arg kt "$bad" '{http_principal:"HTTP/service.example.test@EXAMPLE.TEST",http_keytab:$kt}')" >/dev/null
+    api POST kv1/flavours/kerberos/invalid/wrong-principal \
+        "$(jq -nc --arg kt "$encoded" '{http_principal:"HTTP/other.example.test@EXAMPLE.TEST",http_keytab:$kt}')" >/dev/null
+    api POST kv1/flavours/kerberos/invalid/prefix-principal \
+        "$(jq -nc --arg kt "$encoded" '{http_principal:"HTTP/service.example.test@EXAMPLE",http_keytab:$kt}')" >/dev/null
+    api POST kv1/flavours/kerberos/invalid/unsafe-principal \
+        "$(jq -nc --arg kt "$encoded" '{http_principal:"../../escape@EXAMPLE.TEST",http_keytab:$kt}')" >/dev/null
+    api POST kv1/flavours/kerberos/invalid/missing-keytab \
+        '{"http_principal":"HTTP/service.example.test@EXAMPLE.TEST"}' >/dev/null
+    api POST kv1/flavours/kerberos/invalid/extra-keytab \
+        "$(jq -nc --arg kt "$encoded" '{http_principal:"HTTP/service.example.test@EXAMPLE.TEST",http_keytab:$kt,extra_keytab:$kt}')" >/dev/null
+    api POST kv1/flavours/kerberos/invalid/shell-metachar \
+        "$(jq -nc --arg kt "$encoded" '{http_principal:"$(echo SHOULD-NOT-EXECUTE)",http_keytab:$kt}')" >/dev/null
+
+    # Exact JSON matching, scalar types, empty objects, collision fixtures.
+    api POST kv1/flavours/json/exact '{"nested":{"b":2,"a":1},"value":"a  b"}' >/dev/null
+    api POST kv1/flavours/json/different '{"nested":{"a":1,"b":2},"value":"a b"}' >/dev/null
+    api POST kv1/flavours/json/types '{"string":"001","number":1,"float":1.5,"bool":true,"null":null,"array":[1,false,{"a":"b"}],"unicode":"Madrid — 日本","empty":{}}' >/dev/null
+    api POST kv1/flavours/json/empty '{}' >/dev/null
+    api POST kv1/flavours/collision/src/a '{"source":true}' >/dev/null
+    api POST kv1/flavours/collision/src/z '{"source":true}' >/dev/null
+    api POST kv1/flavours/collision/dest/z '{"sentinel":true}' >/dev/null
+    for stem in kv2 team/config; do
+        api POST "$stem/data/flavours/lifecycle/versioned" '{"data":{"revision":1}}' >/dev/null
+        api POST "$stem/data/flavours/lifecycle/versioned" '{"data":{"revision":2}}' >/dev/null
+        api POST "$stem/metadata/flavours/lifecycle/versioned" '{"cas_required":true}' >/dev/null
+        api POST "$stem/data/flavours/lifecycle/soft-deleted" '{"data":{"previous":true}}' >/dev/null
+        api POST "$stem/delete/flavours/lifecycle/soft-deleted" '{"versions":[1]}' >/dev/null
+        api POST "$stem/data/flavours/lifecycle/destroyed" '{"data":{"previous":true}}' >/dev/null
+        api POST "$stem/destroy/flavours/lifecycle/destroyed" '{"versions":[1]}' >/dev/null
+    done
+)
+
 seed_access() {
     vault_cli policy write vcli-playground-read - >/dev/null <<'HCL'
 path "kv1/*" { capabilities = ["read", "list"] }
@@ -178,5 +278,6 @@ seed_playground() {
     seed_keytab
     seed_kv
     seed_enterprise
+    seed_flavours
     seed_access
 }

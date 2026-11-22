@@ -84,6 +84,23 @@ blueprints YAML, la reconciliación declarativa y la rotación pertenecen
 a **Secretwright**, un proyecto independiente. La fase 04-Q está validada
 en CI, pero `smoke` no sustituye las suites E2E completas.
 
+## Flavours de regresión reutilizables (todos los perfiles)
+
+`kv1/flavours/pki/valid/` contiene cuatro certificados X.509 reales (90, 20,
+3 días y caducado desde 2020) y un objeto con dos pares. `pki/invalid/`
+contiene PEM inválido, clave no coincidente, clave ausente y clave sobrante.
+`kv1/flavours/kerberos/` contiene keytabs MIT válidos, múltiples pares,
+base64 inválido, binario corrupto, principal distinto o prefijo, nombre
+inseguro, pareja ausente/sobrante y metacaracteres. No hay KDC: se valida
+la estructura y coincidencia exacta del principal, no autenticación remota.
+`kv1/flavours/json/` cubre tipos, objetos y espacios exactos; `collision/`
+permite probar preflight. En `kv2/flavours/lifecycle/` y
+`team/config/flavours/lifecycle/` hay dos versiones con CAS obligatorio,
+borrado lógico y destrucción intencional de una versión. Se separan los
+secretos no legibles de los subárboles usados por backups de aceptación.
+Las carreras, revocaciones temporizadas, fallos TLS y archivos TAR hostiles
+requieren el harness de integración, no son sabores de secreto persistente.
+
 ## ACL y AppRole
 
     scripts/playground.sh shell readonly
@@ -161,8 +178,9 @@ y las claves/contraseñas son ficticias.
 | Total | 32 tenants × 3 entornos × 3 regiones × 6 servicios × 5 | **8.640** |
 
 Hay 576 credenciales legacy idénticas para rotación y búsqueda exacta,
-288 pares X.509 y 288 keytabs (reutilizan los fixtures del entorno y el
-principal de laboratorio, no son identidades criptográficas independientes).
+288 pares X.509 (cuatro certificados de laboratorio compartidos por estado:
+128 OK, 64 WARNING, 64 CRITICAL y 32 EXPIRED) y 288 keytabs sintéticos
+estructuralmente válidos con principales diferentes por tenant/entorno/región.
 Se generan también 32 políticas ACL y AppRoles de solo lectura separados.
 El perfil no requiere licencia Enterprise ni namespaces de Vault.
 
