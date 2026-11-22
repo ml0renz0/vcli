@@ -1094,7 +1094,17 @@ function run_cmd(){
             put)                    _put "$arg1" "$arg2 $arg3" ;;
             addsecret)              _addsecret "$arg1" "$arg2 $arg3" ;;
             delsecret)              _delsecret "$arg1" "$arg2" ;;
-            rm)                     _rm "$arg1" "$arg2" "$arg3" ;;
+            rm)
+                # Preserve the true argument count; do not pass absent fields
+                # as empty positional arguments to the guarded purge parser.
+                if [[ -z $arg2 ]]; then
+                    _rm "$arg1"
+                elif [[ -z $arg3 ]]; then
+                    _rm "$arg1" "$arg2"
+                else
+                    _rm "$arg1" "$arg2" "$arg3"
+                fi
+            ;;
             cp)                     _cp "$arg1" "$arg2" ;;
             getcert)                _getcert "$arg1" ;;
             getsan)                 _getsan "$arg1" ;;
