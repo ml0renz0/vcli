@@ -118,7 +118,7 @@ _curl(){
     if [[ $MODE == fail && -n $body ]]; then return 52; fi
     case "$endpoint" in
         /auth/token/renew-self) printf '{"auth":{"renewable":true}}\n';;
-        /kv2/foo) printf '{"data":{"metadata":{"version":1}}}\n';;
+        /kv2/foo) printf '{"data":{"data":{"fixture":"active"},"metadata":{"version":1,"deletion_time":""}}}\n';;
         /kv2/metadata/foo) printf '{"data":{"current_version":1}}\n';;
         *) http_code=200; printf '{}\n';;
     esac
