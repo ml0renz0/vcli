@@ -78,6 +78,23 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
+      - name: Wait for GitHub Actions to index Pages artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          for attempt in {1..12}; do
+            visible=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+              --jq '[.artifacts[].name] | index("github-pages") != null')
+            if [[ $visible == true ]]; then
+              # The Pages backend can lag behind Actions artifact listing.
+              sleep 12
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Pages artifact did not become visible"
+          exit 1
       - uses: actions/deploy-pages@v4
         id: deploy
 
@@ -130,3 +147,4 @@ jobs:
           }
           retire_if_unchanged "$reports" e4c901e4aed53b38ca4c21786159c77795fd9bb2
           retire_if_unchanged "$branding" 865d7c0322e966a77655e19c76d73708c7916ab0
+          retire_if_unchanged "docs/enable-asciinema-pages" b5bc63babe52643c61c10812e97d8f43b3e43bdb
