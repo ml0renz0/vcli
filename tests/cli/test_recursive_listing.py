@@ -101,7 +101,7 @@ _tree "/kv1/branch///" && _tree "/"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.splitlines(),
                          ["branch/", "child/", "leaf", "/", "kv1/", "cubbyhole/"])
-    def test_tree_empty_mount_404_is_not_a_missing_nested_path(self):
+    def test_tree_empty_mount_preserves_vault_list_404(self):
         source = SOURCE.read_text(encoding="utf-8")
         match = re.search(r"^function _tree\(\)\{.*?^\}", source, re.M | re.S)
         self.assertIsNotNone(match)
@@ -114,11 +114,14 @@ _ls(){ printf "cubbyhole/\nkv1/\n"; }
 _curl(){ http_code=404; return 1; }
 _vcli_children(){ echo "unexpected recursive listing" >&2; return 22; }
 _tree cubbyhole
+status=$?
+[[ $http_code == 404 ]] || exit 97
+exit "$status"
 '''
         out = subprocess.run(["bash", "-c", path_resolver() + "\n" + match.group(0) + stub],
                              capture_output=True, text=True, timeout=5)
-        self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertIn("(empty)", out.stdout)
+        self.assertNotEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout, "", "A 404 LIST must not print a phantom tree")
 
     def test_tree_nested_404_remains_failure(self):
         source = SOURCE.read_text(encoding="utf-8")

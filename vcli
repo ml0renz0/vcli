@@ -1419,29 +1419,25 @@ function _tree(){
     [[ -n ${2:-} ]] && ((depth+=1))
     local node="${url##*/}"
     [[ $url == / ]] && node=""
-    padecho "${node}/" "$depth" "$space" "$echo_space   "
     if [[ $url == / ]]; then
         # There is no LIST / endpoint. Root has mount points, like ls /.
         paths=$(_ls "-_disable_colors_-" "/") || return 1
+        padecho "${node}/" "$depth" "$space" "$echo_space   "
         while IFS= read -r path; do
             [[ -n $path ]] && padecho "$path" "$((depth+1))" "$space\` " "$echo_space   "
         done <<< "$paths"
         return 0
     fi
-    # A mount exists even when its first LIST returns 404 (empty KV).
-    # A nested missing path or an ACL/transport failure must still fail.
+    # The Vault API returns HTTP 404 when LIST has zero results, including
+    # empty mounts. Do not pretend an empty LIST is a successful tree.
     if [[ $url != */*/* ]]; then
-        local roots data_file code
+        local roots data_file
         roots=$(_ls "-_disable_colors_-" "/") || return 1
         if grep -Fxq -- "${url#/}/" <<< "$roots"; then
             data_file=$(mktemp "${VCLI_SESSION_TMP:-$TMP}/.vcli-tree.XXXXXX") || return 1
             if ! _curl "$url/" "" LIST > "$data_file"; then
-                code=$http_code
+                # Keep the original HTTP status for the interactive prompt.
                 rm -f -- "$data_file"
-                if [[ $code == 404 ]]; then
-                    padecho "(empty)" "$((depth+1))" "$space\` " "$echo_space   "
-                    return 0
-                fi
                 return 1
             fi
             paths=$(jq -r 'if (.data.keys | type) == "array" then .data.keys[] else error("invalid LIST") end' "$data_file") || { rm -f -- "$data_file"; return 1; }
@@ -1452,6 +1448,8 @@ function _tree(){
     else
         paths=$(_vcli_children "$url") || return 1
     fi
+    # Print only after Vault has successfully returned the children.
+    padecho "${node}/" "$depth" "$space" "$echo_space   "
     while IFS= read -r path; do
         [[ -n $path ]] || continue
         space=${space/+/ }

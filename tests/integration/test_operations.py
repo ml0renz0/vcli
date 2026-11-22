@@ -102,29 +102,54 @@ class ExtendedVaultContracts(unittest.TestCase):
         self.assertEqual(set(listing.splitlines()), expected, "ls and API disagree")
 
 
-    def test_17_tree_empty_mount_is_not_a_missing_path(self):
-        # Create an empty mount uniquely scoped to this disposable TLS Vault.
-        mount = "vcli-empty-" + uuid4().hex[:12]
-        api("POST", f"sys/mounts/{mount}", {"type": "kv", "options": {"version": "1"}})
+    def test_17_list_api_authority_for_empty_and_populated_mounts(self):
+        """Vault's raw LIST response, not vcli, decides expected status."""
+        kv1 = "vcli-empty-" + uuid4().hex[:12]
+        kv2 = "vcli-empty2-" + uuid4().hex[:12]
+        api("POST", f"sys/mounts/{kv1}", {"type": "kv", "options": {"version": "1"}})
+        api("POST", f"sys/mounts/{kv2}", {"type": "kv", "options": {"version": "2"}})
         try:
-            root = self.command("tree /")
-            self.assertIn(mount + "/", root)
-            listing = self.command(f"tree {mount}")
-            self.assertIn(mount + "/", listing)
-            self.assertIn("(empty)", listing)
-            # Cubbyhole is a built-in existing mount with empty LIST semantics.
-            # A simple "path name is present" assertion would miss its failure.
-            cubbyhole = self.command("tree cubbyhole")
-            self.assertEqual(
-                [line.rsplit(None, 1)[-1] for line in cubbyhole.splitlines()],
-                ["cubbyhole/", "(empty)"], cubbyhole
-            )
-            # Still reject missing nested directories; do not conflate with a
-            # mount whose LIST returns the Vault 404 empty-tree response.
-            result, _ = invoke(f"tree {mount}/nonexistent")
-            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            mounts = api("GET", "sys/mounts")["data"]
+            for name in (kv1, kv2, "cubbyhole"):
+                self.assertIn(name + "/", mounts)
+
+            for path, raw_endpoint in (
+                (kv1, f"{kv1}/"),
+                (kv2, f"{kv2}/metadata/"),
+                ("cubbyhole", "cubbyhole/"),
+            ):
+                with self.subTest(empty=path):
+                    with self.assertRaises(error.HTTPError) as ctx:
+                        api("LIST", raw_endpoint)
+                    self.assertEqual(ctx.exception.code, 404)
+                    for command in ("ls", "tree"):
+                        output, _ = invoke(f"{command} {path}",
+                                           mounts=f"kv2,team/config,{kv2}")
+                        self.assertNotEqual(output.returncode, 0,
+                                            f"{command} falsely reported success: {output.stdout}")
+                        if command == "tree":
+                            self.assertEqual(output.stdout, "",
+                                             "tree must not draw a successful empty mount")
+
+            # Positive controls: the identical endpoints respond 200 when populated.
+            api("POST", f"{kv1}/sentinel", {"present": True})
+            api("POST", f"{kv2}/data/sentinel", {"data": {"present": True}})
+            for path, raw_endpoint in (
+                (kv1, f"{kv1}/"), (kv2, f"{kv2}/metadata/")
+            ):
+                with self.subTest(populated=path):
+                    self.assertEqual(api("LIST", raw_endpoint)["data"]["keys"], ["sentinel"])
+                    for command in ("ls", "tree"):
+                        output = self.command(f"{command} {path}",
+                                              mounts=f"kv2,team/config,{kv2}")
+                        self.assertIn("sentinel", output)
+
+            for command in ("ls", "tree"):
+                failed, _ = invoke(f"{command} {kv1}/absent")
+                self.assertNotEqual(failed.returncode, 0)
         finally:
-            api("DELETE", f"sys/mounts/{mount}")
+            api("DELETE", f"sys/mounts/{kv2}")
+            api("DELETE", f"sys/mounts/{kv1}")
 
     def test_18_mount_inventory_reports_empty_populated_and_non_kv(self):
         empty = "vcli-occupancy-" + uuid4().hex[:12]
