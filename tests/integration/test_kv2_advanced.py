@@ -215,6 +215,32 @@ class KV2AdvancedTests(unittest.TestCase):
         self.assertEqual(self.meta("snapshot/a")["current_version"],2)
         self.assertEqual(self.meta("snapshot/deep/b")["current_version"],2)
 
+    def test_13_rm_soft_delete_explains_metadata_then_purge_removes_entry(self):
+        leaf = "purge/primary"
+        path = f"kv2/{self.p}/{leaf}"
+        self.put(leaf, {"key":"value"})
+        result, _ = invoke(f"rm {path}", version=2)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Soft-deleted KV v2 version", result.stdout)
+        self.assertEqual(self.meta(leaf)["current_version"], 1)
+        with self.assertRaises(error.HTTPError) as denied:
+            self.get(leaf)
+        self.assertEqual(denied.exception.code, 404)
+        # A second rm is not a second successful delete.
+        repeated, _ = invoke(f"rm {path}", version=2)
+        self.assertNotEqual(repeated.returncode, 0)
+        self.assertIn("already soft-deleted", repeated.stderr)
+        # Permanent deletion is disallowed in batch without a conscious --yes.
+        refused, _ = invoke(f"rm --purge {path}", version=2)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("requires an interactive confirmation", refused.stderr)
+        self.assertEqual(self.meta(leaf)["current_version"], 1)
+        result, _ = invoke(f"rm --purge --yes {path}", version=2)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Permanently removed KV v2 metadata", result.stdout)
+        with self.assertRaises(error.HTTPError) as missing:
+            api("GET", f"kv2/metadata/{self.p}/{leaf}")
+        self.assertEqual(missing.exception.code, 404)
     def test_07_field_updates_increment_versions(self):
         self.put("edit/item",{"x":1,"keep":True})
         self.cli(f'addsecret kv2/{self.p}/edit/item {{"y":2}}')
