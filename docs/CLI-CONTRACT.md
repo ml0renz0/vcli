@@ -71,6 +71,63 @@ presentarse como fallos todavía abiertos sin una reproducción actual.
 No usar `skip`, `xfail`, `continue-on-error` ni relajar aserciones
 para ocultar regresiones. Verificar estado final mediante la API de Vault.
 
+
+## KV v2 — revisión semántica de la adaptación del CLI (2026-11-22)
+
+**Regla de interfaz:** `vcli` recibe rutas lógicas (`kv2/equipo/secreto`), no debe
+pedir al usuario que conozca `/data/`, `/metadata/` o `/delete/`.
+La selección de motor KV v2 se hace actualmente con
+`VAULT_KV_VERSION=2` y `VAULT_KV_MOUNTS`, incluido prefijo más largo
+para montajes anidados. Esta configuración **no descubre** versiones de
+montaje automáticamente ni valida el tipo de cada mount en tiempo de uso.
+
+| Comando clásico | Traducción KV v2 | Semántica observable |
+| --- | --- | --- |
+| `cat PATH` | GET `mount/data/path` | Solo el objeto de la versión activa; datos nulos, destruidos o inválidos implican fallo, nunca éxito con metadatos en lugar del secreto |
+| `ls PATH` | LIST `mount/metadata/path` | Lista nombres, **incluidos los soft-deleted** mientras Vault conserve metadatos; no prueba que puedan leerse |
+| `tree PATH` | LIST `mount/metadata/path` recursivo | Estructura de nombres, no estados ni valores; mount vacío y ruta inexistente necesitan distinguirse por la información del mount |
+| `put PATH JSON` | POST `mount/data/path` con `data` y CAS | Crea una versión; CAS a partir de `current_version` de metadata, 0 al crear; una carrera debe fallar sin reintentar la escritura |
+| `addsecret` / `delsecret` | GET + POST con CAS | Transforman el objeto de la versión activa; versiones borradas no son objetos editables |
+| `rm PATH` | POST `mount/delete/path`, versión explícita | Borrado reversible de la versión activa; si ya estaba borrada devuelve diagnóstico y error, sin reintentar |
+| `rm --purge [--yes] PATH` | DELETE `mount/metadata/path` | **Irreversible**: borra todos los datos versionados y metadata de ese único path; requiere confirmación o `--yes` |
+| `rmtree -f PATH` | Descubre hojas + `rm` por hoja | Soft-delete de versiones activas; hojas ya borradas se omiten sin purga; un error 403/5xx/transporte sigue siendo error |
+| `cp`, `cptree`, `mv` | GET + POST CAS=0, y en `mv` soft-delete exacto | No atomicidad entre secretos ni copias del historial; se informa de resultados parciales; los destinos con metadata previa no se pisan |
+| `backup`, `find`, `replace` | LIST de metadata y GET de datos | No deben convertir tombstones en secretos válidos. Si aparecen versiones borradas, se falla de forma explícita antes que ocultar pérdidas de datos |
+
+**Importante:** un LIST exitoso no significa que el contenido exista o esté
+activo. La API KV v2 incluye `exclude_deleted`, pero **no** filtramos
+silenciosamente los nombres borrados: esa decisión exigiría una opción
+explícita y tests de historial/recuperación. Véase
+[API-first](API-FIRST-ACCEPTANCE.md).
+
+### Brechas que permanecen abiertas
+
+1. **Colisión de rutas:** los segmentos iniciales `data/`, `metadata/` y
+   `delete/` se interpretan como endpoints de API en el enrutador actual,
+   incluso si son nombres literales de carpeta. No se debe asumir soporte
+   correcto para esos secretos hasta separar rutas lógicas de rutas API
+   tipadas y probar ambas.
+2. **Operaciones históricas de KV v2:** el CLI todavía no expone comandos
+   específicos y consistentes para leer una versión, ver metadatos,
+   recuperar versiones borradas (`undelete`) o destruir una versión
+   (`destroy`). `rm --purge` **no** sustituye estas operaciones.
+3. **Autodescubrimiento:** `VAULT_KV_MOUNTS` es una declaración del cliente,
+   no una consulta autoritativa del servidor. Hay que contrastar
+   `sys/mounts`, opción `version`, montajes anidados y acceso ACL antes de
+   decidir un cambio de configuración por defecto.
+4. **Semántica de árboles:** `ls` muestra nombres con metadata; comandos
+   recursivos que necesitan datos activos pueden fallar cuando encuentran
+   una entrada soft-deleted. Falta una política de filtrado explícita,
+   sin convertir denegaciones o errores de LIST en «vacío».
+5. **CAS y concurrencia:** las comprobaciones previas mitigan las carreras
+   pero no ofrecen transacciones multisecreto ni protección frente a todas
+   las modificaciones que pueden llegar después del preflight.
+
+Estos puntos **siguen abiertos** en la aceptación F0–F5. Ni añadir
+comentarios ni pasar tests aislados los convierte en funcionalidades
+certificadas. Contrastar siempre contra
+[la API oficial KV v2](https://developer.hashicorp.com/vault/api-docs/secret/kv/kv-v2).
+
 ## KV v2 safe moves
 
 El comando `mv` conserva la semántica de copiar + borrar (no es atómico).
