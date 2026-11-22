@@ -303,7 +303,7 @@ declare -A vcli_commands_help=(
         [find]="find path/to/search { \"key\": \"value\" } \n  finds vault's secrets that match the JSON data provided on path $current_pwd/path/to/search"
         [replace]="replace path/to/replace { \"key\": \"value\" } { \"newkey\": \"newvalue\" } \n  replaces vault's secrets under $current_pwd/path/to/replace that match the JSON data with the new JSON data provided"
         [cptree]="cptree path/to/secret path/to/other_secret \n  copies tree to destination path $current_pwd/path/to/other_secret"
-        [rmtree]="rmtree [-f] path/to/secret \n  removes path $current_pwd/path/to/secret recursively. Use '-f' as first argument to avoid delete confirmation"
+        [rmtree]="rmtree [-f] [--purge] path/to/secrets \n  recursively soft-deletes secrets. On KV v2 --purge irreversibly removes ALL versions and metadata below the path. -f skips confirmation; purge never applies to KV v1."
         [backup]="backup path/to/secrets \n  backs up Vault /path to $TMP folder"
         [restore]="restore /local/dir/file \n  restores Vault backup"
         [cat]="cat path/to/secret \n  shows contents of secret $current_pwd/path/to/secret"
@@ -963,6 +963,11 @@ function vcli_emit_http_response(){
             fi
             return 1
         fi
+    elif [[ $status == 404 && $kv2 == yes && $method == GET && $cas != raw ]] &&
+         jq -e '(.data.data == null) and ((.data.metadata.deletion_time // "") != "" or .data.metadata.destroyed == true)' "$file" >/dev/null 2>&1; then
+        # Vault can return a soft-delete tombstone document with HTTP 404.
+        # Do not dump its metadata as if cat had read a live secret.
+        echo "vcli: KV v2 current version is deleted or destroyed; metadata remains" >&2
     elif [[ $data == '-_list_root_-' ]]; then
         jq -r '.data | keys[]' "$file"
     elif [[ -s $file ]]; then
@@ -1094,7 +1099,13 @@ function run_cmd(){
             find)                   backIFS=$IFS; IFS=$' ' ; _find "$arg1" "$arg2 $arg3"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
             replace)                backIFS=$IFS; IFS=$' ' ; _replace "$arg1" "$arg2 $arg3"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
             cptree)                 backIFS=$IFS; IFS=$' ' ; _cptree "$arg1" "$arg2"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
-            rmtree)                 backIFS=$IFS; IFS=$' ' ; _rmtree "$arg1" "$arg2" || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
+            rmtree)
+                # Forward the complete flag/path tuple; omitting arg3 would
+                # silently drop the target of "rmtree -f --purge path".
+                if [[ -n $arg3 ]]; then _rmtree "$arg1" "$arg2" "$arg3"
+                elif [[ -n $arg2 ]]; then _rmtree "$arg1" "$arg2"
+                else _rmtree "$arg1"; fi
+            ;;
             backup)                 backIFS=$IFS; IFS=$' ' ; _backup "$arg1"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
             restore)                backIFS=$IFS; IFS=$' ' ; _restore "$arg1"  || { IFS=$backIFS; return 1; }; IFS=$backIFS;;
             cat)                    _cat "$arg1" ;;
@@ -1569,36 +1580,101 @@ function _cptree(){
 
 # removes recursively a vault path
 function _rmtree(){
-    local forced=no root leaves leaf answer
-    if [[ ${1:-} == -f ]]; then forced=yes; shift; fi
-    root=$(_vcli_absolute_path "${1:-}") || { echo "Missing or invalid tree path" >&2; return 1; }
+    local forced=no purge=no root leaves leaf answer
+    local root_mount="" metadata_path metadata_json
+    local completed=0 skipped=0 total=0
+    while (( $# )); do
+        case "$1" in
+            -f) [[ $forced == no ]] || { echo "vcli: duplicate -f" >&2; return 1; }
+                forced=yes; shift ;;
+            --purge) [[ $purge == no ]] || { echo "vcli: duplicate --purge" >&2; return 1; }
+                purge=yes; shift ;;
+            --) shift; break ;;
+            -*) echo "Usage: rmtree [-f] [--purge] path" >&2; return 1 ;;
+            *) break ;;
+        esac
+    done
+    [[ $# == 1 && -n $1 ]] || {
+        echo "Usage: rmtree [-f] [--purge] path" >&2; return 1
+    }
+    root=$(_vcli_absolute_path "$1") || { echo "Missing or invalid tree path" >&2; return 1; }
     case "$root" in
         /|/sys|/sys/*|/auth|/auth/*|/identity|/identity/*|/cubbyhole|/cubbyhole/*)
-            echo "Refusing to delete a reserved Vault path" >&2; return 1;;
+            echo "Refusing to delete a reserved Vault path" >&2; return 1 ;;
     esac
     [[ ${root#/} == */* ]] || { echo "Refusing to delete a whole mount" >&2; return 1; }
-    leaves=$(_vcli_leaves "$root") || return 1
-    if [[ $forced != yes ]]; then
-        [[ -r /dev/tty ]] || { echo "Use rmtree -f for batch mode" >&2; return 1; }
-        read -r -p "Remove secrets beneath '$root'? (yes/no): " answer </dev/tty || return 1
-        [[ $answer == yes ]] || return 1
+    # Also protect nested mounts: '/team/config' must not be treated as a
+    # subtree merely because it contains a slash.
+    if vcli_match_kv2_mount "$root/__vcli_mount_guard" &&
+       [[ $root == "/$VCLI_KV_MOUNT" ]]; then
+        echo "Refusing to delete a whole mount" >&2
+        return 1
     fi
-    local completed=0 skipped=0 total=0
+    if [[ $purge == yes ]]; then
+        vcli_is_kv2_path "$root" || {
+            echo "vcli: rmtree --purge requires a KV v2 subtree" >&2
+            return 1
+        }
+        root_mount=$VCLI_KV_MOUNT
+    fi
+    leaves=$(_vcli_leaves "$root") || return 1
     while IFS= read -r leaf; do [[ -n $leaf ]] && (( total+=1 )); done <<< "$leaves"
+    if [[ $purge == yes ]]; then
+        # Fail before mutating anything if a leaf crosses a nested mount,
+        # has missing metadata, or is inaccessible. Preflight is not atomic.
+        while IFS= read -r leaf; do
+            [[ -n $leaf ]] || continue
+            [[ $leaf == "$root/"* ]] || {
+                echo "vcli: purge traversal escaped its root" >&2; return 1
+            }
+            if ! vcli_is_kv2_path "$leaf" || [[ $VCLI_KV_MOUNT != "$root_mount" ]]; then
+                echo "vcli: purge crossed into a different mount: $leaf" >&2
+                return 1
+            fi
+            metadata_path=$(vcli_kv2_metadata_path "$leaf") || return 1
+            metadata_json=$(_curl "$metadata_path" "" GET raw) || {
+                echo "vcli: cannot preflight KV v2 metadata: $leaf" >&2; return 1
+            }
+            jq -e '.data.versions | type == "object"' <<< "$metadata_json" >/dev/null 2>&1 || {
+                echo "vcli: invalid KV v2 metadata during purge preflight: $leaf" >&2; return 1
+            }
+        done <<< "$leaves"
+    fi
+    if [[ $forced != yes ]]; then
+        [[ -t 0 ]] || { echo "Use rmtree -f for non-interactive mode" >&2; return 1; }
+        if [[ $purge == yes ]]; then
+            read -r -p "PERMANENTLY purge $total secrets below '$root' (ALL versions)? Type PURGE: " answer </dev/tty || return 1
+            [[ $answer == PURGE ]] || { echo "vcli: purge cancelled" >&2; return 1; }
+        else
+            read -r -p "Remove secrets beneath '$root'? (yes/no): " answer </dev/tty || return 1
+            [[ $answer == yes ]] || return 1
+        fi
+    fi
     while IFS= read -r leaf; do
         [[ -n $leaf ]] || continue
-        if _rm "$leaf"; then
+        if [[ $purge == yes ]]; then
+            # One DELETE /metadata/<leaf> removes every version, not only the
+            # latest. Root-level subtrees are NEVER passed to this endpoint.
+            if ! _rm --purge --yes "$leaf" >/dev/null; then
+                _vcli_partial_failure rmtree-purge "$completed" "$total" "$leaf"
+                return 1
+            fi
+            (( completed+=1 ))
+        elif _rm "$leaf"; then
             (( completed+=1 ))
         elif [[ ${VCLI_RM_ALREADY_DELETED:-no} == yes ]]; then
-            # LIST on KV2 metadata keeps already-deleted leaves visible.
-            # Recursive soft-delete is idempotent; never purge these entries.
+            # LIST over KV2 metadata includes tombstones: skip, do not purge.
             (( skipped+=1 ))
         else
             _vcli_partial_failure rmtree "$completed" "$total" "$leaf"
             return 1
         fi
     done <<< "$leaves"
-    printf "Removed secrets beneath '%s' (%d deleted, %d already deleted)\n" "$root" "$completed" "$skipped"
+    if [[ $purge == yes ]]; then
+        printf "Permanently purged %d KV v2 secret(s) beneath '%s' (all versions and metadata)\n" "$completed" "$root"
+    else
+        printf "Removed secrets beneath '%s' (%d deleted, %d already deleted)\n" "$root" "$completed" "$skipped"
+    fi
 }
 
 # backup vault
