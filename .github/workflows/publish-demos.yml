@@ -1,0 +1,132 @@
+name: Publish vcli terminal demos
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/publish-demos.yml'
+      - 'docs/asciinema-player.html'
+      - 'scripts/validate-published-casts.py'
+      - 'assets/branding/favicon.svg'
+  workflow_run:
+    workflows: [VCLI trunk validation, SaaS playground scale acceptance]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: vcli-pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+         (github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'master' &&
+          github.event.workflow_run.head_repository.full_name == github.repository) }}
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+      - name: Assemble site from verified recordings
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p site/casts
+          cp docs/asciinema-player.html site/index.html
+          cp assets/branding/favicon.svg site/favicon.svg
+          python3 - <<'PY'
+          from pathlib import Path
+          html = Path("site/index.html").read_text()
+          assert "AsciinemaPlayer.create" in html and "DecompressionStream" in html
+          PY
+          for task in 'ci.yml|vcli-playground-asciinema|vcli-playground.cast' \
+            'playground-saas.yml|vcli-playground-saas-asciinema|vcli-playground-saas.cast'; do
+            IFS='|' read -r workflow artifact cast <<< "$task"
+            chosen=''
+            while IFS= read -r rid; do
+              [[ -n "$rid" ]] || continue
+              if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$rid/artifacts?per_page=100" \
+                --jq '.artifacts[] | select(.expired == false) | .name' |
+                grep -Fxq -- "$artifact"; then
+                chosen=$rid
+                break
+              fi
+            done < <(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?status=success&per_page=100" \
+              --jq '.workflow_runs[] | select(.head_repository.full_name == "'$GITHUB_REPOSITORY'" and (.head_branch == "master" or .head_branch == "ci/baseline-vault-revival")) | .id')
+            if [[ -z "$chosen" ]]; then
+              echo "::error::No verified $artifact recording is available; refusing an incomplete Pages deployment"
+              exit 1
+            fi
+            gh run download "$chosen" -R "$GITHUB_REPOSITORY" -n "$artifact" -D site/casts
+            test -s "site/casts/$cast"
+            python3 scripts/validate-published-casts.py "$cast" "site/casts/$cast"
+            gzip -9 -k "site/casts/$cast"
+          done
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - uses: actions/deploy-pages@v4
+        id: deploy
+
+  cleanup_obsolete_branches:
+    name: Retire verified obsolete branches
+    needs: publish
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Delete historical refs only after validating exact heads and preserved files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -Eeuo pipefail
+          pr=ci/baseline-vault-revival
+          reports=ci-reports
+          branding=docs/branding-vcli-staged
+
+          current=$(gh api "repos/$REPO/branches/$pr" --jq '.commit.sha')
+          [[ -n "$current" ]] || exit 1
+          small=$(gh api "repos/$REPO/contents/assets/branding/logo-crt-256.webp?ref=ci%2Fbaseline-vault-revival" --jq '.sha')
+          mono=$(gh api "repos/$REPO/contents/assets/branding/logo-mono.svg?ref=ci%2Fbaseline-vault-revival" --jq '.sha')
+          favicon=$(gh api "repos/$REPO/contents/assets/branding/favicon.svg?ref=ci%2Fbaseline-vault-revival" --jq '.sha')
+          [[ "$small" == 90eaa8db3cface897c1f5275fce1e72be5eac76a &&
+             "$mono" == a732a4e33ee0f1982b492c5ce4e6229786f2ad30 &&
+             "$favicon" == 67d46818fe2aa07bc7ac6e775c1ff9680976c087 ]] || {
+            echo "::error::Branding asset preservation check failed; branches retained"
+            exit 1
+          }
+          retire_if_unchanged() {
+            local ref="$1" expected="$2" observed
+            if ! observed=$(gh api "repos/$REPO/git/ref/heads/$ref" --jq '.object.sha' 2>/dev/null); then
+              echo "$ref already absent"
+              return 0
+            fi
+            if [[ "$observed" != "$expected" ]]; then
+              echo "::error::$ref advanced since audit; refusing deletion"
+              return 1
+            fi
+            gh api -X DELETE "repos/$REPO/git/refs/heads/$ref"
+            echo "Deleted obsolete $ref at $expected"
+          }
+          compare=$(gh api "repos/$REPO/compare/ci-reports...$pr")
+          [[ $(jq -r '.merge_base_commit.sha' <<< "$compare") == e4c901e4aed53b38ca4c21786159c77795fd9bb2 ]] || {
+            echo "::error::Reports branch not integrated; refusing deletion"
+            exit 1
+          }
+          retire_if_unchanged "$reports" e4c901e4aed53b38ca4c21786159c77795fd9bb2
+          retire_if_unchanged "$branding" 865d7c0322e966a77655e19c76d73708c7916ab0
