@@ -950,10 +950,17 @@ function vcli_emit_http_response(){
             filter+=' | .data | keys[]'
             jq_flags+=(-r)
         elif [[ $kv2 == yes && $method == GET && $cas != raw ]]; then
-            filter+=' | if (.data.data | type) == "object" then .data = .data.data else . end'
+            # KV v2 may return HTTP 200 with data:null for deleted versions.
+            # Never present a tombstone as a successful secret read or leak
+            # the version metadata as if it were a KV v1 payload.
+            filter+=' | if (.data.data | type) == "object" then .data = .data.data else error("inactive or malformed KV v2 secret") end'
         fi
         if ! jq "${jq_flags[@]}" "$filter" "$file" 2>/dev/null; then
-            echo "vcli: invalid or empty JSON from Vault" >&2
+            if [[ $kv2 == yes && $method == GET && $cas != raw ]]; then
+                echo "vcli: KV v2 secret has no readable active data (deleted, destroyed or invalid); inspect its metadata" >&2
+            else
+                echo "vcli: invalid or empty JSON from Vault" >&2
+            fi
             return 1
         fi
     elif [[ $data == '-_list_root_-' ]]; then
@@ -1576,16 +1583,22 @@ function _rmtree(){
         read -r -p "Remove secrets beneath '$root'? (yes/no): " answer </dev/tty || return 1
         [[ $answer == yes ]] || return 1
     fi
-    local completed=0 total=0
+    local completed=0 skipped=0 total=0
     while IFS= read -r leaf; do [[ -n $leaf ]] && (( total+=1 )); done <<< "$leaves"
     while IFS= read -r leaf; do
         [[ -n $leaf ]] || continue
-        _rm "$leaf" || {
-            _vcli_partial_failure rmtree "$completed" "$total" "$leaf"; return 1;
-        }
-        (( completed+=1 ))
+        if _rm "$leaf"; then
+            (( completed+=1 ))
+        elif [[ ${VCLI_RM_ALREADY_DELETED:-no} == yes ]]; then
+            # LIST on KV2 metadata keeps already-deleted leaves visible.
+            # Recursive soft-delete is idempotent; never purge these entries.
+            (( skipped+=1 ))
+        else
+            _vcli_partial_failure rmtree "$completed" "$total" "$leaf"
+            return 1
+        fi
     done <<< "$leaves"
-    printf "Removed secrets beneath '%s'\n" "$root"
+    printf "Removed secrets beneath '%s' (%d deleted, %d already deleted)\n" "$root" "$completed" "$skipped"
 }
 
 # backup vault
@@ -1865,6 +1878,7 @@ function _mv(){
 function _rm(){
     local path snapshot version metadata delete_path payload after after_version
     local selected="${1:-}" skip_confirmation=no answer
+    VCLI_RM_ALREADY_DELETED=no
     if [[ $selected == --purge ]]; then
         shift
         if [[ ${1:-} == --yes ]]; then skip_confirmation=yes; shift; fi
@@ -1895,8 +1909,9 @@ function _rm(){
         metadata=$(vcli_kv2_metadata_path "$path") || return 1
         local meta_json
         if meta_json=$(_curl "$metadata" "" GET); then
-            if jq -e '.data as $d | ($d.versions[($d.current_version|tostring)].deletion_time // "") | length > 0' <<< "$meta_json" >/dev/null 2>&1; then
-                printf "vcli: %s is already soft-deleted; metadata and versions remain. Use rm --purge to erase irreversibly.\n" "$path" >&2
+            if jq -e '.data as $d | $d.versions[($d.current_version|tostring)] | ((.deletion_time // "") != "" or .destroyed == true)' <<< "$meta_json" >/dev/null 2>&1; then
+                VCLI_RM_ALREADY_DELETED=yes
+                printf "vcli: %s is already soft-deleted or destroyed; metadata and versions remain. Use rm --purge to erase irreversibly.\n" "$path" >&2
             fi
         fi
         return 1
@@ -1906,6 +1921,7 @@ function _rm(){
     # The raw response still carries metadata: distinguish a deleted version
     # from missing/malformed payloads without echoing secret values.
     if jq -e '.data.data == null and (.data.metadata.deletion_time | type) == "string" and (.data.metadata.deletion_time | length) > 0' <<< "$snapshot" >/dev/null 2>&1; then
+        VCLI_RM_ALREADY_DELETED=yes
         printf 'vcli: %s is already soft-deleted; metadata and versions remain. Use rm --purge to erase irreversibly.\n' "$path" >&2
         return 1
     fi
