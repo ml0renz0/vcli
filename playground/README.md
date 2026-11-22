@@ -197,33 +197,31 @@ Si ya existe un laboratorio de otro perfil, no se modifica ni se destruye
 automáticamente: hay que ejecutar `down` explícitamente y crear uno nuevo.
 Solo se necesita Python 3 para el generador/test, no para el CLI Bash.
 
-El workflow separado `playground-saas.yml` ejecuta aceptación sobre Vault TLS
-real al modificar este perfil y mediante `workflow_dispatch` tras publicarlo
-en la rama por defecto. No se añade a la matriz obligatoria ni al smoke
-estándar. Compara las 8.640 hojas vía REST y los tres backups completos,
-verifica las 1.728 revisiones previas, autentica un AppRole y prueba aislamiento
-entre tenants en todos los montajes. Migra 270 hojas, prueba colisiones,
-rota 18 coincidencias, conserva los centinelas, borra y restaura el tenant,
-valida los dos montajes KV2 y vuelve a comprobar todo el catálogo original.
-El backup sigue siendo de valores vigentes, no snapshots del historial KV2.
-Las mediciones de tiempo se registran en el job, sin declarar objetivos
-de rendimiento hasta disponer de resultados reales.
+El workflow separado `playground-saas.yml` ejecuta una única aceptación
+interactiva, con grabación opcional, sobre Vault TLS real. Compara los
+8.640 valores y las 1.728 revisiones históricas mediante REST, valida los
+backups de los tres montajes, entra con el AppRole del tenant y verifica
+el aislamiento, migra y rota un tenant de 270 hojas, recupera ese tenant,
+y restaura además las 8.640 hojas en prefijos nuevos del montaje original.
+La recuperación integral remapea explícitamente los nombres de los miembros
+TAR sin modificar sus datos; no sobrescribe el catálogo original ni sus
+versiones. Los archivos privados y los prefijos recuperados quedan
+disponibles hasta ejecutar `down`. Usa un laboratorio recién creado.
+La misma aceptación se ejecuta sin asciinema con `python3 tests/playground/test_saas.py`.
+Cada comando registra su duración desde Enter hasta el prompt (sin tiempo
+de tecleo), y la ejecución produce JSON con SHA, Vault, casos y cardinalidades.
+No se repite la suite SaaS en modo batch.
 
 ## Demo asciinema SaaS (adicional)
 
 Con `VCLI_PLAYGROUND_PROFILE=saas scripts/playground.sh up`, el grabador
 selecciona automáticamente `vcli-playground-saas.cast`. El workflow de escala
-adjunta `vcli-playground-saas-asciinema` tras validar la grabación, antes de
-los backups de miles de hojas. Mantiene una sola terminal real y cubre los
-43 comandos públicos: inventario de tenants, auditoría de los cuatro estados
-X.509, pares defectuosos, keytabs auténticos sintéticos y corruptos, 403/404,
-rotación de 18 coincidencias, migración y recuperación de un tenant de 270
-hojas y el recorrido completo de utilidades. No usa cortes ni prompts falsos.
-Los fallos de Kerberos no equivalen a autenticar contra un KDC; `klist` y la
-coincidencia exacta del principal comprueban el contenido local.
-
-Los sabores persistentes se validan también en `test_enterprise.py`, antes de
-la demo estándar. Una prueba de escala es independiente de la grabación.
+adjunta `vcli-playground-saas-asciinema` solo después de superar la aceptación
+completa y validar la ausencia de credenciales. Una sola terminal real cubre
+los 43 comandos, los tres roles, los cuatro estados X.509, keytabs sintéticos,
+fallos esperados, migración/rotación de 270 hojas y restauración de 8.640.
+El mismo recorrido funciona sin grabación. Las pruebas de regresión estándar
+se mantienen separadas, no se repiten dentro del SaaS.
 
 ## Demo asciinema
 

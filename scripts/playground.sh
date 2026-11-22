@@ -25,6 +25,7 @@ Usage: scripts/playground.sh up|status|shell|batch|smoke|reset|down [admin|reado
   status          Report loopback address without revealing credentials
   shell [role]    Explore with the REAL ./vcli interactive shell
   batch [role]    Pipe commands to REAL ./vcli -n
+                  Roles: admin, readonly, tenant-001..tenant-032 (SaaS AppRole)
   smoke           Verify live TLS, KV1/KV2, PKI, keytab, ACL and Vault API
   reset           Destroy/recreate all example data and credentials
   down            Remove owned container, synthetic secrets and local state
@@ -331,7 +332,21 @@ client() {
     case "$role" in
         admin) read_private root-token ;;
         readonly) read_private readonly-token ;;
-        *) die 'role must be admin or readonly' ;;
+        tenant-*)
+            [[ $role =~ ^tenant-0(0[1-9]|[12][0-9]|3[012])$ ]] ||
+                die 'unknown SaaS tenant'
+            read_private profile
+            [[ $REPLY == saas ]] || die 'tenant AppRoles require the SaaS profile'
+            local role_id secret_id
+            role_id=$(api GET "auth/approle/role/saas-$role/role-id" |
+                jq -er '.data.role_id') || return 1
+            secret_id=$(api POST "auth/approle/role/saas-$role/secret-id"                 '{"num_uses":1,"ttl":"5m"}' | jq -er '.data.secret_id') || return 1
+            # The CLI itself logs in using its original AppRole implementation.
+            # Credential values are never typed or printed to the terminal.
+            env -i PATH="$PATH" HOME="$STATE/home" TMPDIR="$STATE/work"                 LANG="${LANG:-C.UTF-8}" TERM="${TERM:-dumb}"                 NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost                 VAULT_ADDR="$ADDRESS" VAULT_CACERT="$STATE/ca.pem"                 VAULT_ROLE_ID="$role_id" VAULT_SECRET_ID="$secret_id"                 VAULT_KV_VERSION=2 VAULT_KV_MOUNTS='kv2,team/config'                 "$ROOT/vcli" "$@"
+            return
+            ;;
+        *) die 'role must be admin, readonly, or a SaaS tenant' ;;
     esac
     client_with "$REPLY" "$STATE/ca.pem" "$STATE/work" "$@"
 }

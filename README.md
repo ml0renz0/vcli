@@ -66,7 +66,10 @@ printf 'cat kv1/demo/app\n' | scripts/playground.sh batch
 ## Playground SaaS a gran escala (opcional)
 
 El perfil `saas` añade 8.640 secretos vigentes y 1.728 revisiones KV2 al
-catálogo estándar. Incluye 32 tenants con ACL/AppRole propios.
+catálogo estándar. Incluye 32 tenants con ACL/AppRole propios. La misma aceptación interactiva
+verifica y graba (opcionalmente) el recorrido completo: 270 hojas por tenant,
+backups y restauración de 8.640 valores en prefijos aislados, y JSON de tiempos.
+El catálogo original y su historial se conservan. Usa un playground recién creado.
 
 ```bash
 VCLI_PLAYGROUND_PROFILE=saas scripts/playground.sh up
@@ -107,6 +110,19 @@ scripts/record-playground-demo.sh ./vcli-playground.cast
 asciinema play ./vcli-playground.cast
 scripts/playground.sh down
 ```
+
+Para grabar la aceptación SaaS completa (sin ejecutar otra suite duplicada):
+
+```bash
+VCLI_PLAYGROUND_PROFILE=saas scripts/playground.sh up
+VCLI_SAAS_METRICS="$PWD/vcli-saas-metrics.json" scripts/record-playground-demo.sh
+asciinema play vcli-playground-saas.cast
+scripts/playground.sh down
+```
+
+La grabación conserva los tiempos reales, incluidos los backups y la recuperación
+integral. El artefacto de CI solo se publica si la aceptación y la verificación
+de credenciales finalizan correctamente.
 
 ## Desarrollo, calidad y próximos pasos
 
