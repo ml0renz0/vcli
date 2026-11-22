@@ -658,6 +658,25 @@ class InteractiveShellTests(unittest.TestCase):
         finally:
             self.end(home, fd, child)
 
+    def test_39_ctrl_word_navigation_then_ctrl_w_deletes_only_last_word(self):
+        home, fd, child = self.session()
+        try:
+            # Ctrl+Left, Ctrl+Right, Ctrl+W must restore a valid help command.
+            self.send(fd, b"help garbage\x1b[1;5D\x1b[1;5C\x17\n", pace=0.03)
+            self.expect_help(fd, timeout=8)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
+    def test_40_alt_backspace_removes_word_without_exiting(self):
+        home, fd, child = self.session()
+        try:
+            self.send(fd, b"help garbage\x1b\x7f\n", pace=0.03)
+            self.expect_help(fd, timeout=8)
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
 
 if __name__ == "__main__":
     unittest.main()
