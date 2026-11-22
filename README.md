@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/branding/logo-reborn.gif" alt="vcli — retro CRT Reborn (animated)" width="320" />
+</p>
+
 # vcli — Bash CLI para HashiCorp Vault
 
 **Revival en desarrollo (candidato v0.7, todavía no publicado como estable).**
