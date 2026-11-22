@@ -85,6 +85,23 @@ python3 tests/playground/test_saas.py
 
 Consulta [el catálogo y las pruebas de escala](playground/README.md#perfil-adicional-saas--gran-catálogo-multi-tenant).
 
+## Gráficas de tiempos y demos
+
+![Duración real de los jobs CI](reports/ci-times.svg)
+
+![Duración de la aceptación SaaS](reports/saas-times.svg)
+
+Gráficas de **ejecuciones verificadas**, con tiempos de pared del job
+(incluyendo preparación), no latencias de comandos. Los jobs de CI pueden
+solaparse. Las métricas por operación del SaaS se conservan como artefacto
+`vcli-saas-metrics` y se mostrarán por separado, sin mezclar medidas.
+
+**Grabaciones asciinema actuales:** [Playground completo — Actions #45027729938](https://github.com/ml0renz0/vcli/actions/runs/45027729938)
+ y [SaaS multitenant — Actions #45027729945](https://github.com/ml0renz0/vcli/actions/runs/45027729945).
+En *Artifacts* están `vcli-playground-asciinema` y `vcli-playground-saas-asciinema`.
+GitHub no permite embeber un reproductor JavaScript en el README; los archivos
+`.cast` se pueden abrir localmente con `asciinema play --speed 0.5 archivo.cast`.
+
 ## Asciinema del playground actual
 
 El job de playground de la CI genera la grabación auténtica vcli-playground.cast

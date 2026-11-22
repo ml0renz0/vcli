@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 495" role="img" aria-label="vcli - duración de jobs CI">
+<rect width="1000" height="495" rx="14" fill="#0a1410"/>
+<text x="24" y="33" font-size="23" font-weight="bold" font-family="monospace" fill="#69f52b">vcli - duración de jobs CI</text>
+<text x="24" y="57" font-size="13" font-family="sans-serif" fill="#b1c6b7">Ejecución verde #45027729938 · 22 nov 2026 · Vault TLS real</text>
+<text x="24" y="94" font-size="12" font-family="monospace" fill="#e5f7e8">Real Vault TLS playground acceptance</text>
+<rect x="470" y="76" width="460" height="24" rx="4" fill="#173122"/>
+<rect x="470" y="76" width="460" height="24" rx="4" fill="#69f52b"/>
+<text x="991" y="93" text-anchor="end" font-size="13" font-family="monospace" fill="#c9f9b3">3.82 min</text>
+<text x="24" y="131" font-size="12" font-family="monospace" fill="#e5f7e8">Native macOS offline safety contracts (Homebrew GN</text>
+<rect x="470" y="113" width="460" height="24" rx="4" fill="#173122"/>
+<rect x="470" y="113" width="366" height="24" rx="4" fill="#69f52b"/>
+<text x="991" y="130" text-anchor="end" font-size="13" font-family="monospace" fill="#c9f9b3">3.03 min</text>
+<text x="24" y="168" font-size="12" font-family="monospace" fill="#e5f7e8">Minimal Linux debian CLI</text>
+<rect x="470" y="150" width="460" height="24" rx="4" fill="#173122"/>
+<rect x="470" y="150" width="299" height="24" rx="4" fill="#69f52b"/>
+<text x="991" y="167" text-anchor="end" font-size="13" font-family="monospace" fill="#c9f9b3">2.48 min</text>
+<text x="24" y="205" font-size="12" font-family="monospace" fill="#e5f7e8">Vault 1.20.4 integration</text>
+<rect x="470" y="187" width="460" height="24" rx="4" fill="#173122"/>
+<rect x="470" y="187" width="261" height="24" rx="4" fill="#69f52b"/>
+<text x="991" y="204" text-anchor="end" font-size="13" font-family="monospace" fill="#c9f9b3">2.17 min</text>
+<text x="24" y="242" font-size="12" font-family="monospace" fill="#e5f7e8">Vault 2.0.4 integration</text>
+<rect x="470" y="224" width="460" height="24" rx="4" fill="#173122"/>
+<rect x="470" y="224" width="261" height="24" rx="4" fill="#69f52b"/>
+<text x="991" y="241" text-anchor="end" font-size="13" font-family="monospace" fill="#c9f9b3">2.17 min</text>
+<text x="24" y="279" font-size="12" font-family="monospace" fill="#e5f7e8">Vault 2.1.1 integration</text>
+<rect x="470" y="261" width="460" height="24" rx="4" fill="#173122"/>
+<rect x="470" y="261" width="257" height="24" rx="4" fill="#69f52b"/>
+<text x="991" y="278" text-anchor="end" font-size="13" font-family="monospace" fill="#c9f9b3">2.13 min</text>
+<text x="24" y="316" font-size="12" font-family="monospace" fill="#e5f7e8">Vault 1.21.4 integration</text>
+<rect x="470" y="298" width="460" height="24" rx="4" fill="#173122"/>
+<rect x="470" y="298" width="257" height="24" rx="4" fill="#69f52b"/>
+<text x="991" y="315" text-anchor="end" font-size="13" font-family="monospace" fill="#c9f9b3">2.13 min</text>
+<text x="24" y="353" font-size="12" font-family="monospace" fill="#e5f7e8">Minimal Linux alpine CLI</text>
+<rect x="470" y="335" width="460" height="24" rx="4" fill="#173122"/>
+<rect x="470" y="335" width="215" height="24" rx="4" fill="#69f52b"/>
+<text x="991" y="352" text-anchor="end" font-size="13" font-family="monospace" fill="#c9f9b3">1.78 min</text>
+<text x="24" y="390" font-size="12" font-family="monospace" fill="#e5f7e8">Syntax, source invariants and isolated tests</text>
+<rect x="470" y="372" width="460" height="24" rx="4" fill="#173122"/>
+<rect x="470" y="372" width="28" height="24" rx="4" fill="#69f52b"/>
+<text x="991" y="389" text-anchor="end" font-size="13" font-family="monospace" fill="#c9f9b3">0.23 min</text>
+<text x="24" y="427" font-size="12" font-family="monospace" fill="#e5f7e8">Required CI gate</text>
+<rect x="470" y="409" width="460" height="24" rx="4" fill="#173122"/>
+<rect x="470" y="409" width="6" height="24" rx="4" fill="#69f52b"/>
+<text x="991" y="426" text-anchor="end" font-size="13" font-family="monospace" fill="#c9f9b3">0.05 min</text>
+<text x="24" y="482" fill="#b1c6b7" font-size="12" font-family="sans-serif">Duraciones reales de jobs. Los jobs paralelos no se suman.</text>
+</svg>

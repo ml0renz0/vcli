@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 162" role="img" aria-label="vcli - aceptación SaaS">
+<rect width="1000" height="162" rx="14" fill="#0a1410"/>
+<text x="24" y="33" font-size="23" font-weight="bold" font-family="monospace" fill="#69f52b">vcli - aceptación SaaS</text>
+<text x="24" y="57" font-size="13" font-family="sans-serif" fill="#b1c6b7">Ejecución verde #45027729945 · 8.640 secretos · 32 tenants</text>
+<text x="24" y="94" font-size="12" font-family="monospace" fill="#e5f7e8">8640-secret SaaS acceptance (real Vault TLS)</text>
+<rect x="470" y="76" width="460" height="24" rx="4" fill="#173122"/>
+<rect x="470" y="76" width="460" height="24" rx="4" fill="#69f52b"/>
+<text x="991" y="93" text-anchor="end" font-size="13" font-family="monospace" fill="#c9f9b3">29.15 min</text>
+<text x="24" y="149" fill="#b1c6b7" font-size="12" font-family="sans-serif">Duraciones reales de jobs. Los jobs paralelos no se suman.</text>
+</svg>
