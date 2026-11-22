@@ -131,6 +131,19 @@ En la demo se copian los seis secretos legacy y se rotan únicamente cuatro
 objetos JSON idénticos; los otros dos son centinelas que no deben cambiar.
 El original no se modifica. El nombre del subárbol de trabajo es único.
 
+## Contratos de integración del catálogo empresarial
+
+La CI ejecuta `tests/playground/test_enterprise.py` antes de grabar,
+independientemente de que se solicite un asciicast. Comprueba los 45 secretos
+con REST TLS, backup de los tres montajes y contenido exacto del TAR, copia
+recursiva cruzada KV1/KV2, preflight de colisión, búsqueda y reemplazo de
+cuatro coincidencias con centinelas, borrado KV1 y lógico KV2, restauración
+completa de 45 hojas y ausencia de mutaciones del catálogo original.
+
+La suite usa un prefijo único y artefactos privados en un laboratorio
+desechable. El backup representa los valores vigentes, no todo el historial
+de revisiones de KV2. No ejecutarla contra producción.
+
 ## Demo asciinema
 
 El job de playground de la CI genera la grabación auténtica vcli-playground.cast

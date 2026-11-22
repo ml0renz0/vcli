@@ -128,3 +128,12 @@ la lectura comprueba la identidad del fichero abierto.
 físico. El historial no sincroniza escrituras de sesiones concurrentes;
 la última escritura válida prevalece. Estas garantías de rutas y permisos
 se validan actualmente en Linux/GNU, no en macOS/BSD nativo.
+
+## Cobertura por comando y catálogo empresarial
+
+`tests/cli/test_command_coverage.py` asigna los 43 comandos públicos a sus
+suites E2E existentes; es un contrato de inventario, no cobertura de ramas.
+`tests/playground/test_enterprise.py` añade validación funcional a escala
+de 45 hojas repartidas en KV1, KV2 y un montaje KV2 anidado. La comparación
+se realiza mediante REST independiente y miembros JSON de los archivos TAR,
+no por marcadores de éxito del CLI. Se ejecuta antes de cualquier grabación.

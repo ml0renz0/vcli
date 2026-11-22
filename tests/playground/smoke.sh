@@ -62,6 +62,9 @@ result=$(printf 'find kv1/enterprise/legacy {"username":"shared_svc","password":
     scripts/playground.sh batch readonly)
 [[ $(grep -c '/primary' <<< "$result") == 4 ]] || { echo "Missing four rotation fixtures" >&2; exit 1; }
 
+# Separate behavioral gate: full 45-leaf REST-verified operations, even without a cast.
+python3 tests/playground/test_enterprise.py
+
 # Opt-in recording, always before destroying the private Vault state.
 if [[ -n ${VCLI_PLAYGROUND_CAST:-} ]]; then
     scripts/record-playground-demo.sh "$VCLI_PLAYGROUND_CAST"
