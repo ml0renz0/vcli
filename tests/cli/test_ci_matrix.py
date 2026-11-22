@@ -138,6 +138,10 @@ class VaultMatrixParity(unittest.TestCase):
         self.assertEqual(fragments[4:], test_modules()[0],
                          "macOS must run the same 13 unmodified E2E suites as Linux")
 
+    def test_recursive_pki_read_contract_is_mandatory_on_linux_and_macos(self):
+        workflow = (RUNNER.parents[2] / ".github" / "workflows" / "ci.yml").read_text()
+        self.assertEqual(workflow.count("tests.cli.test_recursive_pki_reads"), 2)
+
     def test_current_documentation_tracks_mandatory_e2e_modules(self):
         """Current support claims must match the same modules guarded in CI.
 

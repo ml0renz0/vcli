@@ -1987,30 +1987,40 @@ function _getsan(){
 }
 
 # recover krb.list from certificates path
-function _getkrblist(){
-    local data stem principal
-    data=$(_vcli_pki_json "${1:-}") || return 1
+# Render a previously fetched Kerberos secret without another Vault GET.
+function vcli_krb_list_from_data(){
+    local path="$1" data="$2" stem principal
     _vcli_krb_pairs "$data" || return 1
     local -a stems
     mapfile -t stems < <(jq -r 'keys[] | select(endswith("_principal")) | .[:-10]' <<< "$data")
     for stem in "${stems[@]}"; do
         principal=$(jq -er --arg k "${stem}_principal" '.[$k]' <<< "$data") || return 1
-        printf '%s | %s\n' "$principal" "$1"
+        printf '%s | %s\n' "$principal" "$path"
     done
+}
+function _getkrblist(){
+    local data
+    data=$(_vcli_pki_json "${1:-}") || return 1
+    vcli_krb_list_from_data "${1:-}" "$data"
 }
 
 # recover certs.list from certificates path
-function _getcertlist(){
-    local data stem crt sans
-    data=$(_vcli_pki_json "${1:-}") || return 1
+# Validate and render a previously fetched certificate secret.
+function vcli_cert_list_from_data(){
+    local path="$1" data="$2" stem crt sans
     _vcli_cert_pairs "$data" || return 1
     local -a stems
     mapfile -t stems < <(jq -r 'keys[] | select(endswith("_crt")) | .[:-4]' <<< "$data")
     for stem in "${stems[@]}"; do
         crt=$(jq -er --arg k "${stem}_crt" '.[$k]' <<< "$data") || return 1
         sans=$(printf '%s\n' "$crt" | openssl x509 -noout -ext subjectAltName 2>/dev/null) || return 1
-        printf '%s | %s | %s\n' "$stem" "$sans" "$1"
+        printf '%s | %s | %s\n' "$stem" "$sans" "$path"
     done
+}
+function _getcertlist(){
+    local data
+    data=$(_vcli_pki_json "${1:-}") || return 1
+    vcli_cert_list_from_data "${1:-}" "$data"
 }
 
 # Parse OpenSSL GMT notAfter dates with GNU date or native macOS BSD date.
@@ -2028,13 +2038,9 @@ function vcli_cert_expiry_epoch(){
 }
 
 # returns expiration date for specified certificates secret
-function _getcertexpiration(){
-    local path="" option="" arg data stem crt end days now expiration
-    for arg in "$@"; do
-        case "$arg" in -oo|-ow|-oc) option="$arg";; -*) return 1;; "") ;; *) path="$arg";; esac
-    done
-    [[ -n $path ]] || return 1
-    data=$(_vcli_pki_json "$path") || return 1
+# Keep expiry options identical while sharing the fetched snapshot.
+function vcli_cert_expiration_from_data(){
+    local path="$1" option="$2" data="$3" stem crt end days now expiration
     _vcli_cert_pairs "$data" || return 1
     local -a stems
     mapfile -t stems < <(jq -r 'keys[] | select(endswith("_crt")) | .[:-4]' <<< "$data")
@@ -2057,49 +2063,58 @@ function _getcertexpiration(){
         printf '%s (%s): %d days to renew certificate [%s]\n' "$stem" "$path" "$days" "$status"
     done
 }
+function _getcertexpiration(){
+    local path="" option="" arg data
+    for arg in "$@"; do
+        case "$arg" in -oo|-ow|-oc) option="$arg";; -*) return 1;; "") ;; *) path="$arg";; esac
+    done
+    [[ -n $path ]] || return 1
+    data=$(_vcli_pki_json "$path") || return 1
+    vcli_cert_expiration_from_data "$path" "$option" "$data"
+}
 
 # recovers krb.list with all keytabs found under the specified folder
+# One read per leaf; only Kerberos-shaped secrets proceed to validation.
 function _getallkrblist(){
-    local root leaves path
+    local root leaves path data
     root=$(_vcli_absolute_path "${1:-}") || return 1
     leaves=$(_vcli_leaves "$root") || return 1
     while IFS= read -r path; do
         [[ -n $path ]] || continue
-        local data
         data=$(_vcli_pki_json "$path") || return 1
         jq -e 'any(keys[]; endswith("_principal"))' <<< "$data" >/dev/null || continue
-        _getkrblist "$path" || return 1
+        vcli_krb_list_from_data "$path" "$data" || return 1
     done <<< "$leaves"
 }
 
 # recovers cert.list with all certificates found under the specified folder
+# One read per leaf, preserving strict certificate/key matching.
 function _getallcertlist(){
-    local root leaves path
+    local root leaves path data
     root=$(_vcli_absolute_path "${1:-}") || return 1
     leaves=$(_vcli_leaves "$root") || return 1
     while IFS= read -r path; do
         [[ -n $path ]] || continue
-        local data
         data=$(_vcli_pki_json "$path") || return 1
         jq -e 'any(keys[]; endswith("_crt"))' <<< "$data" >/dev/null || continue
-        _getcertlist "$path" || return 1
+        vcli_cert_list_from_data "$path" "$data" || return 1
     done <<< "$leaves"
 }
 
 
 # shows all certificate's expiration dates
+# Reuse the validated response rather than re-reading matched certs.
 function _getallcertexpiration(){
-    local root leaves path option=""
+    local root leaves path data option=""
     if [[ ${1:-} == -o* ]]; then option="$1"; shift; fi
     root=$(_vcli_absolute_path "${1:-}") || return 1
     [[ ${2:-} == -o* ]] && option="$2"
     leaves=$(_vcli_leaves "$root") || return 1
     while IFS= read -r path; do
         [[ -n $path ]] || continue
-        local data
         data=$(_vcli_pki_json "$path") || return 1
         jq -e 'any(keys[]; endswith("_crt"))' <<< "$data" >/dev/null || continue
-        _getcertexpiration "$path" "$option" || return 1
+        vcli_cert_expiration_from_data "$path" "$option" "$data" || return 1
     done <<< "$leaves"
 }
 

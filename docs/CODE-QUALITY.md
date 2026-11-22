@@ -888,3 +888,18 @@ recursión permanece opt-in y la RC v0.7 no se publica en esta fase.
 - Sin pérdida de datos ante fallos de lectura; códigos de salida no cero.
 - No publicar release ni fusionar a `master` antes de aceptar la RC.
 - Sin declarar mejora de latencia que no se haya medido.
+
+## 04-Q PKI-01 — lecturas recursivas sin refetch (2026-11-22)
+
+Los comandos `getallcertlist`, `getallkrblist` y `getallcertexpiration`
+hacían dos lecturas Vault para cada secreto coincidente: comprobar sus campos
+y después obtenerlo de nuevo para procesarlo. Ahora un helper reutiliza el
+mismo objeto KV, de modo que cada hoja origina una sola petición GET; las
+consultas LIST necesarias para descubrir hojas se mantienen. Se conservan
+las validaciones X.509, Kerberos, códigos de salida y filtros de vencimiento.
+Los comandos individuales comparten el mismo procesador de datos.
+
+`tests.cli.test_recursive_pki_reads` verifica recuento de lecturas,
+paridad de resultados y errores, y corre en la CI obligatoria Linux/macOS.
+Las suites E2E reales de PKI/Kerberos contra Vault TLS siguen intactas.
+**Pendiente:** CI del commit y benchmark A/B antes de cuantificar mejoras.
