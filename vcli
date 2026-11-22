@@ -1396,7 +1396,7 @@ function _tree(){
         # There is no LIST / endpoint. Root has mount points, like ls /.
         paths=$(_ls "-_disable_colors_-" "/") || return 1
         while IFS= read -r path; do
-            [[ -n $path ]] && padecho "$path" "$((depth+1))" "$space` " "$echo_space   "
+            [[ -n $path ]] && padecho "$path" "$((depth+1))" "$space\` " "$echo_space   "
         done <<< "$paths"
         return 0
     fi
@@ -1411,7 +1411,7 @@ function _tree(){
                 code=$http_code
                 rm -f -- "$data_file"
                 if [[ $code == 404 ]]; then
-                    padecho "(empty)" "$((depth+1))" "$space` " "$echo_space   "
+                    padecho "(empty)" "$((depth+1))" "$space\` " "$echo_space   "
                     return 0
                 fi
                 return 1
@@ -1430,7 +1430,7 @@ function _tree(){
         if [[ $path == */ ]]; then
             _tree "$url/$path" "$depth" "$space+ " "$echo_space   " || return 1
         else
-            padecho "$path" "$((depth+1))" "$space` " "$echo_space   "
+            padecho "$path" "$((depth+1))" "$space\` " "$echo_space   "
         fi
     done <<< "$paths"
 }
