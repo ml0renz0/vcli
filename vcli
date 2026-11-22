@@ -2300,6 +2300,8 @@ function vcli_apply_navigation(){
     case $1 in
         A) get_prev_cmd ;;
         B) get_next_cmd ;;
+        1\;5C|5C) vcli_move_word_right ;;
+        1\;5D|5D) vcli_move_word_left ;;
         C) # Right
             if (( pos < len+1 )); then
                 vcli_tput cuf 1
@@ -2324,6 +2326,42 @@ function vcli_apply_navigation(){
     esac
 }
 
+function vcli_word_left_offset(){
+    local i=$((pos-1))
+    while ((i>0)) && [[ ${cmd:i-1:1} == [[:space:]] ]]; do ((i--)); done
+    while ((i>0)) && [[ ${cmd:i-1:1} != [[:space:]] ]]; do ((i--)); done
+    VCLI_WORD_OFFSET=$i
+}
+function vcli_word_right_offset(){
+    local i=$((pos-1))
+    while ((i<len)) && [[ ${cmd:i:1} != [[:space:]] ]]; do ((i++)); done
+    while ((i<len)) && [[ ${cmd:i:1} == [[:space:]] ]]; do ((i++)); done
+    VCLI_WORD_OFFSET=$i
+}
+function vcli_move_word_left(){
+    vcli_word_left_offset
+    local diff=$((pos-1-VCLI_WORD_OFFSET))
+    ((diff>0)) && vcli_tput cub "$diff"
+    pos=$((VCLI_WORD_OFFSET+1))
+}
+function vcli_move_word_right(){
+    vcli_word_right_offset
+    local diff=$((VCLI_WORD_OFFSET-pos+1))
+    ((diff>0)) && vcli_tput cuf "$diff"
+    pos=$((VCLI_WORD_OFFSET+1))
+}
+function vcli_delete_previous_word(){
+    vcli_word_left_offset
+    local start=$VCLI_WORD_OFFSET old=$((pos-1))
+    ((old>start)) || return 0
+    cmd="${cmd:0:start}${cmd:old}"
+    ((old>0)) && vcli_tput cub "$old"
+    printf '%s' "$cmd"
+    vcli_tput el
+    len=${#cmd}
+    ((len>start)) && vcli_tput cub "$((len-start))"
+    pos=$((start+1))
+}
 # Ctrl+C and Ctrl+U must discard the entire edit/navigation/search state.
 function vcli_clear_editor(){
     cmd=""
@@ -2523,6 +2561,494 @@ function main(){
                             [[ $vcli_paste_mode == yes ]] ||
                                 vcli_apply_navigation "$_ss3_key"
                         fi
+                    elif [[ $_key == "b" ]]; then
+                        [[ $vcli_paste_mode == yes ]] || vcli_move_word_left
+                    elif [[ $_key == "f" ]]; then
+                        [[ $vcli_paste_mode == yes ]] || vcli_move_word_right
+                    elif [[ $_key == 
+                fi
+                unset ENDHIST
+            ;;
+            $'\x0a') # ENTER
+                unset ENDHIST
+                is_command="true"
+                debug "current_pwd=$current_pwd"
+                [[ ! $disable_prompt ]] && echo
+                if [[ $cmd ]] && [[ ! "$cmd" =~ ^[[:space:]]+$ ]]; then
+                    cmd=$(echo "$cmd" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')
+                    if ! run_cmd "$cmd"; then exit_status=1; fi
+                fi
+            ;;
+            $'\x7f') # BACKSPACE
+                unset ENDHIST
+                if [[ $len != 0 ]] && [[ $pos -gt 1 ]]; then # if anything was typed and position>0 allow to delete
+                    echo -en "\b \b"
+                    let len-=1
+                    let pos-=1
+                    tmpmsg="${#cmd}: \"$cmd\""
+                    # remove $_key in $((pos-1))
+                    cmd="${cmd:0:$((pos-1))}${cmd:$((pos)):${#cmd}}"
+                    vcli_tput el # clean to the end of the line
+                    restcmd="${cmd:$((pos-1)):${#cmd}}"
+                    echo -n "$restcmd"
+                    # reposition cursor after backspace only if we moved chars
+                    if [[ ${#restcmd} != 0 ]]; then vcli_tput cub ${#restcmd} ; fi
+                    debug "editor: backspace"
+                    debug "pos: $pos, len: $len"
+                fi
+            ;;
+            $'\x09') # tab completions
+                completion "$cmd"
+                exit_status=$?
+
+                if [[ $exit_status == 0 ]]; then
+                    # move the cursor to the beginning to print the command selected
+                    [[ $pos != 1 ]] && vcli_tput cub $((pos-1)) # move cursor left to the beginning
+
+                    # print the command found in history
+                    len=0
+                    pos=1
+                    vcli_tput el # clean to the end of the line
+                    echo -n "$cmd"
+                    vcli_tput el # clean to the end of the line
+                    let len=${#cmd}
+                    let pos=len+1
+                else
+                    # print the command found in history
+                    len=0
+                    pos=1
+                    vcli_tput el # clean to the end of the line
+                    echo -n "$cmd"
+                    vcli_tput el # clean to the end of the line
+                    let len=${#cmd}
+                    let pos=len+1
+                fi
+            ;;
+            $'\x12') # Ctrl+r
+                if [[ ! $cmd ]]; then
+                    # clean line
+                    echo -e "\nvcli hint: hit Ctrl+r when typing command to search the vcli history"
+                    print_history
+                    is_command="true"
+                else
+                    rotate_found_cmds "$cmd"
+                    debug "history: reverse search state"
+
+
+                    # move the cursor to the beginning to print the command selected
+                    [[ $pos != 1 ]] && vcli_tput cub $((pos-1)) # move cursor left to the beginning
+
+                    # print the command found in history
+                    echo -n "$cmd"
+
+                    vcli_tput el # clean to the end of the line
+                    let pos=$((${#cmd}+1))
+                    let len=${#cmd}
+                fi
+            ;;
+            
+                            vcli_clear_editor
+                printf '\r'
+                prompt
+                vcli_tput el
+            ;;
+            
+            $'\x04') # Ctrl+D
+                if [[ -n $cmd ]]; then
+                    vcli_delete_forward
+                else
+                    clean_n_exit
+                fi
+            ;;
+            $'')
+                clean_n_exit
+            ;;
+            $'\x20'|*) # NORMAL CHARS
+                if [[ ! $disable_prompt ]]; then
+                    vcli_tput ich 1 # insert chars rather than overwriting them
+                    echo -n "$_key" #| hexdump -C
+                fi
+                let len+=1
+                let pos+=1
+                tmpmsg="${#cmd}: \"$cmd\""
+                # insert $_key in $pos within $cmd string
+                cmd="${cmd:0:$((pos-2))}$_key${cmd:$((pos-2)):${#cmd}}"
+                debug "editor: inserted character"
+                debug "pos: $pos, len: $len"
+            ;;
+        esac
+        # Exit history search mode
+        if [[ "$_key" != "$lastkey" ]] && [[ "$_key" != $'\x12' ]]; then
+            debug "exiting history search mode"
+            unset SEARCHIST search_cmd tmp_history
+        fi
+        [[ $DEBUG_HEXDUMP == "yes" ]] && debug "hexdump: key event redacted"
+        # print prompt if commadn was run
+        if [[ $is_command ]]; then prompt ; unset is_command cmd pos len history_draft ; history_index=-1 ; pos=1; fi
+    # Use the original inherited PTY fd, not a reopened /dev/stdin.
+    # Darwin treats reopens of /dev/fd/0 differently for control bytes/EOF.
+    done
+}
+
+main "$@"
+\x7f' ]]; then
+                        [[ $vcli_paste_mode == yes ]] || vcli_delete_previous_word
+                    else
+                        # Preserve the ordinary/control key after a lone ESC.
+                        pending_key=$_key
+                    fi
+                fi
+                unset ENDHIST
+            ;;
+            $'\x0a') # ENTER
+                unset ENDHIST
+                is_command="true"
+                debug "current_pwd=$current_pwd"
+                [[ ! $disable_prompt ]] && echo
+                if [[ $cmd ]] && [[ ! "$cmd" =~ ^[[:space:]]+$ ]]; then
+                    cmd=$(echo "$cmd" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')
+                    if ! run_cmd "$cmd"; then exit_status=1; fi
+                fi
+            ;;
+            $'\x7f') # BACKSPACE
+                unset ENDHIST
+                if [[ $len != 0 ]] && [[ $pos -gt 1 ]]; then # if anything was typed and position>0 allow to delete
+                    echo -en "\b \b"
+                    let len-=1
+                    let pos-=1
+                    tmpmsg="${#cmd}: \"$cmd\""
+                    # remove $_key in $((pos-1))
+                    cmd="${cmd:0:$((pos-1))}${cmd:$((pos)):${#cmd}}"
+                    vcli_tput el # clean to the end of the line
+                    restcmd="${cmd:$((pos-1)):${#cmd}}"
+                    echo -n "$restcmd"
+                    # reposition cursor after backspace only if we moved chars
+                    if [[ ${#restcmd} != 0 ]]; then vcli_tput cub ${#restcmd} ; fi
+                    debug "editor: backspace"
+                    debug "pos: $pos, len: $len"
+                fi
+            ;;
+            $'\x09') # tab completions
+                completion "$cmd"
+                exit_status=$?
+
+                if [[ $exit_status == 0 ]]; then
+                    # move the cursor to the beginning to print the command selected
+                    [[ $pos != 1 ]] && vcli_tput cub $((pos-1)) # move cursor left to the beginning
+
+                    # print the command found in history
+                    len=0
+                    pos=1
+                    vcli_tput el # clean to the end of the line
+                    echo -n "$cmd"
+                    vcli_tput el # clean to the end of the line
+                    let len=${#cmd}
+                    let pos=len+1
+                else
+                    # print the command found in history
+                    len=0
+                    pos=1
+                    vcli_tput el # clean to the end of the line
+                    echo -n "$cmd"
+                    vcli_tput el # clean to the end of the line
+                    let len=${#cmd}
+                    let pos=len+1
+                fi
+            ;;
+            $'\x12') # Ctrl+r
+                if [[ ! $cmd ]]; then
+                    # clean line
+                    echo -e "\nvcli hint: hit Ctrl+r when typing command to search the vcli history"
+                    print_history
+                    is_command="true"
+                else
+                    rotate_found_cmds "$cmd"
+                    debug "history: reverse search state"
+
+
+                    # move the cursor to the beginning to print the command selected
+                    [[ $pos != 1 ]] && vcli_tput cub $((pos-1)) # move cursor left to the beginning
+
+                    # print the command found in history
+                    echo -n "$cmd"
+
+                    vcli_tput el # clean to the end of the line
+                    let pos=$((${#cmd}+1))
+                    let len=${#cmd}
+                fi
+            ;;
+            
+            $'\x15') # Ctrl+U
+                vcli_clear_editor
+                printf '\r'
+                prompt
+                vcli_tput el
+            ;;
+            
+            $'\x04') # Ctrl+D
+                if [[ -n $cmd ]]; then
+                    vcli_delete_forward
+                else
+                    clean_n_exit
+                fi
+            ;;
+            $'')
+                clean_n_exit
+            ;;
+            $'\x20'|*) # NORMAL CHARS
+                if [[ ! $disable_prompt ]]; then
+                    vcli_tput ich 1 # insert chars rather than overwriting them
+                    echo -n "$_key" #| hexdump -C
+                fi
+                let len+=1
+                let pos+=1
+                tmpmsg="${#cmd}: \"$cmd\""
+                # insert $_key in $pos within $cmd string
+                cmd="${cmd:0:$((pos-2))}$_key${cmd:$((pos-2)):${#cmd}}"
+                debug "editor: inserted character"
+                debug "pos: $pos, len: $len"
+            ;;
+        esac
+        # Exit history search mode
+        if [[ "$_key" != "$lastkey" ]] && [[ "$_key" != $'\x12' ]]; then
+            debug "exiting history search mode"
+            unset SEARCHIST search_cmd tmp_history
+        fi
+        [[ $DEBUG_HEXDUMP == "yes" ]] && debug "hexdump: key event redacted"
+        # print prompt if commadn was run
+        if [[ $is_command ]]; then prompt ; unset is_command cmd pos len history_draft ; history_index=-1 ; pos=1; fi
+    # Use the original inherited PTY fd, not a reopened /dev/stdin.
+    # Darwin treats reopens of /dev/fd/0 differently for control bytes/EOF.
+    done
+}
+
+main "$@"
+\x17') # Ctrl+W (some terminals send this on Ctrl+Backspace)
+                vcli_delete_previous_word
+            ;;
+                            vcli_clear_editor
+                printf '\r'
+                prompt
+                vcli_tput el
+            ;;
+            
+            $'\x04') # Ctrl+D
+                if [[ -n $cmd ]]; then
+                    vcli_delete_forward
+                else
+                    clean_n_exit
+                fi
+            ;;
+            $'')
+                clean_n_exit
+            ;;
+            $'\x20'|*) # NORMAL CHARS
+                if [[ ! $disable_prompt ]]; then
+                    vcli_tput ich 1 # insert chars rather than overwriting them
+                    echo -n "$_key" #| hexdump -C
+                fi
+                let len+=1
+                let pos+=1
+                tmpmsg="${#cmd}: \"$cmd\""
+                # insert $_key in $pos within $cmd string
+                cmd="${cmd:0:$((pos-2))}$_key${cmd:$((pos-2)):${#cmd}}"
+                debug "editor: inserted character"
+                debug "pos: $pos, len: $len"
+            ;;
+        esac
+        # Exit history search mode
+        if [[ "$_key" != "$lastkey" ]] && [[ "$_key" != $'\x12' ]]; then
+            debug "exiting history search mode"
+            unset SEARCHIST search_cmd tmp_history
+        fi
+        [[ $DEBUG_HEXDUMP == "yes" ]] && debug "hexdump: key event redacted"
+        # print prompt if commadn was run
+        if [[ $is_command ]]; then prompt ; unset is_command cmd pos len history_draft ; history_index=-1 ; pos=1; fi
+    # Use the original inherited PTY fd, not a reopened /dev/stdin.
+    # Darwin treats reopens of /dev/fd/0 differently for control bytes/EOF.
+    done
+}
+
+main "$@"
+\x7f' ]]; then
+                        [[ $vcli_paste_mode == yes ]] || vcli_delete_previous_word
+                    else
+                        # Preserve the ordinary/control key after a lone ESC.
+                        pending_key=$_key
+                    fi
+                fi
+                unset ENDHIST
+            ;;
+            $'\x0a') # ENTER
+                unset ENDHIST
+                is_command="true"
+                debug "current_pwd=$current_pwd"
+                [[ ! $disable_prompt ]] && echo
+                if [[ $cmd ]] && [[ ! "$cmd" =~ ^[[:space:]]+$ ]]; then
+                    cmd=$(echo "$cmd" | sed -e "s/^[[:space:]]\+\(.*\)/\1/g" -e "s/[[:space:]]\+$//g" | tr -s ' ')
+                    if ! run_cmd "$cmd"; then exit_status=1; fi
+                fi
+            ;;
+            $'\x7f') # BACKSPACE
+                unset ENDHIST
+                if [[ $len != 0 ]] && [[ $pos -gt 1 ]]; then # if anything was typed and position>0 allow to delete
+                    echo -en "\b \b"
+                    let len-=1
+                    let pos-=1
+                    tmpmsg="${#cmd}: \"$cmd\""
+                    # remove $_key in $((pos-1))
+                    cmd="${cmd:0:$((pos-1))}${cmd:$((pos)):${#cmd}}"
+                    vcli_tput el # clean to the end of the line
+                    restcmd="${cmd:$((pos-1)):${#cmd}}"
+                    echo -n "$restcmd"
+                    # reposition cursor after backspace only if we moved chars
+                    if [[ ${#restcmd} != 0 ]]; then vcli_tput cub ${#restcmd} ; fi
+                    debug "editor: backspace"
+                    debug "pos: $pos, len: $len"
+                fi
+            ;;
+            $'\x09') # tab completions
+                completion "$cmd"
+                exit_status=$?
+
+                if [[ $exit_status == 0 ]]; then
+                    # move the cursor to the beginning to print the command selected
+                    [[ $pos != 1 ]] && vcli_tput cub $((pos-1)) # move cursor left to the beginning
+
+                    # print the command found in history
+                    len=0
+                    pos=1
+                    vcli_tput el # clean to the end of the line
+                    echo -n "$cmd"
+                    vcli_tput el # clean to the end of the line
+                    let len=${#cmd}
+                    let pos=len+1
+                else
+                    # print the command found in history
+                    len=0
+                    pos=1
+                    vcli_tput el # clean to the end of the line
+                    echo -n "$cmd"
+                    vcli_tput el # clean to the end of the line
+                    let len=${#cmd}
+                    let pos=len+1
+                fi
+            ;;
+            $'\x12') # Ctrl+r
+                if [[ ! $cmd ]]; then
+                    # clean line
+                    echo -e "\nvcli hint: hit Ctrl+r when typing command to search the vcli history"
+                    print_history
+                    is_command="true"
+                else
+                    rotate_found_cmds "$cmd"
+                    debug "history: reverse search state"
+
+
+                    # move the cursor to the beginning to print the command selected
+                    [[ $pos != 1 ]] && vcli_tput cub $((pos-1)) # move cursor left to the beginning
+
+                    # print the command found in history
+                    echo -n "$cmd"
+
+                    vcli_tput el # clean to the end of the line
+                    let pos=$((${#cmd}+1))
+                    let len=${#cmd}
+                fi
+            ;;
+            
+            $'\x15') # Ctrl+U
+                vcli_clear_editor
+                printf '\r'
+                prompt
+                vcli_tput el
+            ;;
+            
+            $'\x04') # Ctrl+D
+                if [[ -n $cmd ]]; then
+                    vcli_delete_forward
+                else
+                    clean_n_exit
+                fi
+            ;;
+            $'')
+                clean_n_exit
+            ;;
+            $'\x20'|*) # NORMAL CHARS
+                if [[ ! $disable_prompt ]]; then
+                    vcli_tput ich 1 # insert chars rather than overwriting them
+                    echo -n "$_key" #| hexdump -C
+                fi
+                let len+=1
+                let pos+=1
+                tmpmsg="${#cmd}: \"$cmd\""
+                # insert $_key in $pos within $cmd string
+                cmd="${cmd:0:$((pos-2))}$_key${cmd:$((pos-2)):${#cmd}}"
+                debug "editor: inserted character"
+                debug "pos: $pos, len: $len"
+            ;;
+        esac
+        # Exit history search mode
+        if [[ "$_key" != "$lastkey" ]] && [[ "$_key" != $'\x12' ]]; then
+            debug "exiting history search mode"
+            unset SEARCHIST search_cmd tmp_history
+        fi
+        [[ $DEBUG_HEXDUMP == "yes" ]] && debug "hexdump: key event redacted"
+        # print prompt if commadn was run
+        if [[ $is_command ]]; then prompt ; unset is_command cmd pos len history_draft ; history_index=-1 ; pos=1; fi
+    # Use the original inherited PTY fd, not a reopened /dev/stdin.
+    # Darwin treats reopens of /dev/fd/0 differently for control bytes/EOF.
+    done
+}
+
+main "$@"
+\x15') # Ctrl+U
+                vcli_clear_editor
+                printf '\r'
+                prompt
+                vcli_tput el
+            ;;
+            
+            $'\x04') # Ctrl+D
+                if [[ -n $cmd ]]; then
+                    vcli_delete_forward
+                else
+                    clean_n_exit
+                fi
+            ;;
+            $'')
+                clean_n_exit
+            ;;
+            $'\x20'|*) # NORMAL CHARS
+                if [[ ! $disable_prompt ]]; then
+                    vcli_tput ich 1 # insert chars rather than overwriting them
+                    echo -n "$_key" #| hexdump -C
+                fi
+                let len+=1
+                let pos+=1
+                tmpmsg="${#cmd}: \"$cmd\""
+                # insert $_key in $pos within $cmd string
+                cmd="${cmd:0:$((pos-2))}$_key${cmd:$((pos-2)):${#cmd}}"
+                debug "editor: inserted character"
+                debug "pos: $pos, len: $len"
+            ;;
+        esac
+        # Exit history search mode
+        if [[ "$_key" != "$lastkey" ]] && [[ "$_key" != $'\x12' ]]; then
+            debug "exiting history search mode"
+            unset SEARCHIST search_cmd tmp_history
+        fi
+        [[ $DEBUG_HEXDUMP == "yes" ]] && debug "hexdump: key event redacted"
+        # print prompt if commadn was run
+        if [[ $is_command ]]; then prompt ; unset is_command cmd pos len history_draft ; history_index=-1 ; pos=1; fi
+    # Use the original inherited PTY fd, not a reopened /dev/stdin.
+    # Darwin treats reopens of /dev/fd/0 differently for control bytes/EOF.
+    done
+}
+
+main "$@"
+\x7f' ]]; then
+                        [[ $vcli_paste_mode == yes ]] || vcli_delete_previous_word
                     else
                         # Preserve the ordinary/control key after a lone ESC.
                         pending_key=$_key
