@@ -324,7 +324,7 @@ declare -A vcli_commands_help=(
         [put]="put path/to/secret { \"key\": \"value\" } \n  adds json={ \"key\": \"value\" } to secret $current_pwd/path/to/secret"
         [addsecret]="addsecret path/to/secret { \"key2\": \"value2\" } \n  adds secret { \"key2\": \"value2\" } to existing secret $current_pwd/path/to/secret"
         [delsecret]="delsecret path/to/secret key \n  deletes key from secret"
-        [rm]="rm path/to/secret \n  removes secret $current_pwd/path/to/secret"
+        [rm]="rm path/to/secret \n  KV1: remove; KV2: soft-delete current version (history remains). rm --purge [--yes] path irreversibly removes KV2 metadata and every version."
         [help]="help [vcli_command] \n  shows this help or the specified's command"
         [history]="history \n  shows vcli history"
         [verbose]="verbose \n  toggle verbosity"
@@ -1094,7 +1094,7 @@ function run_cmd(){
             put)                    _put "$arg1" "$arg2 $arg3" ;;
             addsecret)              _addsecret "$arg1" "$arg2 $arg3" ;;
             delsecret)              _delsecret "$arg1" "$arg2" ;;
-            rm)                     _rm "$arg1" ;;
+            rm)                     _rm "$arg1" "$arg2" "$arg3" ;;
             cp)                     _cp "$arg1" "$arg2" ;;
             getcert)                _getcert "$arg1" ;;
             getsan)                 _getsan "$arg1" ;;
@@ -1839,13 +1839,43 @@ function _mv(){
 # rm function
 function _rm(){
     local path snapshot version metadata delete_path payload after after_version
-    path=$(_vcli_absolute_path "${1:-}") || return 1
+    local selected="${1:-}" skip_confirmation=no answer
+    if [[ $selected == --purge ]]; then
+        shift
+        if [[ ${1:-} == --yes ]]; then skip_confirmation=yes; shift; fi
+        [[ $# == 1 && -n ${1:-} ]] || { echo "Usage: rm --purge [--yes] path" >&2; return 1; }
+        path=$(_vcli_absolute_path "$1") || return 1
+        vcli_is_kv2_path "$path" || { echo "vcli: purge requires a KV v2 secret path" >&2; return 1; }
+        metadata=$(vcli_kv2_metadata_path "$path") || return 1
+        if [[ $skip_confirmation != yes ]]; then
+            if [[ ! -t 0 ]]; then
+                echo "vcli: permanent deletion requires an interactive confirmation (or explicit --yes)" >&2
+                return 1
+            fi
+            read -r -p "PERMANENTLY erase all versions and metadata at $path? Type PURGE: " answer </dev/tty || return 1
+            [[ $answer == PURGE ]] || { echo "vcli: purge cancelled" >&2; return 1; }
+        fi
+        _curl "$metadata" "" DELETE || return 1
+        printf "Permanently removed KV v2 metadata and all versions at %s\n" "$path"
+        return 0
+    fi
+    [[ $# == 1 && -n $selected ]] || { echo "Usage: rm path | rm --purge [--yes] path" >&2; return 1; }
+    path=$(_vcli_absolute_path "$selected") || return 1
     if ! vcli_is_kv2_path "$path"; then
         _curl "$path" "" DELETE
         return $?
     fi
-    # Read the live version, not the whole metadata history.
-    snapshot=$(_curl "$path" "" GET raw) || return 1
+    snapshot=$(_curl "$path" "" GET raw) || {
+        # KV2 metadata can outlive a deleted data version; say so explicitly.
+        metadata=$(vcli_kv2_metadata_path "$path") || return 1
+        local meta_json
+        if meta_json=$(_curl "$metadata" "" GET); then
+            if jq -e '.data as $d | ($d.versions[($d.current_version|tostring)].deletion_time // "") | length > 0' <<< "$meta_json" >/dev/null 2>&1; then
+                printf "vcli: %s is already soft-deleted; metadata and versions remain. Use rm --purge to erase irreversibly.\n" "$path" >&2
+            fi
+        fi
+        return 1
+    }
     version=$(jq -er '.data.metadata.version | select(type=="number")' <<< "$snapshot") || return 1
     metadata=$(vcli_kv2_metadata_path "$path") || return 1
     delete_path="${metadata/\/metadata\//\/delete\/}"
@@ -1858,9 +1888,10 @@ function _rm(){
     after=$(_curl "$metadata") || return 1
     after_version=$(jq -er '.data.current_version | select(type=="number")' <<< "$after") || return 1
     if [[ $after_version != "$version" ]]; then
-        printf 'vcli: source advanced during version-specific delete: %s\n' "$path" >&2
+        printf "vcli: source advanced during version-specific delete: %s\n" "$path" >&2
         return 1
     fi
+    printf "Soft-deleted KV v2 version %s at %s; metadata/history remain (ls still lists it).\n" "$version" "$path"
 }
 
 # put function
