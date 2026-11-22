@@ -194,7 +194,23 @@ try:
         v("showrole vcli-playground-reader", b"vcli-playground-read")
         v("lspol", b"vcli-playground-read")
         v("showpol vcli-playground-read", b"capabilities")
-        v("mount", b"mounted paths:")
+        # Assert the real mount inventory and distinguish populated / empty.
+        # This is rendered from Vault's sys/mounts and first-level LIST calls.
+        mounted = v("mount", b"mounted paths (first-level content only):", code=b"200")
+        for expected_mount, expected_state in (
+            (b"kv1/", b"contains entries"),
+            (b"kv2/", b"contains entries"),
+            (b"cubbyhole/", b"empty"),
+        ):
+            if not re.search(
+                rb"(?m)^" + re.escape(expected_mount) +
+                rb"\s+\S+\s+" + re.escape(expected_state) + rb"\s*$",
+                mounted,
+            ):
+                raise RuntimeError(
+                    "mount inventory missing or incorrect status: " +
+                    expected_mount.decode()
+                )
         scratch = "tour-" + os.urandom(3).hex()
         work = "kv1/" + scratch
         versioned = "kv2/" + scratch + "/credential"

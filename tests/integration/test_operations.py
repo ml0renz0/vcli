@@ -73,6 +73,45 @@ class ExtendedVaultContracts(unittest.TestCase):
         self.assertIn("alpha", matches)
         self.assertNotIn("beta", matches)
 
+    def test_16_root_tree_lists_actual_mounts(self):
+        # Root '/' is NOT a Vault LIST endpoint; its children come from sys/mounts.
+        tree = self.command("tree /")
+        self.assertTrue(tree.startswith("/\n"), tree)
+        for name in ("kv1/", "kv2/", "cubbyhole/"):
+            with self.subTest(name=name):
+                self.assertIn(name, tree)
+
+    def test_17_tree_empty_mount_is_not_a_missing_path(self):
+        # Create an empty mount uniquely scoped to this disposable TLS Vault.
+        mount = "vcli-empty-" + uuid4().hex[:12]
+        api("POST", f"sys/mounts/{mount}", {"type": "kv", "options": {"version": "1"}})
+        try:
+            root = self.command("tree /")
+            self.assertIn(mount + "/", root)
+            listing = self.command(f"tree {mount}")
+            self.assertIn(mount + "/", listing)
+            self.assertIn("(empty)", listing)
+            # Still reject missing nested directories; do not conflate with a
+            # mount whose LIST returns the Vault 404 empty-tree response.
+            result, _ = invoke(f"tree {mount}/nonexistent")
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        finally:
+            api("DELETE", f"sys/mounts/{mount}")
+
+    def test_18_mount_inventory_reports_empty_populated_and_non_kv(self):
+        empty = "vcli-occupancy-" + uuid4().hex[:12]
+        api("POST", f"sys/mounts/{empty}", {"type": "kv", "options": {"version": "1"}})
+        try:
+            listing = self.command("mount")
+            self.assertIn("first-level content only", listing)
+            self.assertRegex(listing, rf"(?m)^{empty}/\s+kv\s+empty\s*$")
+            self.put("occupancy/sentinel", {"present": True})
+            populated = self.command("mount")
+            self.assertRegex(populated, r"(?m)^kv1/\s+kv\s+contains entries\s*$")
+            self.assertRegex(populated, r"(?m)^sys/\s+system\s+not a KV secret mount\s*$")
+        finally:
+            api("DELETE", f"sys/mounts/{empty}")
+
     def test_10_find_compares_json_values_without_whitespace_collapse(self):
         """JSON string whitespace and nested object key order must be respected."""
         self.put("find-json/exact", {
