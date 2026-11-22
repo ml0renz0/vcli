@@ -100,6 +100,26 @@ Parte del código en la rama ya intenta resolver estas incidencias, pero los sí
 |---|---|---|---|---|---|---|
 | 2026-11-22 | F0 / aceptación de mount + tree raíz | bf1db2fe | CI #45063467325, fallo de demo | Por validar en nuevo commit | test_operations.py + playground-demo.sh | Caso reproducido, corrección del test preparada; E2E pendiente de CI |
 
+## Revisión KV v2 transversal — ACC-10 / F3 (2026-11-22)
+
+- **Hallazgo de contrato:** no basta con traducir rutas KV1 a `/data/`.
+  La respuesta GET KV2 puede contener `data.data=null` al consultar una
+  versión ya borrada; los metadatos y nombres persisten. Ver
+  [contrato de adaptación KV v2](CLI-CONTRACT.md#kv-v2--revisión-semántica-de-la-adaptación-del-cli-2026-11-22).
+- **Candidato de corrección:** un GET normal con `data.data` no objeto
+  falla sin emitir datos; `rm` distingue borrado previo y `rmtree`
+  salta esas hojas sin purgarlas, preservando errores HTTP/ACL. No se
+  declara validado hasta comprobar el estado real mediante Vault TLS.
+- **Regresiones añadidas:** `tests/integration/test_kv2_advanced.py`
+  valida lectura/backup de un secreto soft-deleted y `rmtree` mixto con
+  metadatos conservados y un centinela fuera del árbol.
+- **Pendiente de diseño:** rutas lógicas que empiezan por
+  `data/`, `metadata/` o `delete/`; acceso a versiones históricas,
+  undelete/destroy; descubrimiento de montajes KV2 anidados y política
+  explícita para recorridos con secretos soft-deleted.
+- **Estado:** `implementado; CI Vault TLS pendiente`. No cerrar ACC-10
+  ni F3 todavía. No fusionar PR ni publicar RC.
+
 ## Pendientes previos que deben conservarse, sin reabrir trabajo resuelto
 
 - Branding: mantener los dos WebP (`logo-crt.webp` y `logo-crt-256.webp`) y el GIF; no sustituir ni borrar el original de la PR.
