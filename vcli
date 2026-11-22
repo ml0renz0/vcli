@@ -768,9 +768,6 @@ function vcli_kv_path(){
     vcli_match_kv2_mount "$path" || { printf '%s' "$path"; return; }
     mount=$VCLI_KV_MOUNT
     rest="${path#"$mount/"}"
-    case "$rest" in
-        data/*|metadata/*|delete/*) printf '%s' "$path"; return;;
-    esac
     case "$method" in
         LIST) printf '%s/metadata/%s' "$mount" "$rest" ;;
         GET|POST|PUT|PATCH|DELETE) printf '%s/data/%s' "$mount" "$rest" ;;
@@ -992,14 +989,13 @@ function _curl(){
     if [[ $raw_api_path != yes ]] && vcli_match_kv2_mount "$path"; then
         mount=$VCLI_KV_MOUNT
         rest="${path#"$mount/"}"
-        # Already-explicit Vault API paths must not be wrapped a second time.
-        if [[ $rest != data/* && $rest != metadata/* && $rest != delete/* ]]; then
-            case "$method" in GET|POST|PUT|PATCH|DELETE|LIST)
-                kv2=yes
-                path=$(vcli_kv_path "$path" "$method")
-                ;;
-            esac
-        fi
+        # Public CLI paths are logical; typed internal endpoints use
+        # -_api_path_- so data/, metadata/, delete/ remain literal folders.
+        case "$method" in GET|POST|PUT|PATCH|DELETE|LIST)
+            kv2=yes
+            path=$(vcli_kv_path "$path" "$method") || return 1
+            ;;
+        esac
     fi
 
     local encoded url response_file payload_file="" payload="" status curl_status
@@ -1554,7 +1550,7 @@ function _cptree(){
             probe="$target"
             kv2_modes+=(no)
         fi
-        if _curl "$probe" >/dev/null; then
+        if _curl -_api_path_- "$probe" >/dev/null; then
             echo "Destination already exists: $target" >&2
             return 1
         elif [[ $http_code != 404 ]]; then
@@ -1639,7 +1635,7 @@ function _rmtree(){
                 return 1
             fi
             metadata_path=$(vcli_kv2_metadata_path "$leaf") || return 1
-            metadata_json=$(_curl "$metadata_path" "" GET raw) || {
+            metadata_json=$(_curl -_api_path_- "$metadata_path" "" GET raw) || {
                 echo "vcli: cannot preflight KV v2 metadata: $leaf" >&2; return 1
             }
             jq -e '.data.versions | type == "object"' <<< "$metadata_json" >/dev/null 2>&1 || {
@@ -1934,7 +1930,7 @@ function _mv(){
     }
     printf '{"versions":[%s]}\n' "$source_version" > "$path_file"
     local delete_status=0
-    _curl "$delete_path" "$path_file" POST || delete_status=$?
+    _curl -_api_path_- "$delete_path" "$path_file" POST || delete_status=$?
     rm -f -- "$path_file"
     if (( delete_status != 0 )); then
         _vcli_partial_failure mv 1 2 "$source"
@@ -1943,7 +1939,7 @@ function _mv(){
     # A newer version may have been created immediately before the deletion.
     # Detect it; never claim the whole move was successful in that case.
     local after after_version
-    after=$(_curl "$metadata") || {
+    after=$(_curl -_api_path_- "$metadata") || {
         _vcli_partial_failure mv 1 2 "$source"; return 1;
     }
     after_version=$(jq -er '.data.current_version | select(type=="number")' <<< "$after") || {
@@ -1977,7 +1973,7 @@ function _rm(){
             read -r -p "PERMANENTLY erase all versions and metadata at $path? Type PURGE: " answer </dev/tty || return 1
             [[ $answer == PURGE ]] || { echo "vcli: purge cancelled" >&2; return 1; }
         fi
-        _curl "$metadata" "" DELETE || return 1
+        _curl -_api_path_- "$metadata" "" DELETE || return 1
         printf "Permanently removed KV v2 metadata and all versions at %s\n" "$path"
         return 0
     fi
@@ -1991,7 +1987,7 @@ function _rm(){
         # KV2 metadata can outlive a deleted data version; say so explicitly.
         metadata=$(vcli_kv2_metadata_path "$path") || return 1
         local meta_json
-        if meta_json=$(_curl "$metadata" "" GET); then
+        if meta_json=$(_curl -_api_path_- "$metadata" "" GET); then
             if jq -e '.data as $d | $d.versions[($d.current_version|tostring)] | ((.deletion_time // "") != "" or .destroyed == true)' <<< "$meta_json" >/dev/null 2>&1; then
                 VCLI_RM_ALREADY_DELETED=yes
                 printf "vcli: %s is already soft-deleted or destroyed; metadata and versions remain. Use rm --purge to erase irreversibly.\n" "$path" >&2
@@ -2018,10 +2014,10 @@ function _rm(){
     payload=$(mktemp "${VCLI_SESSION_TMP:-$TMP}/.vcli-delete.XXXXXX") || return 1
     printf '{"versions":[%s]}\n' "$version" > "$payload"
     local delete_status=0
-    _curl "$delete_path" "$payload" POST || delete_status=$?
+    _curl -_api_path_- "$delete_path" "$payload" POST || delete_status=$?
     rm -f -- "$payload"
     (( delete_status == 0 )) || return 1
-    after=$(_curl "$metadata") || return 1
+    after=$(_curl -_api_path_- "$metadata") || return 1
     after_version=$(jq -er '.data.current_version | select(type=="number")' <<< "$after") || return 1
     if [[ $after_version != "$version" ]]; then
         printf "vcli: source advanced during version-specific delete: %s\n" "$path" >&2
@@ -2060,7 +2056,7 @@ function _put(){
         metadata_file=$(mktemp "${VCLI_SESSION_TMP:-$TMP}/.vcli.metadata.XXXXXX") || {
             rm -f -- "$data"; return 1
         }
-        if _curl "$metadata" > "$metadata_file"; then
+        if _curl -_api_path_- "$metadata" > "$metadata_file"; then
             cas=$(jq -er '.data.current_version | select(type=="number")' "$metadata_file") || {
                 rm -f -- "$metadata_file" "$data"; return 1
             }

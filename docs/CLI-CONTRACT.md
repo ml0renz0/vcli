@@ -103,11 +103,13 @@ explícita y tests de historial/recuperación. Véase
 
 ### Brechas que permanecen abiertas
 
-1. **Colisión de rutas:** los segmentos iniciales `data/`, `metadata/` y
-   `delete/` se interpretan como endpoints de API en el enrutador actual,
-   incluso si son nombres literales de carpeta. No se debe asumir soporte
-   correcto para esos secretos hasta separar rutas lógicas de rutas API
-   tipadas y probar ambas.
+1. **Rutas lógicas y API tipada (candidato pendiente de CI):** los segmentos
+   `data/`, `metadata/` y `delete/` se consideran nombres literales de
+   carpeta en todos los comandos públicos. Las llamadas internas a Vault
+   usan `-_api_path_-` para endpoints ya tipados, sin reescritura KV2.
+   Esto sustituye la interpretación implícita de endpoints crudos mediante
+   `cat`. La aceptación con Vault TLS y la regresión de rutas reservadas
+   siguen siendo obligatorias antes de declarar el cambio validado.
 2. **Operaciones históricas de KV v2:** el CLI todavía no expone comandos
    específicos y consistentes para leer una versión, ver metadatos,
    recuperar versiones borradas (`undelete`) o destruir una versión

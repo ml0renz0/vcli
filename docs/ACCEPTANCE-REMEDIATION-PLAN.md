@@ -135,3 +135,11 @@ Parte del código en la rama ya intenta resolver estas incidencias, pero los sí
 - **Cambio candidato:** obtener la versión del motor de `GET sys/mounts` y consultar el endpoint LIST tipado sin transformación automática de rutas. KV1 y cubbyhole siguen usando el LIST normal; nunca se leen valores.
 - **Nueva regresión API-first:** `tests/integration/test_operations.py::test_19_mount_inventory_checks_kv2_metadata_without_client_configuration` crea su propio motor KV2 en Vault TLS, confirma el 404 vacío por API, escribe un secreto por API y verifica que `mount` pasa a «contains entries» sin configuración especial del cliente. Contrato aislado complementario en `tests/cli/test_mount_status.py`.
 - **Estado: implementado, CI Vault TLS del nuevo commit pendiente.** No se cierra ACC-08 hasta disponer de resultado del gate y evidencia de aceptación.
+
+## KV2 — separación de rutas lógicas y endpoints (2026-11-22)
+
+- **Defecto:** `data/`, `metadata/` y `delete/` como nombres de carpetas podían saltarse el adaptador KV2.
+- **Test-first:** `test_kv2_reserved_logical_segments_always_get_typed_endpoints` y `test_18`/`test_19` en `test_kv2_advanced.py` prueban el CLI completo con API directa y montajes anidados.
+- **Candidato:** los comandos públicos interpretan rutas lógicas; `_curl -_api_path_-` es privado para los endpoints de metadatos/borrado y las verificaciones de destino. Se mantiene CAS, borrado por versión y selección de montaje más específico.
+- **Compatibilidad:** `cat kv2/data/...` se interpreta como carpeta literal `data/`, no como endpoint HTTP crudo.
+- **Estado:** implementado; CI y aceptación Vault TLS pendientes.

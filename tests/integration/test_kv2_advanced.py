@@ -166,18 +166,16 @@ class KV2AdvancedTests(unittest.TestCase):
         self.assertEqual(self.get(leaf, mount="team/config"), {"updated": True})
         self.assertEqual(self.meta(leaf, mount="team/config")["current_version"], 2)
 
-    def test_10_explicit_nested_mount_api_path_is_not_rewritten(self):
-        """Raw data endpoints must remain raw even with overlapping prefixes."""
-        leaf = "routing/raw-path"
-        self.put(leaf, {"raw": True}, mount="team/config")
-        path = f"team/config/data/{self.p}/{leaf}"
-        result, _ = invoke(
-            f"cat {path}", version=2, mounts="team,team/config,kv2"
-        )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+    def test_10_nested_mount_data_prefix_is_logical_not_raw_api(self):
+        """data/ is a user folder; raw API endpoints are internal only."""
         import json
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["data"]["data"], {"raw": True})
+        leaf = "data/" + self.p + "/routing/raw-path"
+        self.put(leaf, {"literal": True}, mount="team/config")
+        result, _ = invoke(f"cat team/config/{leaf}", version=2,
+                           mounts="team,team/config,kv2")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout)["data"], {"literal": True})
+        self.assertEqual(self.get(leaf, mount="team/config"), {"literal": True})
 
     def test_08_backup_restore_creates_new_versions_after_soft_delete(self):
         import os

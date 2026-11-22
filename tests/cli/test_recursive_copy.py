@@ -27,7 +27,8 @@ vcli_is_kv2_path(){
 }
 vcli_kv2_metadata_path(){ echo 'redundant lookup' >&2; return 90; }
 _curl(){
-  printf 'PROBE %s\n' "$1" >> "$AUDIT"
+  [[ $1 == -_api_path_- ]] || return 98
+  printf 'PROBE %s\n' "$2" >> "$AUDIT"
   http_code="$PREFLIGHT_STATUS"
   return 1
 }
