@@ -407,8 +407,22 @@ function completion(){
                 return 1
             fi
         fi
-    # complete path
+    # complete path or a help subcommand
     else
+        if [[ $_cmd == help ]]; then
+            local candidate
+            for candidate in "${commands[@]}"; do
+                [[ $candidate == "$_path"* ]] && tmparray+=( "$candidate" )
+            done
+            if (( ${#tmparray[@]} == 1 )); then
+                cmd="help ${tmparray[0]}"
+            elif (( ${#tmparray[@]} > 1 )); then
+                printf '\n%s\n' "${tmparray[@]}"
+                prompt
+                return 1
+            fi
+            return 0
+        fi
         debug "completion: searching path"
         _secret=${_path##*/}
         debug "completion: inspecting path"
@@ -435,7 +449,7 @@ function completion(){
         debug "completion: resolved candidate"
         local tmpath_so_far path_so_far
         if [[ $found == 1 ]]; then
-            cmd="$_cmd $_option $_path${tmparray[0]}"
+            cmd="$_cmd ${_option:+$_option }$_path${tmparray[0]}"
             debug "completion: path prefix"
         elif [[ $found -gt 1 ]]; then
             echo
@@ -464,7 +478,7 @@ function completion(){
                 let n++
                 let i=0
             done
-            cmd="$_cmd $_option $_path$path_so_far"
+            cmd="$_cmd ${_option:+$_option }$_path$path_so_far"
             debug "completion: path completed"
             unset tmparray tmpath_so_far path_so_far end
             prompt
@@ -474,7 +488,7 @@ function completion(){
     unset tmparray found
 }
 
-# Add a successful command to history. Loading files is handled only by load_history.
+# Record accepted commands, including failed Vault requests, for reliable recall. Loading files is handled only by load_history.
 function add_cmd(){
     local cmd old_cmd
     # Trim with Bash rather than GNU-specific sed BRE escapes; preserve
@@ -534,12 +548,11 @@ function get_next_cmd(){
 }
 
 # returns last command's path
+# Bash-like !$ expands to the last whitespace-delimited argument.
 function get_lastcmd_arg(){
-    if [[ "$(echo "${cmd_history[$((history_index+1))]}" | cut -d' ' -f2)" =~ ^- ]]; then
-        echo "${cmd_history[$((history_index+1))]}" | cut -d' ' -f3
-    else
-        echo "${cmd_history[$((history_index+1))]}" | cut -d' ' -f2
-    fi
+    local previous="${cmd_history[0]:-}"
+    [[ -n $previous && $previous == *" "* ]] || return 1
+    printf '%s\n' "${previous##* }"
 }
 
 # saves history to $HOME/.vclistory
@@ -1013,8 +1026,13 @@ function _curl(){
     debug "request: $method $url"
     # Supply the Vault token over stdin, not as a process-list argument.
     # --header @- is supported by modern curl versions.
+    local started_at=$SECONDS
     status=$(printf 'X-Vault-Token: %s\n' "$vault_token" | curl "${args[@]}" "$url")
     curl_status=$?
+    if [[ $VERBOSE == yes ]]; then
+        # Do not echo Vault tokens, paths, payloads or response bodies.
+        printf 'vcli: HTTP %s -> %s (%ds)\n' "$method" "${status:-000}" "$((SECONDS-started_at))" >&2
+    fi
     # Only the KV2 wrapper belongs to the transport; caller owns $data.
     [[ -n $payload_file ]] && rm -f -- "$payload_file"
     local render_status=0
@@ -1048,12 +1066,14 @@ function run_cmd(){
     backIFS=$IFS
     while IFS=$' ' read -r cmd arg1 arg2 arg3; do
         if [[ $arg1 == "!$" ]]; then
-            arg1=$(get_lastcmd_arg)
+            arg1=$(get_lastcmd_arg) || { echo "vcli: !$ requires a previous command with arguments" >&2; return 1; }
         fi
         if ! is_cmd "$fullcmd"; then
             commands_help "$cmd"
             return 1
         fi
+        # Record even when a read fails. add_cmd excludes sensitive write payloads.
+        add_cmd "$cmd $arg1 $arg2 $arg3" || true
         local command_status=0
         case $cmd in
             cd)                     _cd "$arg1" ;;
@@ -1111,7 +1131,6 @@ function run_cmd(){
         command_status=$?
         debug "run_cmd: $cmd"
         debug "run_cmd: http_code=$http_code"
-        add_cmd "$cmd $arg1 $arg2 $arg3"
         if (( command_status != 0 )); then return "$command_status"; fi
     done< <(echo "$fullcmd")
 }
@@ -2060,7 +2079,13 @@ function vcli_cert_expiration_from_data(){
         [[ $option == -oo && $status == OK ]] && continue
         [[ $option == -ow && $status == WARNING ]] && continue
         [[ $option == -oc && ( $status == CRITICAL || $status == EXPIRED ) ]] && continue
-        printf '%s (%s): %d days to renew certificate [%s]\n' "$stem" "$path" "$days" "$status"
+        local tone=""
+        case $status in
+            OK) tone=$GREEN ;;
+            WARNING) tone=$YELLOW ;;
+            CRITICAL|EXPIRED) tone=$RED ;;
+        esac
+        printf '%s (%s): %d days to renew certificate [%s%s%s]\n' "$stem" "$path" "$days" "$tone" "$status" "$NONE"
     done
 }
 function _getcertexpiration(){
