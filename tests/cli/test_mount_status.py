@@ -16,10 +16,14 @@ current_pwd=""
 http_code=200
 _curl(){
   if [[ $1 == /sys/mounts ]]; then
-    printf '{"data":{"kv1/":{"type":"kv"},"cubbyhole/":{"type":"cubbyhole"},"sys/":{"type":"system"}}}\n'
+    printf '{"data":{"kv1/":{"type":"kv","options":{"version":"1"}},"kv2/":{"type":"kv","options":{"version":"2"}},"cubbyhole/":{"type":"cubbyhole"},"sys/":{"type":"system"}}}\n'
     return 0
   fi
+  # The raw endpoint flag ensures KV1 also works if the client map is stale.
+  [[ $1 == -_api_path_- ]] || return 97
+  shift
   if [[ $1 == /kv1/ && $3 == LIST ]]; then http_code=200; return 0; fi
+  if [[ $1 == /kv2/metadata/ && $3 == LIST ]]; then http_code=200; return 0; fi
   if [[ $1 == /cubbyhole/ && $3 == LIST ]]; then http_code=404; return 1; fi
   return 19
 }
@@ -30,6 +34,7 @@ _mount
         self.assertIn("cubbyhole/", out.stdout)
         self.assertIn("empty", out.stdout)
         self.assertIn("kv1/", out.stdout)
+        self.assertRegex(out.stdout, r"(?m)^kv2/\s+kv\s+contains entries$")
         self.assertIn("contains entries", out.stdout)
         self.assertIn("not a KV secret mount", out.stdout)
         self.assertNotIn("secret payload", out.stdout)

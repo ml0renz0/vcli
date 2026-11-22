@@ -167,6 +167,32 @@ class ExtendedVaultContracts(unittest.TestCase):
         finally:
             api("DELETE", f"sys/mounts/{empty}")
 
+    def test_19_mount_inventory_checks_kv2_metadata_without_client_configuration(self):
+        """ACC-08: the Vault mount version, not VAULT_KV_MOUNTS, selects LIST."""
+        dynamic = "vcli-occupancy2-" + uuid4().hex[:12]
+        api("POST", f"sys/mounts/{dynamic}",
+            {"type": "kv", "options": {"version": "2"}})
+        try:
+            mount_info = api("GET", "sys/mounts")["data"][dynamic + "/"]
+            self.assertEqual(mount_info["options"]["version"], "2")
+            with self.assertRaises(error.HTTPError) as empty_api:
+                api("LIST", f"{dynamic}/metadata/")
+            self.assertEqual(empty_api.exception.code, 404)
+            # Deliberately omit the new mount from the client's KV2 mapping.
+            empty, _ = invoke("mount", version=1, mounts="kv2,team/config")
+            self.assertEqual(empty.returncode, 0, empty.stdout + empty.stderr)
+            self.assertRegex(empty.stdout, rf"(?m)^{dynamic}/\s+kv\s+empty\s*$")
+            api("POST", f"{dynamic}/data/leaf",
+                {"data": {"occupancy_private": "do-not-print"}})
+            self.assertEqual(api("LIST", f"{dynamic}/metadata/")["data"]["keys"], ["leaf"])
+            filled, _ = invoke("mount", version=1, mounts="kv2,team/config")
+            self.assertEqual(filled.returncode, 0, filled.stdout + filled.stderr)
+            self.assertRegex(filled.stdout, rf"(?m)^{dynamic}/\s+kv\s+contains entries\s*$")
+            self.assertNotIn("occupancy_private", filled.stdout)
+            self.assertNotIn("do-not-print", filled.stdout)
+        finally:
+            api("DELETE", f"sys/mounts/{dynamic}")
+
     def test_10_find_compares_json_values_without_whitespace_collapse(self):
         """JSON string whitespace and nested object key order must be respected."""
         self.put("find-json/exact", {

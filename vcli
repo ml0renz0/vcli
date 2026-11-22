@@ -977,18 +977,19 @@ function vcli_emit_http_response(){
 
 # simplified curl function
 function _curl(){
-    local ignore_http_code=no disable_fail=no
+    local ignore_http_code=no disable_fail=no raw_api_path=no
     while :; do
         case "${1:-}" in
             -i) ignore_http_code=yes; shift;;
             -_disable_-f_-) disable_fail=yes; shift;;
+            -_api_path_-) raw_api_path=yes; shift;;
             '') shift; break;;
             *) break;;
         esac
     done
     local path="${1#/}" data="${2:-}" method="${3:-GET}" cas="${4:-}"
     local kv2=no mount rest
-    if vcli_match_kv2_mount "$path"; then
+    if [[ $raw_api_path != yes ]] && vcli_match_kv2_mount "$path"; then
         mount=$VCLI_KV_MOUNT
         rest="${path#"$mount/"}"
         # Already-explicit Vault API paths must not be wrapped a second time.
@@ -1172,15 +1173,21 @@ function _mount(){
     local url="$*"
     local data
     if [[ ! $url ]]; then
-        local details mounted name backend list_status
+        local details mounted name backend backend_version list_path list_status
         details=$(_curl /sys/mounts "" GET) || return 1
-        mounted=$(jq -r '.data | to_entries | sort_by(.key)[] | [.key,.value.type] | @tsv' <<< "$details") || return 1
+        # Inspect the authoritative mount options, not the client's KV2 map:
+        # a discovered KV2 engine may not appear in VAULT_KV_MOUNTS.
+        mounted=$(jq -r '.data | to_entries | sort_by(.key)[] | [.key,.value.type,(.value.options.version // "1")] | @tsv' <<< "$details") || return 1
         echo "mounted paths (first-level content only):"
-        while IFS=$'\t' read -r name backend; do
+        while IFS=$'\t' read -r name backend backend_version; do
             [[ -n $name ]] || continue
             list_status="not a KV secret mount"
             if [[ $backend == kv || $backend == cubbyhole ]]; then
-                if _curl "/${name}" "" LIST >/dev/null 2>&1; then
+                list_path="/${name}"
+                [[ $backend == kv && $backend_version == 2 ]] && list_path="/${name}metadata/"
+                # A typed API request must never pass through logical-path
+                # KV2 auto-routing (including when the client map is stale).
+                if _curl -_api_path_- "$list_path" "" LIST >/dev/null 2>&1; then
                     list_status="contains entries"
                 else
                     case $http_code in

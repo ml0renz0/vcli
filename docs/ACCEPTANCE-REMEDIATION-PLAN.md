@@ -128,3 +128,10 @@ Parte del código en la rama ya intenta resolver estas incidencias, pero los sí
 - Mantener los benchmarks, gráficos de tiempos, grabaciones asciinema y pruebas multicapa; **no tomar un gráfico de duración de job por tiempo de un comando**.
 - Los blueprints YAML, AppRoles declarativos y otros módulos futuros permanecen en el roadmap general y **no se mezclan con esta remediación de aceptación**.
 
+
+## ACC-08 — corrección de ocupación KV2 en mounts descubiertos (2026-11-22)
+
+- **Fallo identificado en el HEAD `02c53cc`:** `mount` construía una consulta `LIST /<mount>/` para un motor KV2 no declarado en `VAULT_KV_MOUNTS`. El servidor exige `LIST /<mount>/metadata/`; un 404 podía presentarse erróneamente como «vacío» incluso con secretos existentes.
+- **Cambio candidato:** obtener la versión del motor de `GET sys/mounts` y consultar el endpoint LIST tipado sin transformación automática de rutas. KV1 y cubbyhole siguen usando el LIST normal; nunca se leen valores.
+- **Nueva regresión API-first:** `tests/integration/test_operations.py::test_19_mount_inventory_checks_kv2_metadata_without_client_configuration` crea su propio motor KV2 en Vault TLS, confirma el 404 vacío por API, escribe un secreto por API y verifica que `mount` pasa a «contains entries» sin configuración especial del cliente. Contrato aislado complementario en `tests/cli/test_mount_status.py`.
+- **Estado: implementado, CI Vault TLS del nuevo commit pendiente.** No se cierra ACC-08 hasta disponer de resultado del gate y evidencia de aceptación.
