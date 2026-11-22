@@ -93,13 +93,46 @@ _vcli_children(){
     *) echo "Unexpected path: $1" >&2; return 9 ;;
   esac
 }
+_ls(){ printf 'kv1/\ncubbyhole/\n'; }
 _tree "/kv1/branch///" && _tree "/"
 '''
         result = subprocess.run(["bash", "-c", path_resolver() + "\n" + match.group(0) + stub],
                                 text=True, capture_output=True, timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.splitlines(),
-                         ["branch/", "child/", "leaf", "//"])
+                         ["branch/", "child/", "leaf", "/", "kv1/", "cubbyhole/"])
+    def test_tree_empty_mount_404_is_not_a_missing_nested_path(self):
+        source = SOURCE.read_text(encoding="utf-8")
+        match = re.search(r"^function _tree\(\)\{.*?^\}", source, re.M | re.S)
+        self.assertIsNotNone(match)
+        stub = r'''
+current_pwd=""
+TMP="${TMPDIR:-/tmp}"
+debug(){ :; }
+padecho(){ printf "%s\n" "$1"; }
+_ls(){ printf "cubbyhole/\nkv1/\n"; }
+_curl(){ http_code=404; return 1; }
+_vcli_children(){ echo "unexpected recursive listing" >&2; return 22; }
+_tree cubbyhole
+'''
+        out = subprocess.run(["bash", "-c", path_resolver() + "\n" + match.group(0) + stub],
+                             capture_output=True, text=True, timeout=5)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("(empty)", out.stdout)
+
+    def test_tree_nested_404_remains_failure(self):
+        source = SOURCE.read_text(encoding="utf-8")
+        match = re.search(r"^function _tree\(\)\{.*?^\}", source, re.M | re.S)
+        stub = r'''
+current_pwd=""
+debug(){ :; }
+padecho(){ printf "%s\n" "$1"; }
+_vcli_children(){ return 1; }
+_tree kv1/absent
+'''
+        out = subprocess.run(["bash", "-c", path_resolver() + "\n" + match.group(0) + stub],
+                             capture_output=True, text=True, timeout=5)
+        self.assertNotEqual(out.returncode, 0)
     def test_backup_avoids_repeated_mkdir_and_preserves_nested_files(self):
         """Six nested leaves share two secret directories."""
         import tarfile
