@@ -41,9 +41,14 @@ jobs:
           if [[ "$WORKFLOW" == 'VCLI trunk validation' ]]; then
             gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" > reports/ci-jobs.json
             python3 scripts/render-ci-reports.py jobs reports/ci-jobs.json reports/ci-times.svg
-            gh run download "$RUN_ID" -R "$REPO" \
-              -n vcli-playground-asciinema -D reports/demo
-            test -s reports/demo/vcli-playground.cast
+            # Manual benchmark dispatches have no standard playground cast.
+            # Preserve the last verified recording rather than failing a good run.
+            if gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
+                --jq '.artifacts[].name' | grep -Fxq 'vcli-playground-asciinema'; then
+              gh run download "$RUN_ID" -R "$REPO" \
+                -n vcli-playground-asciinema -D reports/demo
+              test -s reports/demo/vcli-playground.cast
+            fi
           elif [[ "$WORKFLOW" == 'SaaS playground scale acceptance' ]]; then
             gh run download "$RUN_ID" -R "$REPO" -n vcli-saas-metrics -D reports
             gh run download "$RUN_ID" -R "$REPO" \
