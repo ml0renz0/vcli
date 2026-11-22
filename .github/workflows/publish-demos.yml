@@ -106,46 +106,22 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Delete historical refs only after validating exact heads and preserved files
+      - name: Remove last merged temporary branch safely
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -Eeuo pipefail
-          pr=ci/baseline-vault-revival
-          reports=ci-reports
-          branding=docs/branding-vcli-staged
-
-          current=$(gh api "repos/$REPO/branches/$pr" --jq '.commit.sha')
-          [[ -n "$current" ]] || exit 1
-          small=$(gh api "repos/$REPO/contents/assets/branding/logo-crt-256.webp?ref=ci%2Fbaseline-vault-revival" --jq '.sha')
-          mono=$(gh api "repos/$REPO/contents/assets/branding/logo-mono.svg?ref=ci%2Fbaseline-vault-revival" --jq '.sha')
-          favicon=$(gh api "repos/$REPO/contents/assets/branding/favicon.svg?ref=ci%2Fbaseline-vault-revival" --jq '.sha')
-          [[ "$small" == 90eaa8db3cface897c1f5275fce1e72be5eac76a &&
-             "$mono" == a732a4e33ee0f1982b492c5ce4e6229786f2ad30 &&
-             "$favicon" == 67d46818fe2aa07bc7ac6e775c1ff9680976c087 ]] || {
-            echo "::error::Branding asset preservation check failed; branches retained"
+          ref=fix/pages-artifact-visibility
+          expected=25bd7654d0a9e6999e105f235efdb425f350b70a
+          # Verify it is the exact merged fix, not an active branch with new work.
+          if ! observed=$(gh api "repos/$REPO/git/ref/heads/$ref" --jq '.object.sha' 2>/dev/null); then
+            echo "Already clean: $ref no longer exists"
+            exit 0
+          fi
+          if [[ "$observed" != "$expected" ]]; then
+            echo "::error::Temporary branch changed: leaving it untouched"
             exit 1
-          }
-          retire_if_unchanged() {
-            local ref="$1" expected="$2" observed
-            if ! observed=$(gh api "repos/$REPO/git/ref/heads/$ref" --jq '.object.sha' 2>/dev/null); then
-              echo "$ref already absent"
-              return 0
-            fi
-            if [[ "$observed" != "$expected" ]]; then
-              echo "::error::$ref advanced since audit; refusing deletion"
-              return 1
-            fi
-            gh api -X DELETE "repos/$REPO/git/refs/heads/$ref"
-            echo "Deleted obsolete $ref at $expected"
-          }
-          compare=$(gh api "repos/$REPO/compare/ci-reports...$pr")
-          [[ $(jq -r '.merge_base_commit.sha' <<< "$compare") == e4c901e4aed53b38ca4c21786159c77795fd9bb2 ]] || {
-            echo "::error::Reports branch not integrated; refusing deletion"
-            exit 1
-          }
-          retire_if_unchanged "$reports" e4c901e4aed53b38ca4c21786159c77795fd9bb2
-          retire_if_unchanged "$branding" 865d7c0322e966a77655e19c76d73708c7916ab0
-          retire_if_unchanged "docs/enable-asciinema-pages" b5bc63babe52643c61c10812e97d8f43b3e43bdb
-          retire_if_unchanged "fix/pages-artifact-visibility" 25bd7654d0a9e6999e105f235efdb425f350b70a
+          fi
+          gh api -X DELETE "repos/$REPO/git/refs/heads/$ref"
+          echo "Removed merged temporary branch $ref"
