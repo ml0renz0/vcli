@@ -5,6 +5,8 @@
 > Que una función ya exista o una suite anterior esté verde **no equivale a incidencia resuelta**.
 > Este documento se actualiza por cada cambio y debe permanecer accesible al abrir otro chat.
 
+**Política transversal obligatoria:** [API-first: oráculos semánticos para las pruebas](API-FIRST-ACCEPTANCE.md). Para los comandos Vault se exige API HTTP independiente y verificación del estado inicial/final; para el REPL se exige PTY real. Ni un mock ni un texto coincidente bastan para cerrar una incidencia.
+
 ## Principios no negociables
 
 1. **Primero reproducir, luego corregir, luego demostrar.** Para cada defecto: evidencia de fallo, regresión que falla en la revisión previa, cambio mínimo, regresión que pasa y prueba real end-to-end cuando corresponda. Mantener el ID durante todo el ciclo.
