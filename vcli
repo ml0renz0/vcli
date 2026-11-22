@@ -2171,7 +2171,7 @@ function vcli_cert_expiration_from_data(){
             WARNING) tone=$YELLOW ;;
             CRITICAL|EXPIRED) tone=$RED ;;
         esac
-        printf '%s (%s): %d days to renew certificate [%s%s%s]\n' "$stem" "$path" "$days" "$tone" "$status" "$NONE"
+        printf '%s%s (%s): %d days to renew certificate [%s]%s\n' "$tone" "$stem" "$path" "$days" "$status" "$NONE"
     done
 }
 function _getcertexpiration(){
