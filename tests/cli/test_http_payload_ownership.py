@@ -145,6 +145,38 @@ esac
                         self.assertNotEqual(out.returncode, 0)
                     self.assertEqual(leftovers, [])
 
+    def test_already_deleted_kv2_http_200_null_data_never_deletes_again(self):
+        """ACC-10: reproduce Vault's HTTP 200 + data:null deleted version."""
+        with tempfile.TemporaryDirectory(prefix="vcli-deleted-200-") as root:
+            env = dict(os.environ)
+            env["DELETE_SENTINEL"] = str(Path(root) / "delete-called")
+            script = r'''
+current_pwd=/
+TMP="$TMPDIR"
+http_code=200
+_vcli_absolute_path(){ printf '%s' "$1"; }
+vcli_is_kv2_path(){ return 0; }
+vcli_kv2_metadata_path(){ printf '/kv2/metadata/item'; }
+_curl(){
+    case "$3" in
+        DELETE|POST) printf touched > "$DELETE_SENTINEL"; return 0;;
+    esac
+    case "$1" in
+        /kv2/item)
+            printf '%s\n' '{"data":{"data":null,"metadata":{"version":2,"deletion_time":"2026-11-22T19:19:49Z","destroyed":false}}}'
+            ;;
+        *) echo unexpected_endpoint >&2; return 42;;
+    esac
+}
+_rm /kv2/item
+'''
+            result = subprocess.run(["bash", "-c", functions("_rm") + "\n" + script],
+                                    capture_output=True, text=True, env=env, timeout=8)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn("already soft-deleted", result.stderr)
+            self.assertFalse(Path(env["DELETE_SENTINEL"]).exists(),
+                             "A deleted KV2 version must not trigger another DELETE")
+
     def test_transport_never_deletes_caller_payload(self):
         source = functions("_curl")
         self.assertNotIn('rm -f "$data"', source)
