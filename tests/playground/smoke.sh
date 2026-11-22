@@ -49,6 +49,19 @@ if grep -Fq 'FAKE-PRESERVED' <<< "$output"; then
 fi
 scripts/playground.sh smoke
 
+# Verify the expanded estate independently of the interactive recording.
+for env in development staging production; do
+    for app in payments identity catalog; do
+        result=$(printf 'ls kv2/enterprise/%s/%s\n' "$env" "$app" | scripts/playground.sh batch readonly)
+        for directory in api database messaging; do
+            grep -Fq "$directory/" <<< "$result" || { echo "Missing enterprise fixture" >&2; exit 1; }
+        done
+    done
+done
+result=$(printf 'find kv1/enterprise/legacy {"username":"shared_svc","password":"FAKE-LEGACY-OLD"}\n' |
+    scripts/playground.sh batch readonly)
+[[ $(grep -c '/primary' <<< "$result") == 4 ]] || { echo "Missing four rotation fixtures" >&2; exit 1; }
+
 # Opt-in recording, always before destroying the private Vault state.
 if [[ -n ${VCLI_PLAYGROUND_CAST:-} ]]; then
     scripts/record-playground-demo.sh "$VCLI_PLAYGROUND_CAST"
@@ -83,6 +96,11 @@ position = 0
 for marker in markers:
     position = combined.index(marker, position) + len(marker)
 assert "[403]" in combined
+for marker in ("FAKE-ROTATED", "FAKE-KEEP-ANALYTICS", "Vault backup created:",
+               "Vault backup restored:", "Removed secrets beneath", "Moved version",
+               "Vault token renewed", "payments.production.example.test"):
+    assert marker in combined, f"missing demo result: {marker}"
+assert "[404]" in combined
 assert "vcli (readonly) >" not in combined and "vcli (admin) >" not in combined
 for name in ("root-token", "readonly-token", "role-id", "secret-id"):
     secret = pathlib.Path(".playground", name).read_text().strip()

@@ -89,6 +89,62 @@ seed_kv() {
         >/dev/null
 }
 
+# A realistic, entirely synthetic multi-environment estate. Existing
+# small fixtures remain stable for the functional smoke contracts.
+seed_enterprise() {
+    local env app payload encoded stem days
+    encoded=$(base64 < "$STATE/fixtures/http.keytab" | tr -d '\n')
+    for env in development staging production; do
+        for app in payments identity catalog; do
+            payload=$(jq -nc --arg env "$env" --arg app "$app" \
+                '{username:($app+"_svc"),password:("FAKE-"+$env+"-"+$app),
+                  host:($app+".db."+$env+".example.test"),port:5432}')
+            api POST "kv2/data/enterprise/$env/$app/database/primary" \
+                "$(jq -nc --argjson d "$payload" '{data:$d}')" >/dev/null
+            api POST "kv2/data/enterprise/$env/$app/api/gateway" \
+                "$(jq -nc --arg env "$env" --arg app "$app" \
+                    '{data:{endpoint:("https://"+$app+"."+$env+".example.test"),api_key:("FAKE-"+$env+"-API-"+$app)}}')" >/dev/null
+            api POST "kv2/data/enterprise/$env/$app/messaging/broker" \
+                "$(jq -nc --arg env "$env" --arg app "$app" \
+                    '{data:{username:($app+"_worker"),password:("FAKE-"+$env+"-BROKER-"+$app),tls:true}}')" >/dev/null
+        done
+        api POST "team/config/data/enterprise/$env/platform/feature-flags" \
+            "$(jq -nc --arg env "$env" '{data:{environment:$env,features:{tls:true,metrics:true},replicas:3}}')" >/dev/null
+        api POST "team/config/data/enterprise/$env/observability/collector" \
+            "$(jq -nc --arg env "$env" '{data:{endpoint:("https://collector."+$env+".example.test"),token:"FAKE-TELEMETRY"}}')" >/dev/null
+        # Separate genuine X.509 certificates per environment, with staggered
+        # expiry dates. The keytab is intentionally a shared fixture identity.
+        case "$env" in development) days=90;; staging) days=20;; production) days=3;; esac
+        stem="enterprise_$env"
+        openssl req -x509 -newkey rsa:2048 -nodes -days "$days" -sha256 \
+            -subj "/CN=payments.$env.example.test" \
+            -addext "subjectAltName=DNS:payments.$env.example.test,DNS:api.$env.example.test" \
+            -keyout "$STATE/fixtures/$stem.key" \
+            -out "$STATE/fixtures/$stem.crt" >/dev/null 2>&1
+        chmod 600 -- "$STATE/fixtures/$stem.key" "$STATE/fixtures/$stem.crt"
+        payload=$(jq -nc --arg stem "$stem" \
+            --rawfile crt "$STATE/fixtures/$stem.crt" \
+            --rawfile key "$STATE/fixtures/$stem.key" \
+            '{($stem+"_crt"):$crt,($stem+"_key"):$key}')
+        api POST "kv1/enterprise/pki/$env/payments/ingress" "$payload" >/dev/null
+        payload=$(jq -nc --arg kt "$encoded" \
+            '{http_principal:"HTTP/service.example.test@EXAMPLE.TEST",http_keytab:$kt}')
+        api POST "kv1/enterprise/kerberos/$env/shared/http" "$payload" >/dev/null
+    done
+
+    # Four exact-object matches across teams/locations and two non-matches.
+    # The tour copies this branch before performing any destructive operation.
+    local leaf
+    for leaf in payments/eu/primary payments/us/primary identity/eu/primary catalog/eu/primary; do
+        api POST "kv1/enterprise/legacy/$leaf" \
+            '{"username":"shared_svc","password":"FAKE-LEGACY-OLD"}' >/dev/null
+    done
+    api POST kv1/enterprise/legacy/payments/eu/analytics \
+        '{"username":"analytics","password":"FAKE-KEEP-ANALYTICS"}' >/dev/null
+    api POST kv1/enterprise/legacy/catalog/us/backup \
+        '{"username":"backup","password":"FAKE-KEEP-BACKUP"}' >/dev/null
+}
+
 seed_access() {
     vault_cli policy write vcli-playground-read - >/dev/null <<'HCL'
 path "kv1/*" { capabilities = ["read", "list"] }
@@ -121,5 +177,6 @@ seed_playground() {
     seed_pem
     seed_keytab
     seed_kv
+    seed_enterprise
     seed_access
 }

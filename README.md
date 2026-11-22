@@ -73,6 +73,17 @@ Una sola terminal Bash interactiva conduce las sesiones `shell readonly` y
 y respuestas reales de VCLI sin cortes ni límite de inactividad. La automatización
 de teclas requiere Python 3 solo para la demo; no es un runtime de VCLI.
 
+El recorrido de extremo a extremo cubre **todos los comandos públicos**
+del ejecutable. Explora un catálogo empresarial con development, staging y
+production, tres aplicaciones, credenciales compartidas, PKI con caducidades
+escalonadas y keytabs sintéticos. Realiza una rotación masiva sobre una copia,
+migración KV1/KV2, backup, borrado y restauración, exportación de ficheros
+y verificación de permisos. La CI rechaza cualquier comando público omitido.
+Los interruptores de debug se prueban sin tráfico autenticado ni volcado de secretos.
+
+**Para grabar localmente, usa un playground recién creado, solo con datos
+sintéticos.** No hagas reset automático de un laboratorio con trabajo propio.
+
 Para reproducir: `asciinema play vcli-playground.cast`.
 
 Para regenerarla localmente:

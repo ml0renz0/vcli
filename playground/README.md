@@ -114,6 +114,23 @@ para permitir reintentar down. No borres manualmente .playground/ mientras
 haya un contenedor asociado.
 
 
+## Catálogo empresarial adicional
+
+| Montaje | Jerarquía | Secretos adicionales |
+|---|---|---:|
+| `kv2` | `enterprise/{development,staging,production}/{payments,identity,catalog}/{database,api,messaging}/...` | 27 |
+| `team/config` | `enterprise/{development,staging,production}/{platform,observability}/...` | 6 |
+| `kv1` | `enterprise/pki/<entorno>/payments/ingress` | 3 |
+| `kv1` | `enterprise/kerberos/<entorno>/shared/http` | 3 |
+| `kv1` | `enterprise/legacy/<equipo>/<región>/<servicio>` | 6 |
+
+Son 45 secretos adicionales, además del catálogo de regresión original.
+Los certificados son distintos, de 90/20/3 días al generar el laboratorio;
+las copias de keytab representan el mismo principal compartido de ejemplo.
+En la demo se copian los seis secretos legacy y se rotan únicamente cuatro
+objetos JSON idénticos; los otros dos son centinelas que no deben cambiar.
+El original no se modifica. El nombre del subárbol de trabajo es único.
+
 ## Demo asciinema
 
 El job de playground de la CI genera la grabación auténtica vcli-playground.cast
@@ -123,6 +140,17 @@ Una sola terminal Bash interactiva conduce las sesiones `shell readonly` y
 `shell admin`, con sus correspondientes `exit` visibles. Se capturan los prompts
 y respuestas reales de VCLI sin cortes ni límite de inactividad. La automatización
 de teclas requiere Python 3 solo para la demo; no es un runtime de VCLI.
+
+El recorrido de extremo a extremo cubre **todos los comandos públicos**
+del ejecutable. Explora un catálogo empresarial con development, staging y
+production, tres aplicaciones, credenciales compartidas, PKI con caducidades
+escalonadas y keytabs sintéticos. Realiza una rotación masiva sobre una copia,
+migración KV1/KV2, backup, borrado y restauración, exportación de ficheros
+y verificación de permisos. La CI rechaza cualquier comando público omitido.
+Los interruptores de debug se prueban sin tráfico autenticado ni volcado de secretos.
+
+**Para grabar localmente, usa un playground recién creado, solo con datos
+sintéticos.** No hagas reset automático de un laboratorio con trabajo propio.
 
 Para reproducir: `asciinema play vcli-playground.cast`.
 
