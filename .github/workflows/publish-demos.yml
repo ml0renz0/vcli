@@ -59,8 +59,8 @@ jobs:
             done < <(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?status=success&per_page=100" \
               --jq '.workflow_runs[] | select(.head_repository.full_name == "'$GITHUB_REPOSITORY'" and (.head_branch == "master" or .head_branch == "ci/baseline-vault-revival")) | .id')
             if [[ -z "$chosen" ]]; then
-              echo "::notice::No verified $artifact artifact available yet"
-              exit 0
+              echo "::error::No verified $artifact recording is available; refusing an incomplete Pages deployment"
+              exit 1
             fi
             gh run download "$chosen" -R "$GITHUB_REPOSITORY" -n "$artifact" -D site/casts
             test -s "site/casts/$cast"
