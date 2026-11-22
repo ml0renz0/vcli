@@ -1,6 +1,13 @@
 name: SaaS playground scale acceptance
 
 on:
+  push:
+    branches: [master]
+    paths:
+      - 'vcli'
+      - 'scripts/**'
+      - 'tests/playground/**'
+      - '.github/workflows/playground-saas.yml'
   pull_request:
     paths:
       - 'scripts/playground-seed-saas.py'

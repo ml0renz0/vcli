@@ -1,0 +1,75 @@
+name: Publish vcli terminal demos
+
+on:
+  workflow_run:
+    workflows: [VCLI trunk validation, SaaS playground scale acceptance]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: vcli-pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+         (github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'master' &&
+          github.event.workflow_run.head_repository.full_name == github.repository) }}
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+      - name: Assemble site from verified recordings
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p site/casts
+          cp docs/asciinema-player.html site/index.html
+          cp assets/branding/favicon.svg site/favicon.svg
+          python3 - <<'PY'
+          from pathlib import Path
+          html = Path("site/index.html").read_text()
+          assert "AsciinemaPlayer.create" in html and "DecompressionStream" in html
+          PY
+          for task in 'ci.yml|vcli-playground-asciinema|vcli-playground.cast' \
+            'playground-saas.yml|vcli-playground-saas-asciinema|vcli-playground-saas.cast'; do
+            IFS='|' read -r workflow artifact cast <<< "$task"
+            chosen=''
+            while IFS= read -r rid; do
+              [[ -n "$rid" ]] || continue
+              if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$rid/artifacts?per_page=100" \
+                --jq '.artifacts[] | select(.expired == false) | .name' |
+                grep -Fxq -- "$artifact"; then
+                chosen=$rid
+                break
+              fi
+            done < <(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?status=success&per_page=100" \
+              --jq '.workflow_runs[] | select(.head_repository.full_name == "'$GITHUB_REPOSITORY'" and (.head_branch == "master" or .head_branch == "ci/baseline-vault-revival")) | .id')
+            if [[ -z "$chosen" ]]; then
+              echo "::notice::No verified $artifact artifact available yet"
+              exit 0
+            fi
+            gh run download "$chosen" -R "$GITHUB_REPOSITORY" -n "$artifact" -D site/casts
+            test -s "site/casts/$cast"
+            python3 scripts/validate-published-casts.py "$cast" "site/casts/$cast"
+            gzip -9 -k "site/casts/$cast"
+          done
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - uses: actions/deploy-pages@v4
+        id: deploy

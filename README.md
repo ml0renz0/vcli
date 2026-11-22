@@ -96,11 +96,24 @@ Gráficas de **ejecuciones verificadas**, con tiempos de pared del job
 solaparse. Las métricas por operación del SaaS se conservan como artefacto
 `vcli-saas-metrics` y se mostrarán por separado, sin mezclar medidas.
 
-**Grabaciones asciinema actuales:** [Playground completo — Actions #45027729938](https://github.com/ml0renz0/vcli/actions/runs/45027729938)
- y [SaaS multitenant — Actions #45027729945](https://github.com/ml0renz0/vcli/actions/runs/45027729945).
-En *Artifacts* están `vcli-playground-asciinema` y `vcli-playground-saas-asciinema`.
-GitHub no permite embeber un reproductor JavaScript en el README; los archivos
-`.cast` se pueden abrir localmente con `asciinema play --speed 0.5 archivo.cast`.
+### Demos asciinema en el navegador
+
+Toca una vista previa para abrir el **reproductor móvil**. Puedes pausar,
+buscar en la línea de tiempo y elegir velocidades de 0,25× a 2×.
+No requiere instalar asciinema ni descargar ZIP de Actions.
+
+<a href="https://ml0renz0.github.io/vcli/#standard">
+  <img alt="Reproducir playground vcli en el móvil" src="docs/demo-previews/playground.svg" width="760" />
+</a>
+
+<a href="https://ml0renz0.github.io/vcli/#saas">
+  <img alt="Reproducir demo SaaS de vcli" src="docs/demo-previews/saas.svg" width="760" />
+</a>
+
+**Nota:** GitHub no permite insertar un reproductor JavaScript dentro de un
+README. Estas vistas previas están integradas y abren el player interactivo
+en GitHub Pages. El enlace estará activo después del primer despliegue correcto.
+
 
 ## Asciinema del playground actual
 
@@ -125,11 +138,9 @@ sintéticos.** No hagas reset automático de un laboratorio con trabajo propio.
 
 Para reproducir: `asciinema play --speed 0.5 vcli-playground.cast`.
 
-El [visor web con velocidad ajustable](docs/asciinema-player.html) está preparado
-para GitHub Pages: una vez activado Pages desde `master/docs`, se reproducirán
-los casts publicados automáticamente tras superar la CI en `master`.
-Durante la PR, los enlaces a los artefactos de Actions del apartado anterior
-son la fuente verificada de las grabaciones.
+El [reproductor web interactivo](https://ml0renz0.github.io/vcli/) alojado
+con GitHub Pages permite reproducir en el navegador los casts publicados desde
+CI. Las pruebas no se ralentizan y el lector puede cambiar la velocidad.
 
 
 Para regenerarla localmente:

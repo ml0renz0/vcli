@@ -1,40 +1,76 @@
 <!doctype html>
 <html lang="es">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>vcli · demos de terminal</title>
-<link rel="icon" href="../assets/branding/favicon.svg">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#06160c">
+<title>vcli · Demos de Vault TLS</title>
+<link rel="icon" href="favicon.svg">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/asciinema-player@3/dist/bundle/asciinema-player.css">
 <style>
-body{font-family:system-ui,sans-serif;background:#0a1410;color:#e5f7e8;max-width:1050px;margin:2rem auto;padding:1rem}
-h1{color:#69f52b}label{margin-right:1rem}select{padding:.6rem;background:#173122;color:white;border:1px solid #69f52b}
-#player{margin-top:1.5rem}small{color:#b1c6b7}
+:root{color-scheme:dark}body{margin:0;background:#06160c;color:#e4f8e6;font:16px system-ui,-apple-system,sans-serif}
+main{max-width:1024px;margin:0 auto;padding:clamp(16px,4vw,44px)}
+h1{font-size:clamp(28px,6vw,44px);margin:0;color:#69f52b}
+p{color:#bad3bf;line-height:1.5}
+nav{display:flex;flex-wrap:wrap;gap:10px;margin:24px 0}
+button,select{color:#e4f8e6;background:#143421;border:1px solid #41794a;border-radius:8px;padding:11px;cursor:pointer;font:inherit}
+button[aria-pressed=true]{border-color:#69f52b;box-shadow:inset 0 0 0 1px #69f52b}
+.controls{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:18px 0}
+#player{max-width:100%;overflow:auto;border:1px solid #245b31;border-radius:8px;min-height:240px}
+#status{font-size:14px}a{color:#a3fa8f}
 </style>
 </head>
-<body>
-<h1>vcli · Vault TLS en acción</h1>
-<p>Grabaciones verificadas con Vault real y datos sintéticos. Puedes ralentizar la reproducción sin ralentizar las pruebas.</p>
-<label for="demo">Grabación:</label>
-<select id="demo"><option value="vcli-playground.cast">Playground</option><option value="vcli-playground-saas.cast">SaaS multitenant</option></select>
-<label for="speed">Velocidad:</label>
-<select id="speed"><option value="1">1×</option><option value="0.75">0,75×</option><option value="0.5" selected>0,5×</option><option value="0.25">0,25×</option></select>
-<div id="player"></div>
-<p><small>Necesita GitHub Pages y las grabaciones publicadas tras ejecutar con éxito en master.</small></p>
+<body><main>
+<h1>vcli · Terminal en acción</h1>
+<p>Sesiones reales contra Vault TLS con datos ficticios. Pruebas ejecutadas a velocidad normal; reproducción a tu ritmo.</p>
+<nav aria-label="Seleccionar grabación">
+<button id="standard" type="button" aria-pressed="true">Playground · comandos, PKI, Kerberos</button>
+<button id="saas" type="button" aria-pressed="false">SaaS · 8.640 secretos / backup y restore</button>
+</nav>
+<div class="controls"><label for="speed">Velocidad</label><select id="speed">
+<option value="0.25">0,25×</option><option value="0.5" selected>0,5×</option>
+<option value="0.75">0,75×</option><option value="1">1×</option><option value="1.5">1,5×</option><option value="2">2×</option>
+</select></div>
+<div id="player" aria-label="Reproductor asciinema"></div>
+<p id="status" role="status">Pulsa reproducir para empezar. Se descarga la demo solo cuando hace falta.</p>
+<p><a href="https://github.com/ml0renz0/vcli">Repositorio vcli</a></p>
+</main>
 <script src="https://cdn.jsdelivr.net/npm/asciinema-player@3/dist/bundle/asciinema-player.min.js"></script>
 <script>
-let playback;
-function show() {
-  if (playback) { playback.dispose(); playback=null; }
-  const name=document.getElementById('demo').value;
-  const speed=Number(document.getElementById('speed').value);
-  const url='https://raw.githubusercontent.com/ml0renz0/vcli/master/reports/demo/'+name;
-  playback=AsciinemaPlayer.create(url,document.getElementById('player'),
-    {speed,controls:true,autoPlay:false,fit:'width',idleTimeLimit:8});
+let player;
+let demo=location.hash==='#saas'?'saas':'standard';
+const node=document.getElementById('player');
+const status=document.getElementById('status');
+const speed=document.getElementById('speed');
+async function load(d){
+  const base='casts/vcli-playground'+(d==='saas'?'-saas':'')+'.cast';
+  if('DecompressionStream' in window){
+    const response=await fetch(base+'.gz');
+    if(!response.ok)throw Error('Grabación no publicada ('+response.status+')');
+    const decoded=response.body.pipeThrough(new DecompressionStream('gzip'));
+    return new Response(decoded).text();
+  }
+  const response=await fetch(base);
+  if(!response.ok)throw Error('Grabación no publicada ('+response.status+')');
+  return response.text();
 }
-document.getElementById('demo').addEventListener('change',show);
-document.getElementById('speed').addEventListener('change',show);
-show();
-</script>
-</body>
-</html>
+function show(seek){
+  if(player){player.dispose();player=null;}
+  document.getElementById('standard').setAttribute('aria-pressed',String(demo==='standard'));
+  document.getElementById('saas').setAttribute('aria-pressed',String(demo==='saas'));
+  status.textContent='Pulsa reproducir para cargar la grabación.';
+  try{
+    player=AsciinemaPlayer.create({data:async()=>{
+      status.textContent='Cargando grabación verificada…';
+      try{const data=await load(demo);status.textContent='Reproduciendo demo. Puedes pausar y avanzar.';return data;}
+      catch(error){status.textContent='Error: '+error.message;throw error;}
+    }},node,{speed:Number(speed.value),controls:true,fit:'width',autoPlay:false,idleTimeLimit:8,terminalFontSize:'small'});
+    if(seek>0)player.seek(seek).catch(()=>{});
+  }catch(error){status.textContent='No disponible: '+error.message;}
+}
+for(const d of ['standard','saas'])document.getElementById(d).onclick=()=>{
+  demo=d;history.replaceState(null,'','#'+d);show(0);
+};
+speed.onchange=()=>show(player?player.getCurrentTime():0);
+window.addEventListener('hashchange',()=>{demo=location.hash==='#saas'?'saas':'standard';show(0);});
+show(0);
+</script></body></html>
