@@ -144,6 +144,53 @@ La suite usa un prefijo único y artefactos privados en un laboratorio
 desechable. El backup representa los valores vigentes, no todo el historial
 de revisiones de KV2. No ejecutarla contra producción.
 
+## Perfil adicional `saas` — gran catálogo multi-tenant
+
+El perfil estándar conserva **todos** los fixtures originales y las 45 hojas
+del catálogo empresarial. El nuevo perfil suma **8.640 secretos vigentes**
+y 1.728 revisiones históricas de KV2, sin reemplazar ninguno de esos datos.
+Los 32 tenants, tres entornos, tres regiones y seis microservicios generan
+270 hojas por tenant. Los datos son sintéticos, los dominios `.example.test`
+y las claves/contraseñas son ficticias.
+
+| Montaje | Datos adicionales | Hojas |
+|---|---|---:|
+| `kv2` | PostgreSQL primario, API gateway y Kafka con SASL/TLS | 5.184 |
+| `kv1` | Credenciales legacy, PEM X.509 y keytabs MIT | 1.728 |
+| `team/config` | Configuración de despliegue, flags y límites | 1.728 |
+| Total | 32 tenants × 3 entornos × 3 regiones × 6 servicios × 5 | **8.640** |
+
+Hay 576 credenciales legacy idénticas para rotación y búsqueda exacta,
+288 pares X.509 y 288 keytabs (reutilizan los fixtures del entorno y el
+principal de laboratorio, no son identidades criptográficas independientes).
+Se generan también 32 políticas ACL y AppRoles de solo lectura separados.
+El perfil no requiere licencia Enterprise ni namespaces de Vault.
+
+```bash
+VCLI_PLAYGROUND_PROFILE=saas scripts/playground.sh up
+scripts/playground.sh shell
+# En VCLI: tree kv2/saas/tenant-001/production/eu-west
+# Prueba de escala (puede tardar mucho):
+python3 tests/playground/test_saas.py
+scripts/playground.sh down
+```
+
+Si ya existe un laboratorio de otro perfil, no se modifica ni se destruye
+automáticamente: hay que ejecutar `down` explícitamente y crear uno nuevo.
+Solo se necesita Python 3 para el generador/test, no para el CLI Bash.
+
+El workflow separado `playground-saas.yml` ejecuta aceptación sobre Vault TLS
+real al modificar este perfil y mediante `workflow_dispatch` tras publicarlo
+en la rama por defecto. No se añade a la matriz obligatoria ni al smoke
+estándar. Compara las 8.640 hojas vía REST y los tres backups completos,
+verifica las 1.728 revisiones previas, autentica un AppRole y prueba aislamiento
+entre tenants en todos los montajes. Migra 270 hojas, prueba colisiones,
+rota 18 coincidencias, conserva los centinelas, borra y restaura el tenant,
+valida los dos montajes KV2 y vuelve a comprobar todo el catálogo original.
+El backup sigue siendo de valores vigentes, no snapshots del historial KV2.
+Las mediciones de tiempo se registran en el job, sin declarar objetivos
+de rendimiento hasta disponer de resultados reales.
+
 ## Demo asciinema
 
 El job de playground de la CI genera la grabación auténtica vcli-playground.cast

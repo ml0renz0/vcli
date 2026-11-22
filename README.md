@@ -63,6 +63,19 @@ Para batch:
 printf 'cat kv1/demo/app\n' | scripts/playground.sh batch
 ```
 
+## Playground SaaS a gran escala (opcional)
+
+El perfil `saas` añade 8.640 secretos vigentes y 1.728 revisiones KV2 al
+catálogo estándar. Incluye 32 tenants con ACL/AppRole propios.
+
+```bash
+VCLI_PLAYGROUND_PROFILE=saas scripts/playground.sh up
+scripts/playground.sh shell
+python3 tests/playground/test_saas.py
+```
+
+Consulta [el catálogo y las pruebas de escala](playground/README.md#perfil-adicional-saas--gran-catálogo-multi-tenant).
+
 ## Asciinema del playground actual
 
 El job de playground de la CI genera la grabación auténtica vcli-playground.cast

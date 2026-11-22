@@ -21,6 +21,7 @@ usage() {
 Usage: scripts/playground.sh up|status|shell|batch|smoke|reset|down [admin|readonly]
 
   up              Create/seed an ephemeral native-TLS Vault; repeatable
+                  VCLI_PLAYGROUND_PROFILE=saas adds 8640 synthetic leaves
   status          Report loopback address without revealing credentials
   shell [role]    Explore with the REAL ./vcli interactive shell
   batch [role]    Pipe commands to REAL ./vcli -n
@@ -218,6 +219,11 @@ write_environment() {
 source "$ROOT/scripts/playground-seed.sh"
 
 up() (
+    local profile="${VCLI_PLAYGROUND_PROFILE:-standard}"
+    [[ $profile == standard || $profile == saas ]] || die 'profile must be standard or saas'
+    if [[ $profile == saas ]]; then
+        command -v python3 >/dev/null || die 'SaaS fixture generator requires Python 3'
+    fi
     require_tools
     [[ $VAULT_TAG =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
         die 'use a fixed numeric Vault version tag'
@@ -229,6 +235,11 @@ up() (
         running || die 'playground stopped; run down, then up'
         address_from_docker
         health || die 'playground TLS health check failed'
+        if [[ -n ${VCLI_PLAYGROUND_PROFILE:-} ]]; then
+            local existing=standard
+            if [[ -e $STATE/profile ]]; then read_private profile; existing="$REPLY"; fi
+            [[ $existing == "$profile" ]] || die 'existing playground has a different profile; use down then up explicitly'
+        fi
         printf 'Playground already running at %s (existing changes preserved)\n' "$ADDRESS"
         return 0
     fi
@@ -261,6 +272,12 @@ up() (
     fi
 
     seed_playground
+    if [[ $profile == saas ]]; then
+        read_private root-token
+        read_private ca.pem
+        python3 "$ROOT/scripts/playground-seed-saas.py" "$STATE" "$ADDRESS"
+    fi
+    write_private profile "$profile"
     write_environment
     write_private ready yes
     printf 'Playground ready with native TLS at %s\n' "$ADDRESS"

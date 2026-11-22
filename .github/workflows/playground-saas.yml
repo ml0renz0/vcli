@@ -1,0 +1,41 @@
+name: SaaS playground scale acceptance
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/playground-seed-saas.py'
+      - 'scripts/playground.sh'
+      - 'tests/playground/test_saas.py'
+      - 'tests/cli/test_saas_manifest.py'
+      - '.github/workflows/playground-saas.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vcli-saas-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  saas:
+    name: 8640-secret SaaS acceptance (real Vault TLS)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install playground requirements
+        run: |
+          sudo apt-get update -qq -o Acquire::Retries=2
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq jq curl openssl krb5-user
+          docker compose version
+          python3 tests/cli/test_saas_manifest.py
+      - name: Seed the additive SaaS profile
+        env:
+          VCLI_PLAYGROUND_PROFILE: saas
+        run: scripts/playground.sh up
+      - name: Run full live SaaS backup and tenant recovery contracts
+        run: python3 tests/playground/test_saas.py
+      - name: Remove disposable Vault
+        if: always()
+        run: scripts/playground.sh down
