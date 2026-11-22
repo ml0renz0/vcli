@@ -74,12 +74,33 @@ class ExtendedVaultContracts(unittest.TestCase):
         self.assertNotIn("beta", matches)
 
     def test_16_root_tree_lists_actual_mounts(self):
-        # Root '/' is NOT a Vault LIST endpoint; its children come from sys/mounts.
-        tree = self.command("tree /")
-        self.assertTrue(tree.startswith("/\n"), tree)
-        for name in ("kv1/", "kv2/", "cubbyhole/"):
-            with self.subTest(name=name):
-                self.assertIn(name, tree)
+        """ACC-01: assert the *complete* root inventory, not three substrings.
+
+        The Vault sys/mounts API is the independent source of truth; comparing
+        just tree against ls could let two equally broken commands pass.
+        """
+        mounts = api("GET", "sys/mounts")["data"]
+        self.assertIsInstance(mounts, dict)
+        self.assertGreaterEqual(len(mounts), 3)
+        expected = set(mounts)
+        self.assertIn("cubbyhole/", expected)
+
+        def exact_root_entries(output):
+            lines = output.splitlines()
+            self.assertTrue(lines and lines[0] == "/", output)
+            self.assertEqual(len(lines), len(expected) + 1, output)
+            self.assertTrue(all(line.startswith(" \` ") for line in lines[1:]), output)
+            entries = [line.rsplit(None, 1)[-1] for line in lines[1:]]
+            self.assertEqual(len(entries), len(set(entries)), "Duplicate mounts in root tree")
+            self.assertEqual(set(entries), expected, "Tree omits or invents mountpoints")
+            return entries
+
+        explicit = self.command("tree /")
+        implicit = self.command("tree")
+        self.assertEqual(exact_root_entries(explicit), exact_root_entries(implicit))
+        listing = self.command("ls /")
+        self.assertEqual(set(listing.splitlines()), expected, "ls and API disagree")
+
 
     def test_17_tree_empty_mount_is_not_a_missing_path(self):
         # Create an empty mount uniquely scoped to this disposable TLS Vault.
@@ -91,6 +112,13 @@ class ExtendedVaultContracts(unittest.TestCase):
             listing = self.command(f"tree {mount}")
             self.assertIn(mount + "/", listing)
             self.assertIn("(empty)", listing)
+            # Cubbyhole is a built-in existing mount with empty LIST semantics.
+            # A simple "path name is present" assertion would miss its failure.
+            cubbyhole = self.command("tree cubbyhole")
+            self.assertEqual(
+                [line.rsplit(None, 1)[-1] for line in cubbyhole.splitlines()],
+                ["cubbyhole/", "(empty)"], cubbyhole
+            )
             # Still reject missing nested directories; do not conflate with a
             # mount whose LIST returns the Vault 404 empty-tree response.
             result, _ = invoke(f"tree {mount}/nonexistent")
