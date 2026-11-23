@@ -2143,13 +2143,13 @@ function _undelete(){
         return 2
     }
     IFS=, read -r -a versions <<< "$csv"
-    for num in "\${versions[@]}"; do
-        if (( \${#num} > 16 )) ||
-           { (( \${#num} == 16 )) && [[ $num > 9007199254740991 ]]; }; then
+    for num in "${versions[@]}"; do
+        if (( ${#num} > 16 )) ||
+           { (( ${#num} == 16 )) && [[ $num > 9007199254740991 ]]; }; then
             echo "vcli: undelete version exceeds exact JSON integer range" >&2
             return 2
         fi
-        if [[ -n \${seen[$num]+present} ]]; then
+        if [[ -n ${seen[$num]+present} ]]; then
             echo "vcli: undelete version repeated: $num" >&2
             return 2
         fi
@@ -2180,12 +2180,12 @@ function _undelete(){
         echo "vcli: undelete refused: each version must exist, be soft-deleted and not destroyed" >&2
         return 1
     fi
-    payload=$(mktemp "\${VCLI_SESSION_TMP:-$TMP}/.vcli-undelete.XXXXXX") || return 1
+    payload=$(mktemp "${VCLI_SESSION_TMP:-$TMP}/.vcli-undelete.XXXXXX") || return 1
     if ! printf '{"versions":%s}\n' "$wanted" > "$payload"; then
         rm -f -- "$payload"
         return 1
     fi
-    endpoint="\${metadata/\/metadata\//\/undelete\/}"
+    endpoint="${metadata/\/metadata\//\/undelete\/}"
     _curl -_api_path_- "$endpoint" "$payload" POST || status=$?
     rm -f -- "$payload"
     (( status == 0 )) || return "$status"
