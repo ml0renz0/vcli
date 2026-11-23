@@ -25,6 +25,8 @@ real**; no sustituirlo por una implementación Python o Go.
   sin reinterpretar carpetas llamadas `data`, `metadata` o `delete`.
   `cat --version N` lee una versión KV2 histórica; `cat --metadata`
   inspecciona su historial y estado de borrado sin modificar secretos.
+  `undelete --versions N[,N...] PATH` recupera versiones KV2 soft-deleted
+  con verificación de metadata, sin afectar a las destruidas o activas.
 - Autenticación mediante token o AppRole, consulta de políticas y roles,
   acceso de solo lectura y tratamiento explícito de permisos insuficientes.
 - HTTPS verificado, CA personalizada, opciones de mTLS y manejo de fallos

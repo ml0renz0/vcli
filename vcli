@@ -279,6 +279,7 @@ declare -A vcli_commands=(
                       [addsecret]=arg
                       [delsecret]=arg
                       [rm]=arg
+                      [undelete]=arg
                       [help]=arg
                       [history]=noarg
                       [exit]=noarg
@@ -325,6 +326,7 @@ declare -A vcli_commands_help=(
         [addsecret]="addsecret path/to/secret { \"key2\": \"value2\" } \n  adds secret { \"key2\": \"value2\" } to existing secret $current_pwd/path/to/secret"
         [delsecret]="delsecret path/to/secret key \n  deletes key from secret"
         [rm]="rm path/to/secret \n  removes secret $current_pwd/path/to/secret"
+        [undelete]="undelete --versions N[,N...] path/to/secret \n  restores explicitly selected soft-deleted KV2 versions (not destroyed versions)"
         [help]="help [vcli_command] \n  shows this help or the specified's command"
         [history]="history \n  shows vcli history"
         [verbose]="verbose \n  toggle verbosity"
@@ -1214,6 +1216,7 @@ function run_cmd(){
                     _rm "$arg1" "$arg2" "$arg3"
                 fi
             ;;
+            undelete)               _undelete "$arg1" "$arg2" "$arg3" ;;
             cp)                     _cp "$arg1" "$arg2" ;;
             getcert)                _getcert "$arg1" ;;
             getsan)                 _getsan "$arg1" ;;
@@ -2122,6 +2125,87 @@ function _rm(){
         return 1
     fi
     printf "Soft-deleted KV v2 version %s at %s; metadata/history remain (ls still lists it).\n" "$version" "$path"
+}
+
+
+# Restore only explicitly selected soft-deleted KV2 versions.
+function _undelete(){
+    [[ $# == 3 && $1 == --versions && -n $2 && -n $3 ]] || {
+        echo "Usage: undelete --versions N[,N...] KV2/logical/path" >&2
+        return 2
+    }
+    local csv="$2" requested="$3" path="" metadata="" snapshot="" after=""
+    local endpoint="" payload="" status=0 num wanted
+    local -a versions=()
+    local -A seen=()
+    [[ $csv =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]] || {
+        echo "vcli: undelete requires comma-separated positive version numbers" >&2
+        return 2
+    }
+    IFS=, read -r -a versions <<< "$csv"
+    for num in "\${versions[@]}"; do
+        if (( \${#num} > 16 )) ||
+           { (( \${#num} == 16 )) && [[ $num > 9007199254740991 ]]; }; then
+            echo "vcli: undelete version exceeds exact JSON integer range" >&2
+            return 2
+        fi
+        if [[ -n \${seen[$num]+present} ]]; then
+            echo "vcli: undelete version repeated: $num" >&2
+            return 2
+        fi
+        seen[$num]=1
+    done
+    wanted="[$csv]"
+    if [[ $requested == *'?'* || $requested == *'#'* ]] ||
+       ! _vcli_resolve_path path "$requested" ||
+       ! vcli_is_kv2_path "$path"; then
+        echo "vcli: undelete requires a valid logical path on a configured KV2 mount" >&2
+        return 2
+    fi
+    metadata=$(vcli_kv2_metadata_path "$path") || return 1
+    snapshot=$(_curl -_api_path_- "$metadata" "" GET) || {
+        echo "vcli: cannot inspect KV2 versions for undelete" >&2
+        return 1
+    }
+    if ! jq -e --argjson selected "$wanted" '
+      .data.versions as $records |
+      (($records | type) == "object") and
+      all($selected[]; . as $v |
+        $records[($v | tostring)] as $entry |
+        (($entry | type) == "object") and
+        ($entry.destroyed == false) and
+        (($entry.deletion_time | type) == "string") and
+        (($entry.deletion_time | length) > 0))
+    ' <<< "$snapshot" >/dev/null 2>&1; then
+        echo "vcli: undelete refused: each version must exist, be soft-deleted and not destroyed" >&2
+        return 1
+    fi
+    payload=$(mktemp "\${VCLI_SESSION_TMP:-$TMP}/.vcli-undelete.XXXXXX") || return 1
+    if ! printf '{"versions":%s}\n' "$wanted" > "$payload"; then
+        rm -f -- "$payload"
+        return 1
+    fi
+    endpoint="\${metadata/\/metadata\//\/undelete\/}"
+    _curl -_api_path_- "$endpoint" "$payload" POST || status=$?
+    rm -f -- "$payload"
+    (( status == 0 )) || return "$status"
+    after=$(_curl -_api_path_- "$metadata" "" GET) || {
+        echo "vcli: undelete response succeeded but state verification failed" >&2
+        return 1
+    }
+    if ! jq -e --argjson selected "$wanted" '
+      .data.versions as $records |
+      (($records | type) == "object") and
+      all($selected[]; . as $v |
+        $records[($v | tostring)] as $entry |
+        (($entry | type) == "object") and
+        ($entry.destroyed == false) and
+        ($entry.deletion_time == ""))
+    ' <<< "$after" >/dev/null 2>&1; then
+        echo "vcli: undelete verification failed; inspect state before retrying" >&2
+        return 1
+    fi
+    printf 'Restored KV v2 version(s) %s at %s\n' "$csv" "$path"
 }
 
 # put function

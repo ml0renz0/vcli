@@ -334,6 +334,10 @@ class SaaSContracts(unittest.TestCase):
         self.cli("mv " + temporary + " " + migrated, b"Moved version")
         self.assertEqual(self.read(migrated), {**ROTATED, "owner": "payments"})
         self.api("GET", self.endpoint(temporary), expected=404)
+        self.cli("undelete --versions 3 " + temporary, b"Restored KV v2 version")
+        self.assertEqual(self.read(temporary), {**ROTATED, "owner": "payments"})
+        self.cli("rm " + temporary, b"Soft-deleted KV v2 version")
+        self.api("GET", self.endpoint(temporary), expected=404)
         self.cli("rm " + migrated)
         self.api("GET", self.endpoint(migrated), expected=404)
 

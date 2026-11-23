@@ -533,6 +533,94 @@ class KV2AdvancedTests(unittest.TestCase):
         self.assertTrue(latest_metadata["versions"]["1"]["destroyed"])
         self.assertEqual(json.loads(after.stdout)["data"], latest_metadata)
 
+
+    def test_23_undelete_restores_only_selected_versions(self):
+        """Use direct Vault API to prove exact version restoration."""
+        mounts = "team,team/config,kv2"
+        for mount in ("kv2", "team/config"):
+            with self.subTest(mount=mount):
+                leaf = f"data/{self.p}/undelete-{mount.replace('/', '-')}/item"
+                sibling = f"data/{self.p}/undelete-{mount.replace('/', '-')}/sentinel"
+                for generation in (1, 2, 3):
+                    api("POST", f"{mount}/data/{leaf}", {"data": {"generation": generation}})
+                api("POST", f"{mount}/data/{sibling}", {"data": {"keep": True}})
+                api("POST", f"{mount}/delete/{leaf}", {"versions": [1, 3]})
+                before = api("GET", f"{mount}/metadata/{leaf}")["data"]
+                self.assertEqual(before["current_version"], 3)
+                self.assertTrue(before["versions"]["1"]["deletion_time"])
+                self.assertTrue(before["versions"]["3"]["deletion_time"])
+                self.assertFalse(before["versions"]["2"]["deletion_time"])
+                restored, _ = invoke(f"undelete --versions 1,3 {mount}/{leaf}",
+                                     version=2, mounts=mounts)
+                self.assertEqual(restored.returncode, 0, restored.stdout + restored.stderr)
+                self.assertIn("Restored KV v2 version(s) 1,3", restored.stdout)
+                after = api("GET", f"{mount}/metadata/{leaf}")["data"]
+                self.assertEqual(after["current_version"], 3)
+                self.assertEqual(set(after["versions"]), set(before["versions"]))
+                for number in (1, 2, 3):
+                    self.assertEqual(after["versions"][str(number)]["deletion_time"], "")
+                    self.assertFalse(after["versions"][str(number)]["destroyed"])
+                    self.assertEqual(api("GET", f"{mount}/data/{leaf}?version={number}")["data"]["data"],
+                                     {"generation": number})
+                self.assertEqual(api("GET", f"{mount}/data/{sibling}")["data"]["data"],
+                                 {"keep": True})
+
+    def test_24_undelete_invalid_batches_fail_before_modification(self):
+        """Mixed active, destroyed or nonexistent versions cannot partially restore."""
+        mount, mounts = "kv2", "kv2,team/config"
+        leaf = f"metadata/{self.p}/undelete-guard/item"
+        sentinel = f"metadata/{self.p}/undelete-guard/sentinel"
+        for generation in (1, 2, 3):
+            api("POST", f"{mount}/data/{leaf}", {"data": {"generation": generation}})
+        api("POST", f"{mount}/data/{sentinel}", {"data": {"keep": True}})
+        api("POST", f"{mount}/delete/{leaf}", {"versions": [1, 3]})
+        api("POST", f"{mount}/destroy/{leaf}", {"versions": [2]})
+        before = api("GET", f"{mount}/metadata/{leaf}")["data"]
+        target = f"{mount}/{leaf}"
+        for numbers in ("1,2", "1,99", "2", "3,3", "0", "-1", "01",
+                        "1,", "1,,3", "1.0", "999999999999999999999"):
+            with self.subTest(numbers=numbers):
+                result, _ = invoke(f"undelete --versions {numbers} {target}",
+                                   version=2, mounts=mounts)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(api("GET", f"{mount}/metadata/{leaf}")["data"], before)
+        for command in (f"undelete --versions 1 kv1/{self.p}/not-kv2",
+                        "undelete --versions 1 kv2",
+                        f"undelete --versions 1 {target}?version=1",
+                        f"undelete --versions 1 {mount}/data/../{leaf}",
+                        f"undelete --api-path {mount}/undelete/{leaf}",
+                        f"undelete --versions 1 {target} extra"):
+            with self.subTest(command=command):
+                result, _ = invoke(command, version=2, mounts=mounts)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(api("GET", f"{mount}/metadata/{leaf}")["data"], before)
+        self.assertEqual(api("GET", f"{mount}/data/{sentinel}")["data"]["data"], {"keep": True})
+
+    def test_25_undelete_acl_blocks_mutation_even_with_metadata_read(self):
+        """Read access to metadata is not update access to KV2 undelete."""
+        leaf = f"delete/{self.p}/undelete-acl/item"
+        api("POST", f"kv2/data/{leaf}", {"data": {"version": 1}})
+        api("POST", f"kv2/data/{leaf}", {"data": {"version": 2}})
+        active, _ = invoke(f"undelete --versions 2 kv2/{leaf}", version=2)
+        self.assertNotEqual(active.returncode, 0)
+        api("POST", f"kv2/delete/{leaf}", {"versions": [1]})
+        policy = "vcli-undelete-ro-" + uuid4().hex[:12]
+        api("PUT", f"sys/policies/acl/{policy}", {
+            "policy": f'path "kv2/metadata/{leaf}" {{ capabilities = ["read"] }}'
+        })
+        limited = api("POST", "auth/token/create", {
+            "policies": [policy], "no_default_policy": True, "ttl": "10m"
+        })["auth"]["client_token"]
+        try:
+            denied, _ = invoke(f"undelete --versions 1 kv2/{leaf}",
+                               version=2, token=limited)
+            self.assertNotEqual(denied.returncode, 0, denied.stdout + denied.stderr)
+            self.assertTrue(api("GET", f"kv2/metadata/{leaf}")["data"]
+                            ["versions"]["1"]["deletion_time"])
+        finally:
+            api("POST", "auth/token/revoke", {"token": limited})
+            api("DELETE", f"sys/policies/acl/{policy}")
+
     def test_07_field_updates_increment_versions(self):
         self.put("edit/item",{"x":1,"keep":True})
         self.cli(f'addsecret kv2/{self.p}/edit/item {{"y":2}}')

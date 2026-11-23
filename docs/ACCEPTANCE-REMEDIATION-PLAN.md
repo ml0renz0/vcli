@@ -158,3 +158,11 @@ Parte del código en la rama ya intenta resolver estas incidencias, pero los sí
 - **`cat --metadata <ruta-lógica>`:** GET al endpoint interno KV2 metadata/ con respuesta de historial (current_version, versions, deletion_time, destroyed) sin exponer datos del secreto. Requiere ACL de lectura de metadatos; errores 403/404 no se transforman en éxito.
 - **Regresiones API-first:** `test_21_read_kv2_historical_versions_and_metadata` compara ambas variantes contra Vault TLS independiente (KV2 y montaje anidado, nombres de carpetas reservados), verifica entradas inválidas y ausencia de nuevas versiones. `test_22_deleted_and_destroyed_versions_do_not_leak_data` comprueba estados borrado/destruido. `test_46_version_history_read_uses_interactive_parser` valida PTY real.
 - **Estado:** implementado como candidato, pendiente de CI completa sobre este SHA. `undelete` y `destroy` como operaciones del CLI continúan pendientes; no se fusiona la PR.
+
+## KV2 — undelete con preflight de versiones (2026-11-23)
+
+- Nuevo comando Bash `undelete --versions N[,N...] <ruta lógica KV2>` con montajes anidados y carpetas llamadas `data`, `metadata` o `delete`. No admite rutas API crudas, versiones duplicadas, cero o fuera del rango seguro de enteros JSON.
+- Realiza GET tipado de metadata, comprueba **todas** las versiones antes de un POST al endpoint `/undelete/`, rechaza versiones activas, inexistentes o destruidas y vuelve a consultar metadata después de la operación. No imprime valores ni crea nuevas versiones.
+- Contratos API-first `test_23_undelete_restores_only_selected_versions`, `test_24_undelete_invalid_batches_fail_before_modification` y `test_25_undelete_acl_blocks_mutation_even_with_metadata_read` prueban recuperación exacta, fallo sin cambios, aislamiento y permisos. Las demos estándar y SaaS incluyen el comando en el mismo Vault real, sin duplicar suites.
+- Preflight y verificación posterior **no son transaccionales**: si se pierde la respuesta de POST se informa OUTCOME_UNKNOWN y no se reintenta automáticamente. Los cambios concurrentes deben investigarse desde Vault.
+- Estado: implementado como candidato, pendiente de CI y aceptación SaaS. Siguiente incremento: `destroy` para versiones concretas, distinto de `rm --purge`.
