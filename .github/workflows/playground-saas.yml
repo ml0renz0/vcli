@@ -1,33 +1,17 @@
 name: SaaS playground scale acceptance
 
+# Heavy acceptance is a reusable release gate, never a PR/master trigger.
 on:
-  push:
-    branches: [master]
-    paths:
-      - 'vcli'
-      - 'scripts/**'
-      - 'tests/playground/**'
-      - '.github/workflows/playground-saas.yml'
-  pull_request:
-    paths:
-      - 'scripts/playground-seed-saas.py'
-      - 'scripts/playground.sh'
-      - 'scripts/playground-seed.sh'
-      - 'scripts/playground-demo.sh'
-      - 'scripts/record-playground-demo.sh'
-      - 'vcli'
-      - 'tests/playground/test_enterprise.py'
-      - 'tests/playground/test_saas.py'
-      - 'tests/cli/test_saas_manifest.py'
-      - '.github/workflows/playground-saas.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: vcli-saas-${{ github.ref }}
-  cancel-in-progress: true
+  group: vcli-saas-${{ github.workflow }}-${{ github.ref }}
+  # Never cancel an in-flight release acceptance in favour of another run.
+  cancel-in-progress: false
 
 jobs:
   saas:

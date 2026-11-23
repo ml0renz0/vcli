@@ -197,8 +197,14 @@ Si ya existe un laboratorio de otro perfil, no se modifica ni se destruye
 automáticamente: hay que ejecutar `down` explícitamente y crear uno nuevo.
 Solo se necesita Python 3 para el generador/test, no para el CLI Bash.
 
-El workflow separado `playground-saas.yml` ejecuta una única aceptación
-interactiva, con grabación opcional, sobre Vault TLS real. Compara los
+El workflow reutilizable `playground-saas.yml` ejecuta una única aceptación
+interactiva, con grabación opcional, sobre Vault TLS real. No tiene triggers
+`push` ni `pull_request`: se invoca desde `saas_release` al validar
+un tag candidato `v0.7.*` y también admite `workflow_dispatch` manual.
+`package_candidate` depende de esta aceptación y del CI principal,
+de modo que no se construye un artefacto de release sin ambos resultados verdes.
+En PR y en `master` se mantienen el playground estándar con Vault TLS
+y la validación aislada del catálogo SaaS de 8.640 registros. Compara los
 8.640 valores y las 1.728 revisiones históricas mediante REST, valida los
 backups de los tres montajes, entra con el AppRole del tenant y verifica
 el aislamiento, migra y rota un tenant de 270 hojas, recupera ese tenant,
@@ -218,7 +224,7 @@ Con `VCLI_PLAYGROUND_PROFILE=saas scripts/playground.sh up`, el grabador
 selecciona automáticamente `vcli-playground-saas.cast`. El workflow de escala
 adjunta `vcli-playground-saas-asciinema` solo después de superar la aceptación
 completa y validar la ausencia de credenciales. Una sola terminal real cubre
-los 43 comandos, los tres roles, los cuatro estados X.509, keytabs sintéticos,
+todos los comandos públicos, los tres roles, los cuatro estados X.509, keytabs sintéticos,
 fallos esperados, migración/rotación de 270 hojas y restauración de 8.640.
 El mismo recorrido funciona sin grabación. Las pruebas de regresión estándar
 se mantienen separadas, no se repiten dentro del SaaS.

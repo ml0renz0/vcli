@@ -173,9 +173,25 @@ cobertura como una garantía para cualquier despliegue.
   acciones/containers cuando se estabilice la matriz).
 - Sin `pull_request_target`, sin secretos de producción, permisos de Actions
   `contents: read`, sin `continue-on-error` en gates.
-- Para tags `v0.7.*`, el job `package_candidate` solo genera un TAR con
-  suma SHA-256 tras un CI íntegramente verde. Su `environment: release`
-  puede requerir aprobación manual; no publica automáticamente en GitHub Releases.
+- **PR / push a `master`:** CI obligatorio (Vault TLS, Linux, macOS y
+  playground estándar), más contrato aislado de los 8.640 registros SaaS.
+  La aceptación pesada SaaS **no** se ejecuta automáticamente por PR
+  ni por cada push a `master`.
+- **Tags candidatos `v0.7.*`:** tras el `Required CI gate`, el job
+  `saas_release` invoca el workflow reutilizable
+  `playground-saas.yml` y verifica los 8.640 secretos, el restore,
+  permisos, métricas y asciinema. **`package_candidate` depende de
+  `[gate, saas_release]`**: si falla la aceptación, no se genera el
+  TAR ni su SHA-256. Su `environment: release` puede requerir
+  aprobación manual. No se publica automáticamente en GitHub Releases.
+- **Reejecución excepcional:** `workflow_dispatch` permite lanzar la
+  aceptación SaaS completa manualmente desde la rama por defecto.
+  Conservar la evidencia por SHA y no considerar que una ejecución
+  manual sobre otro commit sustituye el gate del tag.
+- Los artefactos SaaS (`vcli-saas-metrics` y asciicast) conservan
+  7 días de retención. Los informes/Pages del repositorio pueden seguir
+  mostrando el último resultado verificado hasta una nueva publicación;
+  no se representan métricas antiguas como si fueran del último commit.
 - La primera versión `0.7.0-rc1` debe esperar al cierre de las
   regresiones pendientes, la revisión 04-Q y la auditoría final.
 

@@ -91,6 +91,13 @@ verifica y graba (opcionalmente) el recorrido completo: 270 hojas por tenant,
 backups y restauración de 8.640 valores en prefijos aislados, y JSON de tiempos.
 El catálogo original y su historial se conservan. Usa un playground recién creado.
 
+En GitHub Actions, la aceptación pesada SaaS se ejecuta al validar un
+**tag candidato `v0.7.*`** (antes de generar el artefacto) o por
+`workflow_dispatch` manual, no en cada PR ni en cada push a `master`.
+La CI habitual mantiene Vault TLS, playground estándar y comprobaciones
+estáticas del manifiesto SaaS. La gráfica muestra la última ejecución
+publicada y verificada, no una medición de cada commit.
+
 ```bash
 VCLI_PLAYGROUND_PROFILE=saas scripts/playground.sh up
 scripts/playground.sh shell

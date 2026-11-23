@@ -183,3 +183,12 @@ Parte del código en la rama ya intenta resolver estas incidencias, pero los sí
 - Errores 403, datos malformados, versiones KV desconocidas y la combinación `auto` + `VAULT_KV_MOUNTS` fallan explícitamente; no hay fallback a KV1 silencioso. Sin permisos de lectura de `sys/mounts`, usar la declaración manual existente.
 - Regresiones API-first `test_29_auto_detects_kv1_kv2_and_nested_kv2_without_route_guessing`, `test_30_auto_routes_nested_kv1_below_kv2_without_rewriting`, `test_31_auto_denied_inventory_fails_closed_and_manual_still_works` y `test_32_auto_rejects_conflicting_or_invalid_configuration`. La fotografía del inventario no se actualiza automáticamente después de `mount`/`umount`: reiniciar la sesión hasta añadir una orden de refresco controlada.
 - **Estado:** implementado como candidato; pendiente de CI Vault TLS completa. No cambiar el modo predeterminado ni fusionar la PR hasta disponer de pruebas de aceptación.
+
+## CI/CD — aceptación SaaS trasladada al gate de release (2026-11-23)
+
+- CI principal de PR y master permanece obligatorio: matriz Vault TLS, playground real, Alpine, Debian y macOS; `tests.cli.test_saas_manifest` verifica el catálogo sintético sin poblar 8.640 secretos.
+- `.github/workflows/playground-saas.yml` deja de escuchar `push`/`pull_request`, y mantiene `workflow_dispatch` para investigación manual, además de `workflow_call`.
+- En tags `v0.7.*`, `saas_release` se ejecuta **después** del `Required CI gate`, con exactamente la misma aceptación y grabación real. `package_candidate` depende de **ambos** jobs; no se produce artefacto si falla SaaS.
+- `tests.cli.test_saas_release_gate` comprueba disparadores, dependencia obligatoria, conservación de controles de credenciales y retención de artefactos, y el smoke Vault real. El contrato se ejecuta en Linux y macOS.
+- **Publicación separada:** los informes/gráficas y Pages deben conservar el último resultado SaaS verificado sin atribuirlo a commits posteriores; al dejar de ejecutar por PR, los artefactos temporales pueden expirar antes de la siguiente release. Mantener la comprobación de fuentes verificadas en publicación, sin inventar métricas ni capturas.
+- Estado: candidato pendiente de nueva CI; PR #25 sigue abierta, no hay tag ni release publicados.
