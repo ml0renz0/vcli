@@ -1220,10 +1220,11 @@ function run_cmd(){
             ;;
             undelete)               _undelete "$arg1" "$arg2" "$arg3" ;;
             destroy)
-                # Interactive REPL uses IFS= for its byte reader. Split arguments
-                # with whitespace for this call only, without changing that state.
+                # Explicit IFS is essential: the interactive editor sets IFS empty.
                 local -a destroy_argv=()
-                IFS=
+                IFS=" " read -r -a destroy_argv <<< "$args"
+                _destroy "${destroy_argv[@]}"
+            ;;
             cp)                     _cp "$arg1" "$arg2" ;;
             getcert)                _getcert "$arg1" ;;
             getsan)                 _getsan "$arg1" ;;
