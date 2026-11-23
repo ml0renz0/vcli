@@ -799,5 +799,38 @@ class InteractiveShellTests(unittest.TestCase):
         finally:
             self.end(home, fd, child)
 
+    def test_47_destroy_four_argument_command_in_real_pty(self):
+        """Interactive IFS= must not collapse --versions N --yes PATH into one token."""
+        from uuid import uuid4
+        from .test_vault import api, ROOT_TOKEN
+        name = "vcli-destroy-pty-" + uuid4().hex[:12]
+        path = f"kv2/data/{name}/item"
+        for generation in (1, 2):
+            api("POST", f"kv2/data/data/{name}/item",
+                {"data": {"generation": generation}})
+        before = api("GET", f"kv2/metadata/data/{name}/item")["data"]
+        self.assertEqual(before["current_version"], 2)
+        home, fd, child = self.session(extra_env={
+            "VAULT_TOKEN": ROOT_TOKEN,
+            "VAULT_KV_VERSION": "2",
+            "VAULT_KV_MOUNTS": "kv2,team/config",
+        })
+        try:
+            self.send(fd, (f"destroy --versions 1 --yes {path}\n").encode(),
+                      pace=0.015)
+            rendered = read_until(fd, b"Permanently destroyed KV v2 version(s) 1",
+                                  timeout=15)
+            self.assertIn(path.encode(), rendered)
+            self.assertNotIn(b"Usage: destroy", rendered)
+            after = api("GET", f"kv2/metadata/data/{name}/item")["data"]
+            self.assertEqual(after["current_version"], 2)
+            self.assertTrue(after["versions"]["1"]["destroyed"])
+            self.assertFalse(after["versions"]["2"]["destroyed"])
+            self.assertEqual(api("GET", f"kv2/data/data/{name}/item?version=2")
+                             ["data"]["data"], {"generation": 2})
+            self.assertIsNone(child.poll())
+        finally:
+            self.end(home, fd, child)
+
 if __name__ == "__main__":
     unittest.main()
