@@ -90,10 +90,50 @@ printf 'JSON=%s\nPATH=%s\nMETA=%s\n' "$selected" "$path" "$metadata"
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stdout, "")
 
+    def test_undelete_keeps_selected_version_ids_in_success_message(self):
+        """The shared helper must not erase the public confirmation text."""
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix="vcli-kv2-undelete-") as tmp:
+            shell = "\n".join((
+                production("_vcli_resolve_path"),
+                production("vcli_kv2_prepare_versions"),
+                production("_undelete"),
+                r"""
+current_pwd="/"
+TMP="$TEST_TMP"
+vcli_is_kv2_path(){ [[ $1 == /kv2/* ]]; }
+vcli_kv2_metadata_path(){ printf '/kv2/metadata/%s\n' "${1#/kv2/}"; }
+_curl(){
+    if [[ ${4:-GET} == POST ]]; then
+        [[ $2 == /kv2/undelete/data/item ]] || return 92
+        jq -e '.versions == [1,3]' "$3" >/dev/null || return 93
+        : > "$TEST_TMP/restored"
+        return 0
+    fi
+    [[ $2 == /kv2/metadata/data/item ]] || return 94
+    if [[ -f $TEST_TMP/restored ]]; then
+        printf '%s\n' '{"data":{"versions":{"1":{"destroyed":false,"deletion_time":""},"3":{"destroyed":false,"deletion_time":""}}}}'
+    else
+        printf '%s\n' '{"data":{"versions":{"1":{"destroyed":false,"deletion_time":"2026-11-22T10:00:00Z"},"3":{"destroyed":false,"deletion_time":"2026-11-22T11:00:00Z"}}}}'
+    fi
+}
+_undelete --versions 1,3 kv2/data/item
+""",
+            ))
+            result = subprocess.run(
+                ["bash", "-c", shell], env={**os.environ, "TEST_TMP": tmp},
+                text=True, capture_output=True, timeout=8,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout,
+                             "Restored KV v2 version(s) 1,3 at /kv2/data/item\n")
+            self.assertTrue((Path(tmp) / "restored").is_file())
+            self.assertEqual(list(Path(tmp).glob(".vcli-undelete.*")), [])
+
     def test_lifecycle_commands_share_validation_without_dropping_guards(self):
         undelete = production("_undelete")
         destroy = production("_destroy")
-        self.assertIn('vcli_kv2_prepare_versions undelete "$2" "$3" wanted path metadata',
+        self.assertIn('vcli_kv2_prepare_versions undelete "$csv" "$3" wanted path metadata',
                       undelete)
         self.assertIn('vcli_kv2_prepare_versions destroy "$csv" "$requested" wanted path metadata',
                       destroy)

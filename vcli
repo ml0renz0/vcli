@@ -2235,8 +2235,8 @@ function _undelete(){
         echo "Usage: undelete --versions N[,N...] KV2/logical/path" >&2
         return 2
     }
-    local path="" metadata="" snapshot="" after="" endpoint="" payload="" status=0 wanted=""
-    vcli_kv2_prepare_versions undelete "$2" "$3" wanted path metadata || return $?
+    local csv="$2" path="" metadata="" snapshot="" after="" endpoint="" payload="" status=0 wanted=""
+    vcli_kv2_prepare_versions undelete "$csv" "$3" wanted path metadata || return $?
     snapshot=$(_curl -_api_path_- "$metadata" "" GET) || {
         echo "vcli: cannot inspect KV2 versions for undelete" >&2
         return 1
