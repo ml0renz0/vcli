@@ -2195,41 +2195,48 @@ function _rm(){
 }
 
 
-# Restore only explicitly selected soft-deleted KV2 versions.
-function _undelete(){
-    [[ $# == 3 && $1 == --versions && -n $2 && -n $3 ]] || {
-        echo "Usage: undelete --versions N[,N...] KV2/logical/path" >&2
-        return 2
-    }
-    local csv="$2" requested="$3" path="" metadata="" snapshot="" after=""
-    local endpoint="" payload="" status=0 num wanted
+# Parse an exact KV2 version selection and resolve its logical secret path.
+# Shared by undelete and irreversible destroy; never contacts Vault.
+function vcli_kv2_prepare_versions(){
+    local operation="$1" csv="$2" requested="$3" num
+    local -n _vcli_versions_json="$4" _vcli_logical_path="$5" _vcli_metadata_path="$6"
     local -a versions=()
     local -A seen=()
     [[ $csv =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]] || {
-        echo "vcli: undelete requires comma-separated positive version numbers" >&2
+        echo "vcli: $operation requires comma-separated positive version numbers" >&2
         return 2
     }
     IFS=, read -r -a versions <<< "$csv"
     for num in "${versions[@]}"; do
         if (( ${#num} > 16 )) ||
            { (( ${#num} == 16 )) && (( num > 9007199254740991 )); }; then
-            echo "vcli: undelete version exceeds exact JSON integer range" >&2
+            echo "vcli: $operation version exceeds exact JSON integer range" >&2
             return 2
         fi
         if [[ -n ${seen[$num]+present} ]]; then
-            echo "vcli: undelete version repeated: $num" >&2
+            echo "vcli: $operation version repeated: $num" >&2
             return 2
         fi
         seen[$num]=1
     done
-    wanted="[$csv]"
+    _vcli_versions_json="[$csv]"
     if [[ $requested == *'?'* || $requested == *'#'* ]] ||
-       ! _vcli_resolve_path path "$requested" ||
-       ! vcli_is_kv2_path "$path"; then
-        echo "vcli: undelete requires a valid logical path on a configured KV2 mount" >&2
+       ! _vcli_resolve_path _vcli_logical_path "$requested" ||
+       ! vcli_is_kv2_path "$_vcli_logical_path"; then
+        echo "vcli: $operation requires a valid logical path on a configured KV2 mount" >&2
         return 2
     fi
-    metadata=$(vcli_kv2_metadata_path "$path") || return 1
+    _vcli_metadata_path=$(vcli_kv2_metadata_path "$_vcli_logical_path") || return 1
+}
+
+# Restore only explicitly selected soft-deleted KV2 versions.
+function _undelete(){
+    [[ $# == 3 && $1 == --versions && -n $2 && -n $3 ]] || {
+        echo "Usage: undelete --versions N[,N...] KV2/logical/path" >&2
+        return 2
+    }
+    local path="" metadata="" snapshot="" after="" endpoint="" payload="" status=0 wanted=""
+    vcli_kv2_prepare_versions undelete "$2" "$3" wanted path metadata || return $?
     snapshot=$(_curl -_api_path_- "$metadata" "" GET) || {
         echo "vcli: cannot inspect KV2 versions for undelete" >&2
         return 1
@@ -2288,34 +2295,8 @@ function _destroy(){
         echo "Usage: destroy --versions N[,N...] [--yes] KV2/logical/path" >&2
         return 2
     fi
-    local path="" metadata="" snapshot="" after="" payload="" endpoint="" status=0 num wanted
-    local -a versions=()
-    local -A seen=()
-    [[ $csv =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]] || {
-        echo "vcli: destroy requires comma-separated positive version numbers" >&2
-        return 2
-    }
-    IFS=, read -r -a versions <<< "$csv"
-    for num in "${versions[@]}"; do
-        if (( ${#num} > 16 )) ||
-           { (( ${#num} == 16 )) && (( num > 9007199254740991 )); }; then
-            echo "vcli: destroy version exceeds exact JSON integer range" >&2
-            return 2
-        fi
-        if [[ -n ${seen[$num]+present} ]]; then
-            echo "vcli: destroy version repeated: $num" >&2
-            return 2
-        fi
-        seen[$num]=1
-    done
-    wanted="[$csv]"
-    if [[ $requested == *'?'* || $requested == *'#'* ]] ||
-       ! _vcli_resolve_path path "$requested" ||
-       ! vcli_is_kv2_path "$path"; then
-        echo "vcli: destroy requires a valid logical secret path on a configured KV2 mount" >&2
-        return 2
-    fi
-    metadata=$(vcli_kv2_metadata_path "$path") || return 1
+    local path="" metadata="" snapshot="" after="" payload="" endpoint="" status=0 wanted=""
+    vcli_kv2_prepare_versions destroy "$csv" "$requested" wanted path metadata || return $?
     snapshot=$(_curl -_api_path_- "$metadata" "" GET) || {
         echo "vcli: cannot inspect KV2 metadata for destroy" >&2
         return 1

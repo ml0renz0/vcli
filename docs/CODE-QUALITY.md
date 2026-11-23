@@ -903,3 +903,10 @@ Los comandos individuales comparten el mismo procesador de datos.
 paridad de resultados y errores, y corre en la CI obligatoria Linux/macOS.
 Las suites E2E reales de PKI/Kerberos contra Vault TLS siguen intactas.
 **Pendiente:** CI del commit y benchmark A/B antes de cuantificar mejoras.
+
+## 04-Q — KV2-01: preparación común de versiones y rutas (2026-11-23)
+
+- `vcli_kv2_prepare_versions` centraliza la validación de CSV de versiones (enteros decimales positivos dentro del rango exacto de JSON, sin repetidos), la resolución de la ruta **lógica** y la obtención del endpoint `metadata/` del montaje KV2. Se elimina la duplicación de estas operaciones entre `undelete` y `destroy`.
+- Se mantienen independientes las reglas operativas: `undelete` exige versiones soft-deleted, `destroy` exige versiones aún no destruidas; `destroy` conserva la confirmación `DESTROY` o `--yes` y ambos verifican metadata tras el POST. No hay reintentos de escrituras ni modificación del transporte.
+- Nuevo contrato aislado `tests.cli.test_kv2_version_validation` prueba ambos consumidores, montajes anidados, carpetas literales reservadas, entradas inválidas, límite numérico, repetidos, rutas inseguras y fallo del metadata helper. Incorporado a los jobs estáticos de Ubuntu y macOS, además de la matriz E2E Vault TLS inalterada.
+- **Estado:** refactorización candidata pendiente de aceptación CI; no declarar cerrada ni fusionar hasta resultado global verde.
