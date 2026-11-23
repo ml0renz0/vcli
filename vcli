@@ -280,6 +280,7 @@ declare -A vcli_commands=(
                       [delsecret]=arg
                       [rm]=arg
                       [undelete]=arg
+                      [destroy]=arg
                       [help]=arg
                       [history]=noarg
                       [exit]=noarg
@@ -327,6 +328,7 @@ declare -A vcli_commands_help=(
         [delsecret]="delsecret path/to/secret key \n  deletes key from secret"
         [rm]="rm path/to/secret \n  removes secret $current_pwd/path/to/secret"
         [undelete]="undelete --versions N[,N...] path/to/secret \n  restores explicitly selected soft-deleted KV2 versions (not destroyed versions)"
+        [destroy]="destroy --versions N[,N...] [--yes] path/to/secret \n  IRREVERSIBLY destroys specified KV2 versions, not metadata; --yes skips confirmation"
         [help]="help [vcli_command] \n  shows this help or the specified's command"
         [history]="history \n  shows vcli history"
         [verbose]="verbose \n  toggle verbosity"
@@ -1217,6 +1219,7 @@ function run_cmd(){
                 fi
             ;;
             undelete)               _undelete "$arg1" "$arg2" "$arg3" ;;
+            destroy)                local -a destroy_argv=(); read -r -a destroy_argv <<< "$args"; _destroy "${destroy_argv[@]}" ;;
             cp)                     _cp "$arg1" "$arg2" ;;
             getcert)                _getcert "$arg1" ;;
             getsan)                 _getsan "$arg1" ;;
@@ -2206,6 +2209,97 @@ function _undelete(){
         return 1
     fi
     printf 'Restored KV v2 version(s) %s at %s\n' "$csv" "$path"
+}
+
+
+# Destroy ONLY named KV2 versions; this is not rm --purge (which erases metadata).
+# Confirmation is mandatory unless the operator explicitly supplies --yes.
+function _destroy(){
+    local csv="" requested="" skip_confirmation=no answer=""
+    if [[ $# == 3 && $1 == --versions ]]; then
+        csv="$2"; requested="$3"
+    elif [[ $# == 4 && $1 == --versions && $3 == --yes ]]; then
+        csv="$2"; requested="$4"; skip_confirmation=yes
+    else
+        echo "Usage: destroy --versions N[,N...] [--yes] KV2/logical/path" >&2
+        return 2
+    fi
+    local path="" metadata="" snapshot="" after="" payload="" endpoint="" status=0 num wanted
+    local -a versions=()
+    local -A seen=()
+    [[ $csv =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]] || {
+        echo "vcli: destroy requires comma-separated positive version numbers" >&2
+        return 2
+    }
+    IFS=, read -r -a versions <<< "$csv"
+    for num in "${versions[@]}"; do
+        if (( ${#num} > 16 )) ||
+           { (( ${#num} == 16 )) && (( num > 9007199254740991 )); }; then
+            echo "vcli: destroy version exceeds exact JSON integer range" >&2
+            return 2
+        fi
+        if [[ -n ${seen[$num]+present} ]]; then
+            echo "vcli: destroy version repeated: $num" >&2
+            return 2
+        fi
+        seen[$num]=1
+    done
+    wanted="[$csv]"
+    if [[ $requested == *'?'* || $requested == *'#'* ]] ||
+       ! _vcli_resolve_path path "$requested" ||
+       ! vcli_is_kv2_path "$path"; then
+        echo "vcli: destroy requires a valid logical secret path on a configured KV2 mount" >&2
+        return 2
+    fi
+    metadata=$(vcli_kv2_metadata_path "$path") || return 1
+    snapshot=$(_curl -_api_path_- "$metadata" "" GET) || {
+        echo "vcli: cannot inspect KV2 metadata for destroy" >&2
+        return 1
+    }
+    # Reject the complete batch before a single destructive request if
+    # even one version is missing, malformed, or already destroyed.
+    if ! jq -e --argjson selected "$wanted" '
+      .data.versions as $records |
+      (($records | type) == "object") and
+      all($selected[]; . as $v |
+        $records[($v | tostring)] as $entry |
+        (($entry | type) == "object") and ($entry.destroyed == false))
+    ' <<< "$snapshot" >/dev/null 2>&1; then
+        echo "vcli: destroy refused: every version must exist and not already be destroyed" >&2
+        return 1
+    fi
+    if [[ $skip_confirmation != yes ]]; then
+        if [[ ! -t 0 || ! -r /dev/tty ]]; then
+            echo "vcli: irreversible version destruction requires a terminal or --yes" >&2
+            return 1
+        fi
+        read -r -p "PERMANENTLY destroy versions $csv at $path? Type DESTROY: " answer </dev/tty || return 1
+        [[ $answer == DESTROY ]] || { echo "vcli: destroy cancelled" >&2; return 1; }
+    fi
+    payload=$(mktemp "${VCLI_SESSION_TMP:-$TMP}/.vcli-destroy.XXXXXX") || return 1
+    if ! printf '{"versions":%s}\n' "$wanted" > "$payload"; then
+        rm -f -- "$payload"
+        return 1
+    fi
+    endpoint="${metadata/\/metadata\//\/destroy\/}"
+    _curl -_api_path_- "$endpoint" "$payload" POST || status=$?
+    rm -f -- "$payload"
+    (( status == 0 )) || return "$status"
+    after=$(_curl -_api_path_- "$metadata" "" GET) || {
+        echo "vcli: destroy response succeeded but state verification failed" >&2
+        return 1
+    }
+    if ! jq -e --argjson selected "$wanted" '
+      .data.versions as $records |
+      (($records | type) == "object") and
+      all($selected[]; . as $v |
+        $records[($v | tostring)] as $entry |
+        (($entry | type) == "object") and ($entry.destroyed == true))
+    ' <<< "$after" >/dev/null 2>&1; then
+        echo "vcli: destroy verification failed; inspect metadata before retrying" >&2
+        return 1
+    fi
+    printf 'Permanently destroyed KV v2 version(s) %s at %s; metadata retained\n' "$csv" "$path"
 }
 
 # put function

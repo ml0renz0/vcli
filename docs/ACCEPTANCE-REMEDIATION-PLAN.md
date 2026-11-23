@@ -166,3 +166,12 @@ Parte del código en la rama ya intenta resolver estas incidencias, pero los sí
 - Contratos API-first `test_23_undelete_restores_only_selected_versions`, `test_24_undelete_invalid_batches_fail_before_modification` y `test_25_undelete_acl_blocks_mutation_even_with_metadata_read` prueban recuperación exacta, fallo sin cambios, aislamiento y permisos. Las demos estándar y SaaS incluyen el comando en el mismo Vault real, sin duplicar suites.
 - Preflight y verificación posterior **no son transaccionales**: si se pierde la respuesta de POST se informa OUTCOME_UNKNOWN y no se reintenta automáticamente. Los cambios concurrentes deben investigarse desde Vault.
 - Estado: implementado como candidato, pendiente de CI y aceptación SaaS. Siguiente incremento: `destroy` para versiones concretas, distinto de `rm --purge`.
+
+## KV2 — destroy de versiones concretas (2026-11-23)
+
+- Nuevo comando `destroy --versions N[,N...] [--yes] <ruta lógica KV2>`: POST al endpoint `mount/destroy/path`, con respaldo de metadata antes/después, ruta lógica, montajes anidados y aceptación de carpetas `data`/`metadata`/`delete`. Destruye datos de versiones individuales sin borrar el historial de metadatos.
+- **Destructivo y no reversible:** preflight de existencia, no destruidas y sin repetidos. Si falta `--yes` exige terminal y escribir `DESTROY`; en batch sin terminal falla cerrado. Una operación con errores en la selección debe rechazar todo el lote.
+- Pruebas E2E `test_26_destroy_selected_versions_preserves_other_history`, `test_27_destroy_refuses_invalid_batches_and_missing_confirmation` y `test_28_destroy_denied_when_only_metadata_read_is_permitted` comparan estados con la API Vault TLS. Demos estándar/SaaS incluyen operación irreversible en secretos efímeros sin cambiar datos ajenos.
+- Alerta operativa: la precomprobación no es atómica con el POST; respuestas de escritura ambiguas no se reintentan y requieren comprobar metadata. Es diferente de `rm --purge`, que elimina todas las versiones y metadatos de un secreto.
+- Corrección SaaS pendiente de CI: sustituido `len(metrics["commands_covered"]) == 43` por comparación exacta del conjunto de comandos registrados con el registro público real. Conserva cobertura total y exclusión de credenciales.
+- Estado: implementado como candidato en PR #25; pendiente de gate Vault TLS y aceptación SaaS sobre el commit actualizado. No fusionar hasta todo verde.

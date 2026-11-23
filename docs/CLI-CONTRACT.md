@@ -92,6 +92,7 @@ montaje automáticamente ni valida el tipo de cada mount en tiempo de uso.
 | `cat --version N PATH` | GET `mount/data/path?version=N` | Lee la versión histórica positiva N, sin modificar Vault. Si está soft-deleted o destruida, falla; rutas lógicas incluso con carpeta `data/` |
 | `cat --metadata PATH` | GET `mount/metadata/path` | Presenta metadatos y versiones sin leer secretos; requiere ACL `read` sobre metadata y sigue disponible tras un soft-delete |
 | `undelete --versions N[,N...] PATH` | POST `mount/undelete/path` con `{"versions":[...]}` | Restaura únicamente versiones soft-deleted tras preflight de metadata; rechaza versiones activas, destruidas o inexistentes y verifica el estado posterior. No crea versiones nuevas |
+| `destroy --versions N[,N...] [--yes] PATH` | POST `mount/destroy/path` con `{"versions":[...]}` | **Irreversible:** destruye el contenido de versiones concretas, sin borrar metadatos, otras versiones ni crear versiones nuevas. Preflight estricto y confirmación `DESTROY` en terminal o `--yes`; verifica el estado posterior |
 | `ls PATH` | LIST `mount/metadata/path` | Lista nombres, **incluidos los soft-deleted** mientras Vault conserve metadatos; no prueba que puedan leerse |
 | `tree PATH` | LIST `mount/metadata/path` recursivo | Estructura de nombres, no estados ni valores; mount vacío y ruta inexistente necesitan distinguirse por la información del mount |
 | `put PATH JSON` | POST `mount/data/path` con `data` y CAS | Crea una versión; CAS a partir de `current_version` de metadata, 0 al crear; una carrera debe fallar sin reintentar la escritura |
@@ -122,8 +123,9 @@ explícita y tests de historial/recuperación. Véase
    `cat --metadata` están implementadas como candidatas de solo lectura,
    pendientes de aceptación. `undelete --versions N[,N...] PATH` se ha
    incorporado como candidato con comprobación previa y posterior de metadata.
-   Sigue faltando destrucción de versiones concretas (`destroy`).
-   `rm --purge` **no** sustituye estas operaciones.
+   La destrucción irreversible de versiones concretas (`destroy`) se ha
+   añadido como candidato con confirmación explícita y pruebas API-first.
+   `rm --purge` sigue siendo diferente: elimina todas las versiones y metadata.
 3. **Autodescubrimiento:** `VAULT_KV_MOUNTS` es una declaración del cliente,
    no una consulta autoritativa del servidor. Hay que contrastar
    `sys/mounts`, opción `version`, montajes anidados y acceso ACL antes de

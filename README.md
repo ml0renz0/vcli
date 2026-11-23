@@ -27,6 +27,9 @@ real**; no sustituirlo por una implementación Python o Go.
   inspecciona su historial y estado de borrado sin modificar secretos.
   `undelete --versions N[,N...] PATH` recupera versiones KV2 soft-deleted
   con verificación de metadata, sin afectar a las destruidas o activas.
+  `destroy --versions N[,N...] [--yes] PATH` destruye irrevocablemente
+  versiones específicas sin borrar los metadatos ni otras versiones. Requiere
+  confirmación interactiva o `--yes` en automatizaciones.
 - Autenticación mediante token o AppRole, consulta de políticas y roles,
   acceso de solo lectura y tratamiento explícito de permisos insuficientes.
 - HTTPS verificado, CA personalizada, opciones de mTLS y manejo de fallos

@@ -40,6 +40,7 @@ COVERED_BY = {
     "mv": "test_vault.py", "put": "test_vault.py",
     "addsecret": "test_vault.py", "delsecret": "test_vault.py",
     "rm": "test_vault.py", "undelete": "test_kv2_advanced.py",
+    "destroy": "test_kv2_advanced.py",
     "help": "test_repl.py",
     "history": "test_repl.py", "exit": "test_session_commands.py",
     "verbose": "test_session_commands.py",

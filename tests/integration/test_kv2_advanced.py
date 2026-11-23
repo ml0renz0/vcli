@@ -621,6 +621,104 @@ class KV2AdvancedTests(unittest.TestCase):
             api("POST", "auth/token/revoke", {"token": limited})
             api("DELETE", f"sys/policies/acl/{policy}")
 
+
+    def test_26_destroy_selected_versions_preserves_other_history(self):
+        """Destroy one live and one soft-deleted version on both KV2 mounts."""
+        mounts = "team,team/config,kv2"
+        for mount in ("kv2", "team/config"):
+            with self.subTest(mount=mount):
+                leaf = f"delete/{self.p}/destroy-{mount.replace('/', '-')}/item"
+                sibling = f"delete/{self.p}/destroy-{mount.replace('/', '-')}/keep"
+                for generation in (1, 2, 3):
+                    api("POST", f"{mount}/data/{leaf}",
+                        {"data": {"generation": generation}})
+                api("POST", f"{mount}/data/{sibling}", {"data": {"safe": True}})
+                api("POST", f"{mount}/delete/{leaf}", {"versions": [3]})
+                before = api("GET", f"{mount}/metadata/{leaf}")["data"]
+                self.assertEqual(before["current_version"], 3)
+                self.assertTrue(before["versions"]["3"]["deletion_time"])
+                result, _ = invoke(f"destroy --versions 1,3 --yes {mount}/{leaf}",
+                                   version=2, mounts=mounts)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("Permanently destroyed KV v2 version(s) 1,3", result.stdout)
+                after = api("GET", f"{mount}/metadata/{leaf}")["data"]
+                self.assertEqual(after["current_version"], 3)
+                self.assertEqual(set(before["versions"]), set(after["versions"]))
+                for number in (1, 3):
+                    self.assertTrue(after["versions"][str(number)]["destroyed"])
+                    with self.assertRaises(error.HTTPError) as missing:
+                        api("GET", f"{mount}/data/{leaf}?version={number}")
+                    self.assertEqual(missing.exception.code, 404)
+                self.assertEqual(after["versions"]["2"], before["versions"]["2"])
+                self.assertEqual(api("GET", f"{mount}/data/{leaf}?version=2")["data"]["data"],
+                                 {"generation": 2})
+                self.assertEqual(api("GET", f"{mount}/data/{sibling}")["data"]["data"],
+                                 {"safe": True})
+                refused, _ = invoke(f"undelete --versions 3 {mount}/{leaf}",
+                                    version=2, mounts=mounts)
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertEqual(api("GET", f"{mount}/metadata/{leaf}")["data"], after)
+
+    def test_27_destroy_refuses_invalid_batches_and_missing_confirmation(self):
+        """No irreversible request when any version is invalid or user has not consented."""
+        mount, mounts = "kv2", "kv2,team/config"
+        leaf = f"data/{self.p}/destroy-guards/item"
+        sibling = f"data/{self.p}/destroy-guards/sentinel"
+        api("POST", f"{mount}/data/{leaf}", {"data": {"generation": 1}})
+        api("POST", f"{mount}/data/{leaf}", {"data": {"generation": 2}})
+        api("POST", f"{mount}/data/{sibling}", {"data": {"sentinel": True}})
+        api("POST", f"{mount}/destroy/{leaf}", {"versions": [1]})
+        before = api("GET", f"{mount}/metadata/{leaf}")["data"]
+        target = f"{mount}/{leaf}"
+        invalid = (
+            f"destroy --versions 1,2 --yes {target}",
+            f"destroy --versions 2,99 --yes {target}",
+            f"destroy --versions 2,2 --yes {target}",
+            f"destroy --versions 0 --yes {target}",
+            f"destroy --versions -1 --yes {target}",
+            f"destroy --versions 02 --yes {target}",
+            f"destroy --versions 2, --yes {target}",
+            f"destroy --versions 999999999999999999999 --yes {target}",
+            f"destroy --versions 2 {target}",
+            f"destroy --versions 2 --yes kv1/{self.p}/not-kv2",
+            f"destroy --versions 2 --yes {target}?version=2",
+            f"destroy --versions 2 --yes kv2/data/../{leaf}",
+            f"destroy --api-path kv2/destroy/{leaf}",
+            f"destroy --versions 2 --yes {target} extra",
+            f"destroy --versions 2 --yes kv2",
+        )
+        for command in invalid:
+            with self.subTest(command=command):
+                result, _ = invoke(command, version=2, mounts=mounts)
+                self.assertNotEqual(result.returncode, 0,
+                                    result.stdout + result.stderr)
+                self.assertEqual(api("GET", f"{mount}/metadata/{leaf}")["data"], before)
+        self.assertEqual(api("GET", f"{mount}/data/{sibling}")["data"]["data"],
+                         {"sentinel": True})
+
+    def test_28_destroy_denied_when_only_metadata_read_is_permitted(self):
+        """Privilege to inspect versions never implies privilege to destroy them."""
+        leaf = f"metadata/{self.p}/destroy-acl/item"
+        api("POST", f"kv2/data/{leaf}", {"data": {"generation": 1}})
+        policy = "vcli-destroy-readonly-" + uuid4().hex[:12]
+        api("PUT", f"sys/policies/acl/{policy}", {
+            "policy": f'path "kv2/metadata/{leaf}" {{ capabilities = ["read"] }}'
+        })
+        limited = api("POST", "auth/token/create", {
+            "policies": [policy], "no_default_policy": True, "ttl": "10m"
+        })["auth"]["client_token"]
+        try:
+            denied, _ = invoke(f"destroy --versions 1 --yes kv2/{leaf}",
+                               version=2, token=limited)
+            self.assertNotEqual(denied.returncode, 0, denied.stdout + denied.stderr)
+            meta = api("GET", f"kv2/metadata/{leaf}")["data"]
+            self.assertFalse(meta["versions"]["1"]["destroyed"])
+            self.assertEqual(api("GET", f"kv2/data/{leaf}")["data"]["data"],
+                             {"generation": 1})
+        finally:
+            api("POST", "auth/token/revoke", {"token": limited})
+            api("DELETE", f"sys/policies/acl/{policy}")
+
     def test_07_field_updates_increment_versions(self):
         self.put("edit/item",{"x":1,"keep":True})
         self.cli(f'addsecret kv2/{self.p}/edit/item {{"y":2}}')

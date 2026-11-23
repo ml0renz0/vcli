@@ -80,7 +80,17 @@ jobs:
           assert len(events) > 100
           metrics = json.loads(pathlib.Path("vcli-saas-metrics.json").read_text())
           assert metrics["status"] == "passed"
-          assert len(metrics["commands_covered"]) == 43
+          # Match the executable's command registry, not a stale magic count.
+          source = pathlib.Path("vcli").read_text()
+          declaration = re.search(r"declare -A vcli_commands=\\((.*?)\\n\\s*\\)", source, re.S)
+          assert declaration is not None, "Missing public command registry"
+          expected = set(re.findall(r"\\[([a-z0-9-]+)\\]=(arg|noarg)", declaration.group(1)))
+          expected_names = {name for name, _ in expected}
+          covered = metrics["commands_covered"]
+          assert isinstance(covered, list) and len(covered) == len(set(covered))
+          assert set(covered) == expected_names, (
+              f"SaaS demo coverage missing={sorted(expected_names-set(covered))}, "
+              f"unexpected={sorted(set(covered)-expected_names)}")
           full = [r for r in metrics["operations"] if r["case"].startswith("full recovery ")]
           assert sum(r["leaves"] for r in full) == 8640
           assert len(full) == 3

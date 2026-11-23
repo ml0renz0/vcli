@@ -241,6 +241,8 @@ try:
         v("cat /" + versioned, b"payments")
         v("rm /" + versioned, b"Soft-deleted KV v2 version")
         v("cat /" + versioned, code=b"404")
+        v("destroy --versions 3 --yes /" + versioned, b"Permanently destroyed KV v2 version")
+        v("cat --metadata /" + versioned, b'"destroyed": true')
         v('put scratch {"state":"temporary"}')
         v("cat scratch", b"temporary")
         v("rm scratch")
