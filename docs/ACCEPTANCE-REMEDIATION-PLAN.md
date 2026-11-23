@@ -175,3 +175,11 @@ Parte del código en la rama ya intenta resolver estas incidencias, pero los sí
 - Alerta operativa: la precomprobación no es atómica con el POST; respuestas de escritura ambiguas no se reintentan y requieren comprobar metadata. Es diferente de `rm --purge`, que elimina todas las versiones y metadatos de un secreto.
 - Corrección SaaS pendiente de CI: sustituido `len(metrics["commands_covered"]) == 43` por comparación exacta del conjunto de comandos registrados con el registro público real. Conserva cobertura total y exclusión de credenciales.
 - Estado: implementado como candidato en PR #25; pendiente de gate Vault TLS y aceptación SaaS sobre el commit actualizado. No fusionar hasta todo verde.
+
+## KV1/KV2 — autodescubrimiento optativo seguro (2026-11-23)
+
+- Se implementa `VAULT_KV_VERSION=auto` para leer **una sola vez** `GET sys/mounts` al iniciar, después de establecer credenciales y validar TLS. No requiere módulos externos ni introduce tráfico en el modo manual.
+- El inventario clasifica motores KV2 frente a KV1 y otros backends. Aplica el **montaje más específico**, evitando enrutar el KV1 hijo por un KV2 padre, y conserva carpetas normales llamadas `data`/`metadata`/`delete`.
+- Errores 403, datos malformados, versiones KV desconocidas y la combinación `auto` + `VAULT_KV_MOUNTS` fallan explícitamente; no hay fallback a KV1 silencioso. Sin permisos de lectura de `sys/mounts`, usar la declaración manual existente.
+- Regresiones API-first `test_29_auto_detects_kv1_kv2_and_nested_kv2_without_route_guessing`, `test_30_auto_routes_nested_kv1_below_kv2_without_rewriting`, `test_31_auto_denied_inventory_fails_closed_and_manual_still_works` y `test_32_auto_rejects_conflicting_or_invalid_configuration`. La fotografía del inventario no se actualiza automáticamente después de `mount`/`umount`: reiniciar la sesión hasta añadir una orden de refresco controlada.
+- **Estado:** implementado como candidato; pendiente de CI Vault TLS completa. No cambiar el modo predeterminado ni fusionar la PR hasta disponer de pruebas de aceptación.

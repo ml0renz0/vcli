@@ -719,6 +719,116 @@ class KV2AdvancedTests(unittest.TestCase):
             api("POST", "auth/token/revoke", {"token": limited})
             api("DELETE", f"sys/policies/acl/{policy}")
 
+
+    def test_29_auto_detects_kv1_kv2_and_nested_kv2_without_route_guessing(self):
+        """The authoritative sys/mounts inventory controls live CLI routing."""
+        import json
+        automatic = {"VAULT_KV_VERSION": "auto", "VAULT_KV_MOUNTS": ""}
+        leaf = f"data/{self.p}/auto-routing/item"
+        fixtures = (
+            ("kv1", f"kv1/{leaf}", {"engine": "kv1"}),
+            ("kv2", f"kv2/data/{leaf}", {"engine": "kv2"}),
+            ("team/config", f"team/config/data/{leaf}", {"engine": "nested-kv2"}),
+        )
+        for mount, endpoint, value in fixtures:
+            payload = value if mount == "kv1" else {"data": value}
+            api("POST", endpoint, payload)
+        for mount, endpoint, value in fixtures:
+            with self.subTest(mount=mount):
+                result, _ = invoke(f"cat {mount}/{leaf}", env_extra=automatic)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(json.loads(result.stdout)["data"], value)
+                if mount == "kv1":
+                    self.assertEqual(api("GET", endpoint)["data"], value)
+                else:
+                    self.assertEqual(api("GET", endpoint)["data"]["data"], value)
+        history, _ = invoke(f"cat --metadata kv2/{leaf}", env_extra=automatic)
+        self.assertEqual(history.returncode, 0, history.stdout + history.stderr)
+        self.assertEqual(json.loads(history.stdout)["data"],
+                         api("GET", f"kv2/metadata/{leaf}")["data"])
+        explicit, _ = invoke(f"cat --api-path team/config/data/{leaf}",
+                             env_extra=automatic)
+        self.assertEqual(explicit.returncode, 0, explicit.stdout + explicit.stderr)
+        self.assertEqual(json.loads(explicit.stdout)["data"]["data"], {"engine": "nested-kv2"})
+
+    def test_30_auto_routes_nested_kv1_below_kv2_without_rewriting(self):
+        """A deeper KV1 mount blocks the ancestor KV2 mapping."""
+        import json
+        mount = "vcli-auto-" + uuid4().hex[:12]
+        nested = f"{mount}/nested"
+        automatic = {"VAULT_KV_VERSION": "auto", "VAULT_KV_MOUNTS": ""}
+        api("POST", f"sys/mounts/{mount}", {
+            "type": "kv", "options": {"version": "2"}
+        })
+        try:
+            api("POST", f"sys/mounts/{nested}", {
+                "type": "kv", "options": {"version": "1"}
+            })
+            api("POST", f"{mount}/data/outer", {"data": {"engine": "outer-kv2"}})
+            api("POST", f"{nested}/inner", {"engine": "inner-kv1"})
+            for logical, expected in (
+                (f"{mount}/outer", {"engine": "outer-kv2"}),
+                (f"{nested}/inner", {"engine": "inner-kv1"}),
+            ):
+                with self.subTest(path=logical):
+                    result, _ = invoke(f"cat {logical}", env_extra=automatic)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(json.loads(result.stdout)["data"], expected)
+            created, _ = invoke(f'put {nested}/created {{"safe":"kv1"}}',
+                                env_extra=automatic)
+            self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
+            self.assertEqual(api("GET", f"{nested}/created")["data"], {"safe": "kv1"})
+            self.assertEqual(api("GET", f"{mount}/data/outer")["data"]["data"],
+                             {"engine": "outer-kv2"})
+        finally:
+            try:
+                api("DELETE", f"sys/mounts/{nested}")
+            except error.HTTPError:
+                pass
+            api("DELETE", f"sys/mounts/{mount}")
+
+    def test_31_auto_denied_inventory_fails_closed_and_manual_still_works(self):
+        """The client cannot guess KV version when sys/mounts returns 403."""
+        import json
+        leaf = f"{self.p}/auto-permissions/item"
+        value = {"authorized": True}
+        api("POST", f"kv2/data/{leaf}", {"data": value})
+        policy = "vcli-auto-ro-" + uuid4().hex[:12]
+        api("PUT", f"sys/policies/acl/{policy}", {
+            "policy": f'path "kv2/data/{leaf}" {{ capabilities = ["read"] }}'
+        })
+        restricted = api("POST", "auth/token/create", {
+            "policies": [policy], "no_default_policy": True, "ttl": "10m"
+        })["auth"]["client_token"]
+        try:
+            denied, _ = invoke(f"cat kv2/{leaf}", token=restricted,
+                               env_extra={"VAULT_KV_VERSION": "auto",
+                                          "VAULT_KV_MOUNTS": ""})
+            self.assertNotEqual(denied.returncode, 0)
+            self.assertIn("sys/mounts discovery failed", denied.stderr)
+            self.assertNotIn('"authorized"', denied.stdout)
+            self.assertNotIn(restricted, denied.stdout + denied.stderr)
+            explicit, _ = invoke(f"cat kv2/{leaf}", token=restricted,
+                                 version=2, mounts="kv2")
+            self.assertEqual(explicit.returncode, 0,
+                             explicit.stdout + explicit.stderr)
+            self.assertEqual(json.loads(explicit.stdout)["data"], value)
+            self.assertEqual(api("GET", f"kv2/data/{leaf}")["data"]["data"], value)
+        finally:
+            api("POST", "auth/token/revoke", {"token": restricted})
+            api("DELETE", f"sys/policies/acl/{policy}")
+
+    def test_32_auto_rejects_conflicting_or_invalid_configuration(self):
+        """No silent precedence if an explicit map and discovery are both set."""
+        for config in (
+            {"VAULT_KV_VERSION": "auto", "VAULT_KV_MOUNTS": "kv2"},
+            {"VAULT_KV_VERSION": "3", "VAULT_KV_MOUNTS": "kv2"},
+        ):
+            with self.subTest(config=config):
+                result, _ = invoke("ls kv2/", env_extra=config)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("VAULT_KV_VERSION", result.stderr)
+
     def test_07_field_updates_increment_versions(self):
         self.put("edit/item",{"x":1,"keep":True})
         self.cli(f'addsecret kv2/{self.p}/edit/item {{"y":2}}')

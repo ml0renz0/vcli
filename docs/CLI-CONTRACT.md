@@ -81,10 +81,19 @@ devuelve el JSON crudo de Vault; `ls --api-path kv2/metadata/equipo` usa
 el endpoint KV2 de listado. No se admiten consultas con `?`, operaciones
 administrativas, KV1 ni escrituras/borrados con ese flag. Sin el flag,
 `kv2/data/equipo/secreto` significa una carpeta literal llamada `data`.
-La selección de motor KV v2 se hace actualmente con
-`VAULT_KV_VERSION=2` y `VAULT_KV_MOUNTS`, incluido prefijo más largo
-para montajes anidados. Esta configuración **no descubre** versiones de
-montaje automáticamente ni valida el tipo de cada mount en tiempo de uso.
+**Selección del motor:** el modo manual sigue siendo
+`VAULT_KV_VERSION=2 VAULT_KV_MOUNTS=kv2,team/config`, con rutas lógicas
+y preferencia por el prefijo más largo. El nuevo modo **optativo**
+`VAULT_KV_VERSION=auto` consulta `GET sys/mounts` después de autenticar
+y verificar TLS. Conserva un inventario de KV2, KV1 y otros backends;
+el montaje más específico prevalece incluso si es KV1 o no-KV.
+Si el servidor deniega la consulta (403), devuelve información inválida
+o una versión de KV desconocida, se detiene el inicio; **nunca**
+interpreta ese error como KV1. La opción `auto` no admite
+`VAULT_KV_MOUNTS` simultáneamente. Los clientes sin permisos de
+inventario pueden continuar usando el modo manual. La detección es
+una fotografía tomada al iniciar: tras un `mount`/`umount` se debe
+reiniciar vcli para actualizarla; no hay consultas por cada secreto.
 
 | Comando clásico | Traducción KV v2 | Semántica observable |
 | --- | --- | --- |
@@ -126,10 +135,12 @@ explícita y tests de historial/recuperación. Véase
    La destrucción irreversible de versiones concretas (`destroy`) se ha
    añadido como candidato con confirmación explícita y pruebas API-first.
    `rm --purge` sigue siendo diferente: elimina todas las versiones y metadata.
-3. **Autodescubrimiento:** `VAULT_KV_MOUNTS` es una declaración del cliente,
-   no una consulta autoritativa del servidor. Hay que contrastar
-   `sys/mounts`, opción `version`, montajes anidados y acceso ACL antes de
-   decidir un cambio de configuración por defecto.
+3. **Autodescubrimiento (candidato pendiente de CI):** `auto` lee la
+   versión desde `sys/mounts` y respeta montajes KV1 anidados bajo KV2.
+   No cambia el modo manual ni solicita permisos administrativos por defecto.
+   Pendientes: aceptación TLS completa, política de actualización de la
+   fotografía tras montar/desmontar y evaluación antes de establecer
+   el autodescubrimiento como predeterminado.
 4. **Semántica de árboles:** `ls` muestra nombres con metadata; comandos
    recursivos que necesitan datos activos pueden fallar cuando encuentran
    una entrada soft-deleted. Falta una política de filtrado explícita,

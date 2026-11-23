@@ -738,9 +738,73 @@ function _run(){
 # VAULT_KV_VERSION=2 VAULT_KV_MOUNTS=secret,teams/config
 # Resolve the longest configured KV v2 mount; nested mounts take precedence.
 # Writes the match to VCLI_KV_MOUNT in the calling shell, avoiding subshell state.
+# Explicit startup discovery: never infer KV engines from paths or mask ACL errors.
+declare VCLI_KV_DISCOVERY_ACTIVE=no
+declare -a VCLI_DISCOVERED_MOUNT_PATHS=() VCLI_DISCOVERED_MOUNT_KINDS=()
+function vcli_discover_kv_mounts(){
+    local response records path kind
+    local -a paths=() kinds=()
+    [[ -z ${VAULT_KV_MOUNTS:-} ]] || {
+        echo "vcli: auto discovery cannot be combined with VAULT_KV_MOUNTS" >&2
+        return 2
+    }
+    response=$(_curl -_api_path_- /sys/mounts "" GET) || {
+        echo "vcli: sys/mounts discovery failed (read ACL required); use manual KV configuration instead" >&2
+        return 1
+    }
+    # KV1 and non-KV mounts block any shallower KV2 ancestor.
+    records=$(jq -er '
+      if (.data | type) != "object" then error("invalid mount inventory") else
+        .data | to_entries | map(
+          .key as $path | .value as $engine |
+          if (($path | type) != "string") or
+             (($path | test("^[A-Za-z0-9_][A-Za-z0-9._/-]*/$")) | not) or
+             (($engine | type) != "object") or
+             (($engine.type | type) != "string") then
+            error("invalid mount entry")
+          else
+            [$path[0:-1],
+             (if $engine.type == "kv" then
+                (($engine.options.version // "1") | tostring) as $version |
+                if $version == "2" then "kv2"
+                elif $version == "1" then "other"
+                else error("unsupported KV version") end
+              else "other" end)] | @tsv
+          end
+        ) | join("\n")
+      end
+    ' <<< "$response") || {
+        echo "vcli: refused malformed/unsupported sys/mounts response" >&2
+        return 1
+    }
+    if [[ -n $records ]]; then
+        while IFS=$'\t' read -r path kind; do
+            [[ -n $path && ( $kind == kv2 || $kind == other ) ]] || return 1
+            paths+=("$path"); kinds+=("$kind")
+        done <<< "$records"
+    fi
+    VCLI_DISCOVERED_MOUNT_PATHS=("${paths[@]}")
+    VCLI_DISCOVERED_MOUNT_KINDS=("${kinds[@]}")
+    VCLI_KV_DISCOVERY_ACTIVE=yes
+    VAULT_KV_VERSION=2
+}
+
 function vcli_match_kv2_mount(){
     VCLI_KV_MOUNT=""
     [[ ${VAULT_KV_VERSION:-1} == 2 ]] || return 1
+    if [[ ${VCLI_KV_DISCOVERY_ACTIVE:-no} == yes ]]; then
+        local path="${1#/}" mount longest="" kind="" i
+        for ((i=0; i<${#VCLI_DISCOVERED_MOUNT_PATHS[@]}; i++)); do
+            mount=${VCLI_DISCOVERED_MOUNT_PATHS[i]}
+            if [[ $path == "$mount/"* ]] && (( ${#mount} > ${#longest} )); then
+                longest=$mount
+                kind=${VCLI_DISCOVERED_MOUNT_KINDS[i]}
+            fi
+        done
+        [[ $kind == kv2 ]] || return 1
+        VCLI_KV_MOUNT=$longest
+        return 0
+    fi
     local path="${1#/}" mount
     local -a mounts
     IFS=',' read -r -a mounts <<< "${VAULT_KV_MOUNTS:-secret}"
@@ -2946,6 +3010,14 @@ function main(){
 
     # Check connectivity
     check_connectivity || exit 1
+
+    # One read-only inventory snapshot after authentication and TLS validation.
+    # A denied sys/mounts response is never treated as a KV1 fallback.
+    case "${VAULT_KV_VERSION:-1}" in
+        1|2) ;;
+        auto) vcli_discover_kv_mounts || exit 1 ;;
+        *) echo "vcli: VAULT_KV_VERSION must be 1, 2 or auto" >&2; exit 2 ;;
+    esac
 
     # BEGIN
     # initialize variables

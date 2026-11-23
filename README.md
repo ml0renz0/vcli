@@ -30,6 +30,10 @@ real**; no sustituirlo por una implementación Python o Go.
   `destroy --versions N[,N...] [--yes] PATH` destruye irrevocablemente
   versiones específicas sin borrar los metadatos ni otras versiones. Requiere
   confirmación interactiva o `--yes` en automatizaciones.
+  El enrutamiento KV2 puede declararse manualmente o descubrirse
+  en el arranque con `VAULT_KV_VERSION=auto`, si el token puede leer
+  `sys/mounts`. El descubrimiento es optativo y falla cerrado ante
+  errores de inventario, sin reinterpretar permisos denegados.
 - Autenticación mediante token o AppRole, consulta de políticas y roles,
   acceso de solo lectura y tratamiento explícito de permisos insuficientes.
 - HTTPS verificado, CA personalizada, opciones de mTLS y manejo de fallos
