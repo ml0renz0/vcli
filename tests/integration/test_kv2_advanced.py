@@ -751,38 +751,40 @@ class KV2AdvancedTests(unittest.TestCase):
         self.assertEqual(explicit.returncode, 0, explicit.stdout + explicit.stderr)
         self.assertEqual(json.loads(explicit.stdout)["data"]["data"], {"engine": "nested-kv2"})
 
-    def test_30_auto_routes_nested_kv1_below_kv2_without_rewriting(self):
-        """A deeper KV1 mount blocks the ancestor KV2 mapping."""
+    def test_30_auto_routes_similarly_named_kv1_and_kv2_mounts(self):
+        """Vault forbids nested mounts; sibling mounts must not steal each other's paths."""
         import json
         mount = "vcli-auto-" + uuid4().hex[:12]
-        nested = f"{mount}/nested"
+        sibling = f"{mount}-legacy"
         automatic = {"VAULT_KV_VERSION": "auto", "VAULT_KV_MOUNTS": ""}
+        # A real Vault rejects mounting <mount>/nested below <mount>.
+        # Verify the slash boundary between separate, similarly named mounts.
         api("POST", f"sys/mounts/{mount}", {
             "type": "kv", "options": {"version": "2"}
         })
         try:
-            api("POST", f"sys/mounts/{nested}", {
+            api("POST", f"sys/mounts/{sibling}", {
                 "type": "kv", "options": {"version": "1"}
             })
-            api("POST", f"{mount}/data/outer", {"data": {"engine": "outer-kv2"}})
-            api("POST", f"{nested}/inner", {"engine": "inner-kv1"})
+            api("POST", f"{mount}/data/nested/inner", {"data": {"engine": "kv2"}})
+            api("POST", f"{sibling}/inner", {"engine": "kv1"})
             for logical, expected in (
-                (f"{mount}/outer", {"engine": "outer-kv2"}),
-                (f"{nested}/inner", {"engine": "inner-kv1"}),
+                (f"{mount}/nested/inner", {"engine": "kv2"}),
+                (f"{sibling}/inner", {"engine": "kv1"}),
             ):
                 with self.subTest(path=logical):
                     result, _ = invoke(f"cat {logical}", env_extra=automatic)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertEqual(json.loads(result.stdout)["data"], expected)
-            created, _ = invoke(f'put {nested}/created {{"safe":"kv1"}}',
+            created, _ = invoke(f'put {sibling}/created {{"safe":"kv1"}}',
                                 env_extra=automatic)
             self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
-            self.assertEqual(api("GET", f"{nested}/created")["data"], {"safe": "kv1"})
-            self.assertEqual(api("GET", f"{mount}/data/outer")["data"]["data"],
-                             {"engine": "outer-kv2"})
+            self.assertEqual(api("GET", f"{sibling}/created")["data"], {"safe": "kv1"})
+            self.assertEqual(api("GET", f"{mount}/data/nested/inner")["data"]["data"],
+                             {"engine": "kv2"})
         finally:
             try:
-                api("DELETE", f"sys/mounts/{nested}")
+                api("DELETE", f"sys/mounts/{sibling}")
             except error.HTTPError:
                 pass
             api("DELETE", f"sys/mounts/{mount}")
@@ -827,7 +829,10 @@ class KV2AdvancedTests(unittest.TestCase):
             with self.subTest(config=config):
                 result, _ = invoke("ls kv2/", env_extra=config)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("VAULT_KV_VERSION", result.stderr)
+                expected = ("auto discovery cannot be combined with VAULT_KV_MOUNTS"
+                            if config["VAULT_KV_VERSION"] == "auto"
+                            else "VAULT_KV_VERSION")
+                self.assertIn(expected, result.stderr)
 
     def test_07_field_updates_increment_versions(self):
         self.put("edit/item",{"x":1,"keep":True})
