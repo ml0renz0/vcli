@@ -189,8 +189,11 @@ cobertura como una garantía para cualquier despliegue.
   Conservar la evidencia por SHA y no considerar que una ejecución
   manual sobre otro commit sustituye el gate del tag.
 - Los artefactos SaaS (`vcli-saas-metrics` y asciicast) conservan
-  7 días de retención. Los informes/Pages del repositorio pueden seguir
-  mostrando el último resultado verificado hasta una nueva publicación;
+  7 días de retención. El workflow reutilizable los adjunta a la
+  ejecución `ci.yml` de la etiqueta, no a una ejecución independiente.
+  Los publicadores leen artefactos de `master` o de un tag
+  `v0.7.*` verificado por SHA, nunca de una PR. Los informes/Pages
+  conservan las últimas mediciones verificadas hasta una nueva publicación;
   no se representan métricas antiguas como si fueran del último commit.
 - La primera versión `0.7.0-rc1` debe esperar al cierre de las
   regresiones pendientes, la revisión 04-Q y la auditoría final.

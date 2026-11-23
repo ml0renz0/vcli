@@ -54,6 +54,22 @@ class SaaSReleaseGateContracts(unittest.TestCase):
         self.assertIn("test_saas_manifest", workflow)
         self.assertIn('test "$PLAYGROUND_RESULT" = success', workflow)
 
+    def test_verified_tag_artifacts_feed_reports_and_pages(self):
+        reports = (WORKFLOWS / "publish-reports.yml").read_text()
+        pages = (WORKFLOWS / "publish-demos.yml").read_text()
+        for source in (reports, pages):
+            self.assertIn("head_repository.full_name == github.repository", source)
+            self.assertIn("git ls-remote --tags origin", source)
+            self.assertIn("refs/tags/v0.7.*", source)
+            self.assertIn("head_sha", source)
+            self.assertIn("vcli-playground-saas-asciinema", source)
+        self.assertIn("vcli-saas-metrics", reports)
+        self.assertIn("TRUSTED_RELEASE_TAG", reports)
+        self.assertIn("ci.yml,playground-saas.yml", pages)
+        self.assertIn("grep -Fxq \"$sha\"", pages)
+        self.assertIn("github.event.workflow_run.event == 'push'", reports)
+        self.assertIn("github.event.workflow_run.event == 'push'", pages)
+
 
 if __name__ == "__main__":
     unittest.main()

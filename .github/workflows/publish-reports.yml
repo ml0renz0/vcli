@@ -19,7 +19,9 @@ jobs:
   publish:
     if: >-
       ${{ github.event.workflow_run.conclusion == 'success' &&
-         github.event.workflow_run.head_branch == github.event.repository.default_branch &&
+         (github.event.workflow_run.head_branch == github.event.repository.default_branch ||
+          (github.event.workflow_run.event == 'push' &&
+           github.event.workflow_run.name == 'VCLI trunk validation')) &&
          github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-24.04
     permissions:
@@ -29,12 +31,28 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
+      - name: Verify release-tag provenance before processing a tag-triggered run
+        env:
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$HEAD_BRANCH" != master ]]; then
+            # GitHub may report an empty head_branch for tag push workflow runs.
+            tag_ref=$(git ls-remote --tags origin 'refs/tags/v0.7.*' |
+              awk -v sha="$HEAD_SHA" '$1 == sha {print $2; exit}')
+            [[ "$tag_ref" == refs/tags/v0.7.* ]] || {
+              echo "::error::Untrusted or mismatched release tag"; exit 1;
+            }
+            printf 'TRUSTED_RELEASE_TAG=%s\n' "${tag_ref#refs/tags/}" >> "$GITHUB_ENV"
+          fi
       - name: Render only verified reports, using trusted default-branch code
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           WORKFLOW: ${{ github.event.workflow_run.name }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
           set -euo pipefail
           mkdir -p reports/demo
@@ -48,6 +66,15 @@ jobs:
               gh run download "$RUN_ID" -R "$REPO" \
                 -n vcli-playground-asciinema -D reports/demo
               test -s reports/demo/vcli-playground.cast
+            fi
+            # Reusable SaaS acceptance uploads into its caller's CI run.
+            if [[ -n "${TRUSTED_RELEASE_TAG:-}" ]]; then
+              gh run download "$RUN_ID" -R "$REPO" -n vcli-saas-metrics -D reports
+              gh run download "$RUN_ID" -R "$REPO" \
+                -n vcli-playground-saas-asciinema -D reports/demo
+              test -s reports/demo/vcli-playground-saas.cast
+              python3 scripts/render-ci-reports.py saas \
+                reports/vcli-saas-metrics.json reports/saas-times.svg
             fi
           elif [[ "$WORKFLOW" == 'SaaS playground scale acceptance' ]]; then
             gh run download "$RUN_ID" -R "$REPO" -n vcli-saas-metrics -D reports

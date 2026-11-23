@@ -28,7 +28,9 @@ jobs:
     if: >-
       ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
          (github.event.workflow_run.conclusion == 'success' &&
-          github.event.workflow_run.head_branch == 'master' &&
+          (github.event.workflow_run.head_branch == 'master' ||
+           (github.event.workflow_run.event == 'push' &&
+            github.event.workflow_run.name == 'VCLI trunk validation')) &&
           github.event.workflow_run.head_repository.full_name == github.repository) }}
     runs-on: ubuntu-24.04
     environment:
@@ -38,6 +40,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: master
+      - name: Verify tag provenance for release-triggered publication
+        if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch != 'master' }}
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          tag_ref=$(git ls-remote --tags origin 'refs/tags/v0.7.*' |
+            awk -v sha="$HEAD_SHA" '$1 == sha {print $2; exit}')
+          [[ "$tag_ref" == refs/tags/v0.7.* ]] || {
+            echo "::error::Tag provenance mismatch"; exit 1;
+          }
       - name: Assemble site from verified recordings
         env:
           GH_TOKEN: ${{ github.token }}
@@ -51,20 +64,30 @@ jobs:
           html = Path("site/index.html").read_text()
           assert "AsciinemaPlayer.create" in html and "DecompressionStream" in html
           PY
+          # Reusable SaaS acceptance is an artifact of the CI caller on release tags.
+          # A separate manual SaaS run is also a valid source.
+          release_tag_shas=$(git ls-remote --tags origin 'refs/tags/v0.7.*' | awk '{print $1}')
           for task in 'ci.yml|vcli-playground-asciinema|vcli-playground.cast' \
-            'playground-saas.yml|vcli-playground-saas-asciinema|vcli-playground-saas.cast'; do
-            IFS='|' read -r workflow artifact cast <<< "$task"
+            'ci.yml,playground-saas.yml|vcli-playground-saas-asciinema|vcli-playground-saas.cast'; do
+            IFS='|' read -r workflows artifact cast <<< "$task"
             chosen=''
-            while IFS= read -r rid; do
-              [[ -n "$rid" ]] || continue
-              if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$rid/artifacts?per_page=100" \
-                --jq '.artifacts[] | select(.expired == false) | .name' |
-                grep -Fxq -- "$artifact"; then
-                chosen=$rid
-                break
-              fi
-            done < <(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?status=success&per_page=100" \
-              --jq '.workflow_runs[] | select(.head_repository.full_name == "'$GITHUB_REPOSITORY'" and (.head_branch == "master" or .head_branch == "ci/baseline-vault-revival")) | .id')
+            for workflow in ${workflows//,/ }; do
+              while IFS=$'\t' read -r rid branch sha; do
+                [[ -n "$rid" ]] || continue
+                # Do not promote untrusted PR artifacts into GitHub Pages.
+                if [[ "$branch" != master ]]; then
+                  grep -Fxq "$sha" <<< "$release_tag_shas" || continue
+                fi
+                if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$rid/artifacts?per_page=100" \
+                  --jq '.artifacts[] | select(.expired == false) | .name' |
+                  grep -Fxq -- "$artifact"; then
+                  chosen=$rid
+                  break
+                fi
+              done < <(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?status=success&per_page=100" \
+                --jq '.workflow_runs[] | select(.head_repository.full_name == "'$GITHUB_REPOSITORY'") | [.id, (.head_branch // "-"), .head_sha] | @tsv')
+              [[ -z "$chosen" ]] || break
+            done
             if [[ -z "$chosen" ]]; then
               echo "::error::No verified $artifact recording is available; refusing an incomplete Pages deployment"
               exit 1
