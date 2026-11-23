@@ -2145,7 +2145,7 @@ function _undelete(){
     IFS=, read -r -a versions <<< "$csv"
     for num in "${versions[@]}"; do
         if (( ${#num} > 16 )) ||
-           { (( ${#num} == 16 )) && [[ $num > 9007199254740991 ]]; }; then
+           { (( ${#num} == 16 )) && (( num > 9007199254740991 )); }; then
             echo "vcli: undelete version exceeds exact JSON integer range" >&2
             return 2
         fi
