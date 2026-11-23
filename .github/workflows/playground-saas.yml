@@ -82,9 +82,9 @@ jobs:
           assert metrics["status"] == "passed"
           # Match the executable's command registry, not a stale magic count.
           source = pathlib.Path("vcli").read_text()
-          declaration = re.search(r"declare -A vcli_commands=\\((.*?)\\n\\s*\\)", source, re.S)
+          declaration = re.search(r"declare -A vcli_commands=\((.*?)\n\s*\)", source, re.S)
           assert declaration is not None, "Missing public command registry"
-          expected = set(re.findall(r"\\[([a-z0-9-]+)\\]=(arg|noarg)", declaration.group(1)))
+          expected = set(re.findall(r"\[([a-z0-9-]+)\]=(arg|noarg)", declaration.group(1)))
           expected_names = {name for name, _ in expected}
           covered = metrics["commands_covered"]
           assert isinstance(covered, list) and len(covered) == len(set(covered))
