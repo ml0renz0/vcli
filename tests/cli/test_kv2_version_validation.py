@@ -42,7 +42,7 @@ selected="" path="" metadata=""
 vcli_kv2_prepare_versions "$OP" "$CSV" "$TARGET" selected path metadata || exit $?
 printf 'JSON=%s\nPATH=%s\nMETA=%s\n' "$selected" "$path" "$metadata"
 """,
-        )))
+        ))
 
     def run_case(self, op="undelete", csv="1,3", target="kv2/data/item",
                  block_metadata=False):
