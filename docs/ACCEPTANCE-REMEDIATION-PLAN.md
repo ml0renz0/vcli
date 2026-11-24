@@ -38,6 +38,35 @@
 **Estado inicial de ACC-01 a ACC-14: `pendiente de verificación de aceptación`.**
 Parte del código en la rama ya intenta resolver estas incidencias, pero los síntomas del usuario se obtuvieron sobre un commit previo y los tests actuales incluyen comprobaciones aisladas insuficientes. Se auditará cada caso, sin asumir que sigue roto ni darlo por arreglado sin reproducir en el nuevo HEAD.
 
+## F0 — fotografía de evidencias verificadas (2026-11-24)
+
+**Revisión auditada:** `461356acb7b5b4f33ebb4fd622793035dd8d518f` (PR #25).
+Gate [CI principal #45286451690](https://github.com/ml0renz0/vcli/actions/runs/45286451690) **verde**; benchmark por etiquetas [#45286451679](https://github.com/ml0renz0/vcli/actions/runs/45286451679) verde.
+La aceptación SaaS de 8.640 secretos **no corre en PR** desde el cambio release-only: su última ejecución verde anterior no demuestra una nueva aceptación sobre este SHA. Se comprobará en un tag de RC, sin crear ninguno ahora.
+
+La columna **estado** expresa la mejor evidencia disponible **para el criterio completo**, no una afirmación de cierre. Se conservan los 14 IDs abiertos hasta completar las pruebas indicadas en el backlog y la aceptación manual.
+
+| ID | Estado auditado | Evidencia funcional existente en la CI verde | Qué falta para cerrar |
+|---|---|---|---|
+| ACC-01 | CI verde | `test_operations.test_16_root_tree_lists_actual_mounts`: `sys/mounts` como oráculo independiente para `tree /` y `ls /` | Salida del árbol raíz comprobada también por PTY con distintos roles |
+| ACC-02 | CI verde | `test_operations.test_17_list_api_authority_for_empty_and_populated_mounts`: LIST 404 KV1/KV2/cubbyhole y controles 200 | Aceptación interactiva de los mensajes y códigos ante montajes vacíos |
+| ACC-03 | validado en playground/PTY | `test_repl.test_41_tab_path_completion_uses_one_separator`: TAB real, sin doble espacio, LIST ejecutado | Prefijos de opciones, múltiples candidatos y cursor intermedio |
+| ACC-04 | validado en playground/PTY | `test_repl.test_42_help_completes_command_name_on_pty`: `help tr<TAB>` y ayuda ejecutada | Ambigüedad y ausencia de coincidencia; segundo prefijo `getallcert` |
+| ACC-05 | validado en playground/PTY | `test_repl.test_43_history_bang_dollar_expands_preceding_vault_command`: `ls` → `tree !$` y contenido persistido | Secuencia original `getallcertexpiration` → `getallkrblist !$`, fallos previos y argumentos entrecomillados |
+| ACC-06 | implementado | `test_pki_kerberos.test_35_expiration_reports_critical_and_omits_at_configured_threshold` comprueba filtro y estado CRITICAL en Vault real; `test_editor_quality.test_colors_and_verbose_are_enabled` es solo contrato aislado | PTY con bytes ANSI reales de OK/WARNING/CRITICAL/EXPIRED, `TERM=dumb` y todas las opciones de filtrado |
+| ACC-07 | validado en playground/PTY | `test_repl.test_44_verbose_exposes_method_status_only_after_toggle`: LIST HTTPS real, método/status y canario secreto no impreso | Validar también cat, errores HTTP y redacción con token privilegiado |
+| ACC-08 | CI verde | `test_operations.test_18_mount_inventory_reports_empty_populated_and_non_kv` y `test_19_mount_inventory_checks_kv2_metadata_without_client_configuration`: API Vault, KV2 no declarado, no fuga de datos | ACL restringida 403, cubbyhole desde token real y errores de transporte |
+| ACC-09 | implementado | `test_mount_status.test_long_pki_scan_has_killable_delayed_notice` verifica solo presencia de `sleep/kill/wait`; tests PKI recursivos comparan valores | **Bloqueante:** PTY/tiempos reales rápido y superior a 5 s, Ctrl+C, sin aviso residual ni lentitud añadida, perfilado del árbol SaaS |
+| ACC-10 | CI verde | `test_kv2_advanced.test_13` a `test_17`, `test_21` a `test_28` y `test_vault.test_04`: API real, soft-delete, purge, lectura histórica, undelete/destroy, aislamiento y ACL | Repasar explícitamente confirmación/cancelación PTY de purge, carreras y resultado parcial; **no** confundir `rm --purge` con `destroy --versions` |
+| ACC-11 | validado en playground/PTY | `test_repl.test_39_ctrl_word_navigation_then_ctrl_w_deletes_only_last_word` y `test_40_alt_backspace_removes_word_without_exiting` | Alt+B/F, Ctrl+Backspace según terminal y edición en mitad de línea en macOS/Linux |
+| ACC-12 | CI verde | Matriz Vault TLS, Alpine, Debian y macOS; contratos PTY en `test_repl`; oráculos independientes presentes en las pruebas anteriores | Matriz negativa histórica `antes rojo → después verde` por cada ACC y garantizar que ninguna incidencia queda cubierta únicamente por mocks |
+| ACC-13 | implementado | `test_pages_contracts`, grabaciones del playground y validación de métricas `test_ci_reports`; reports/README enlazados | Comprobar **reproducción real en móvil** de Pages, contenido y artefactos correspondientes al mismo commit/tag; evidencia de tiempos publicados |
+| ACC-14 | implementado | ShellCheck, pruebas de helpers `test_kv2_version_validation`, cobertura de seguridad y auditoría en `docs/CODE-QUALITY.md` | Benchmark A/B sobre rutas modificadas, inspección de redundancias y evidencia de no regresión en la aceptación manual |
+
+**Hallazgos prioritarios:** ACC-09 y ACC-06 todavía carecen de pruebas temporales/PTY adecuadas; ACC-05 y ACC-11 tienen PTY pero no reproducen todas las variantes pedidas. No marcar `cerrado` ningún ACC por el mero verde global. Las afirmaciones antiguas «CI pendiente» de las notas históricas siguientes corresponden a commits anteriores, no al HEAD auditado.
+
+**Aclaración de Vault:** no es posible montar un backend hijo debajo de otro mount existente; `test_30_auto_routes_similarly_named_kv1_and_kv2_mounts` usa montajes hermanos con prefijos similares. No reproducir el fixture inválido del test histórico.
+
 ## Orden de ejecución (no saltar fases sin registrar motivo)
 
 ### F0 — Congelar evidencia y comprobar la línea base
