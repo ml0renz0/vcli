@@ -832,5 +832,143 @@ class InteractiveShellTests(unittest.TestCase):
         finally:
             self.end(home, fd, child)
 
+
+    def test_48_acc09_certificate_scan_notice_with_real_vault_and_timing(self):
+        """ACC-09: real TLS requests, real X509, PTY and a deliberately slow LIST.
+
+        A PATH wrapper delays only one request, then execs the actual curl.
+        It neither fabricates Vault responses nor changes the Bash CLI.
+        """
+        import shutil
+        from uuid import uuid4
+        from .test_vault import api, ROOT_TOKEN
+        prefix = "vcli-acc09-" + uuid4().hex[:12]
+        with tempfile.TemporaryDirectory(prefix="vcli-acc09-fixtures-") as root:
+            base = Path(root)
+            subprocess.run(
+                ["openssl", "req", "-x509", "-newkey", "rsa:2048",
+                 "-nodes", "-days", "2", "-sha256",
+                 "-subj", "/CN=acc09.example.test",
+                 "-keyout", str(base / "test.key"),
+                 "-out", str(base / "test.crt")],
+                check=True, capture_output=True, timeout=25,
+            )
+            payload = {"scan_crt": (base / "test.crt").read_text(),
+                       "scan_key": (base / "test.key").read_text()}
+            for leaf in ("fast", "slow"):
+                api("POST", f"kv1/{prefix}-{leaf}/service", payload)
+                self.assertEqual(api("LIST", f"kv1/{prefix}-{leaf}/")["data"]["keys"],
+                                 ["service"])
+            original_curl = shutil.which("curl")
+            self.assertIsNotNone(original_curl)
+            wrapper = base / "curl"
+            wrapper.write_text(
+                '#!/bin/sh\n'
+                'for arg in "$@"; do\n'
+                '  case "$arg" in\n'
+                '    *"/v1/kv1/$VCLI_ACC09_SLOW_ROOT/")\n'
+                '      sleep 6\n'
+                '      break;;\n'
+                '  esac\n'
+                'done\n'
+                'exec "$VCLI_ACC09_REAL_CURL" "$@"\n', encoding="utf-8",
+            )
+            wrapper.chmod(0o755)
+            home, fd, child = self.session(extra_env={
+                "VAULT_TOKEN": ROOT_TOKEN,
+                "PATH": str(base) + os.pathsep + os.environ["PATH"],
+                "VCLI_ACC09_REAL_CURL": original_curl,
+                "VCLI_ACC09_SLOW_ROOT": prefix + "-slow",
+            })
+            try:
+                fast_command = f"getallcertexpiration kv1/{prefix}-fast\n"
+                started = time.monotonic()
+                self.send(fd, fast_command.encode(), pace=0.003)
+                fast = read_until(fd, b" >", timeout=12)
+                fast_seconds = time.monotonic() - started
+                self.assertIn(b"[CRITICAL]", fast)
+                self.assertNotIn(b"large trees may take time", fast)
+                self.assertLess(fast_seconds, 4.5, f"Fast scan delayed: {fast_seconds:.2f}s")
+                slow_command = f"getallcertexpiration kv1/{prefix}-slow\n"
+                self.send(fd, slow_command.encode(), pace=0.003)
+                started = time.monotonic()
+                notified = read_until(fd, b"large trees may take time...", timeout=9)
+                seconds = time.monotonic() - started
+                self.assertGreaterEqual(seconds, 4.3, f"Early notification: {seconds:.2f}s")
+                self.assertLess(seconds, 7.5, f"Late notification: {seconds:.2f}s")
+                self.assertIn(f"/kv1/{prefix}-slow".encode(), notified)
+                self.assertNotIn(b"[CRITICAL]", notified)
+                finished = read_until(fd, b" >", timeout=8)
+                self.assertIn(b"[CRITICAL]", finished, finished[-1000:])
+                self.assertNotIn(b"large trees may take time", finished,
+                                 "Notification must appear only once per slow scan")
+                self.assertIsNone(child.poll())
+                # The fast scan's cancelled timer must not emit a delayed warning.
+                self.assertEqual((fast + notified + finished).count(b"large trees may take time"), 1)
+            finally:
+                self.end(home, fd, child)
+
+    def test_49_acc09_interrupt_cancels_delayed_notice(self):
+        """ACC-09: Ctrl+C during a slow real-Vault LIST leaves no late output."""
+        import shutil
+        from uuid import uuid4
+        from .test_vault import api, ROOT_TOKEN
+        prefix = "vcli-acc09-interrupt-" + uuid4().hex[:12]
+        api("POST", f"kv1/{prefix}/service", {"noncertificate": "sentinel"})
+        with tempfile.TemporaryDirectory(prefix="vcli-acc09-slow-") as root:
+            base = Path(root)
+            original_curl = shutil.which("curl")
+            self.assertIsNotNone(original_curl)
+            marker = base / "list-started"
+            wrapper = base / "curl"
+            wrapper.write_text(
+                '#!/bin/sh\n'
+                'for arg in "$@"; do\n'
+                '  case "$arg" in\n'
+                '    *"/v1/kv1/$VCLI_ACC09_SLOW_ROOT/")\n'
+                '      : > "$VCLI_ACC09_LIST_MARKER"\n'
+                '      sleep 12\n'
+                '      break;;\n'
+                '  esac\n'
+                'done\n'
+                'exec "$VCLI_ACC09_REAL_CURL" "$@"\n', encoding="utf-8",
+            )
+            wrapper.chmod(0o755)
+            home, fd, child = self.session(extra_env={
+                "VAULT_TOKEN": ROOT_TOKEN,
+                "PATH": str(base) + os.pathsep + os.environ["PATH"],
+                "VCLI_ACC09_REAL_CURL": original_curl,
+                "VCLI_ACC09_SLOW_ROOT": prefix,
+                "VCLI_ACC09_LIST_MARKER": str(marker),
+            })
+            try:
+                self.send(fd, f"getallcertexpiration kv1/{prefix}\n".encode(), pace=0.003)
+                deadline = time.monotonic() + 5
+                while not marker.exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(marker.exists(), "The slow LIST was not reached")
+                # Signal the PTY's foreground process group as in the editor tests.
+                os.killpg(child.pid, signal.SIGINT)
+                interrupted = read_until(fd, b" >", timeout=10)
+                self.assertNotIn(b"large trees may take time", interrupted)
+                self.assertIsNone(child.poll(), "Ctrl+C must keep the shell usable")
+                self.send(fd, b"help\n", pace=0.01)
+                help_output = self.expect_help(fd, timeout=8)
+                self.assertNotIn(b"large trees may take time", help_output)
+                # Past the original 5-second threshold, there must be no orphaned notice.
+                timeout = time.monotonic() + 5.4
+                late = bytearray()
+                while time.monotonic() < timeout:
+                    readable, _, _ = select.select([fd], [], [], 0.2)
+                    if readable:
+                        try:
+                            late.extend(os.read(fd, 8192))
+                        except OSError:
+                            break
+                self.assertNotIn(b"large trees may take time", late)
+                self.assertIsNone(child.poll())
+            finally:
+                self.end(home, fd, child)
+
 if __name__ == "__main__":
     unittest.main()
