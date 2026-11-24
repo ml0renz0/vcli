@@ -913,7 +913,8 @@ class InteractiveShellTests(unittest.TestCase):
         import shutil
         from uuid import uuid4
         from .test_vault import api, ROOT_TOKEN
-        prefix = "vcli-acc09-interrupt-" + uuid4().hex[:12]
+        # Keep the line short: macOS PTY editing processes every character.
+        prefix = "acc09-" + uuid4().hex[:8]
         api("POST", f"kv1/{prefix}/service", {"noncertificate": "sentinel"})
         with tempfile.TemporaryDirectory(prefix="vcli-acc09-slow-") as root:
             base = Path(root)
@@ -942,7 +943,10 @@ class InteractiveShellTests(unittest.TestCase):
                 "VCLI_ACC09_LIST_MARKER": str(marker),
             })
             try:
-                self.send(fd, f"getallcertexpiration kv1/{prefix}\n".encode(), pace=0.003)
+                # On macOS the editor invokes terminfo during each keypress;
+                # bursty input can race its raw-mode key reader and lose ENTER.
+                # Use the same deliberate rate as the proven editor PTY tests.
+                self.send(fd, f"getallcertexpiration kv1/{prefix}\n".encode(), pace=0.035)
                 # The macOS byte-at-a-time editor needs more time to process
                 # the long command than Linux. The five-second notice timer
                 # starts only after parsing, not while the user types.
@@ -953,8 +957,21 @@ class InteractiveShellTests(unittest.TestCase):
                     if child.poll() is not None:
                         break
                     time.sleep(0.05)
-                self.assertTrue(marker.exists(),
-                                f"The slow LIST was not reached; vcli status={child.poll()}")
+                if not marker.exists():
+                    pending = bytearray()
+                    # Never hide a broken interactive command behind a wait.
+                    while True:
+                        ready, _, _ = select.select([fd], [], [], 0)
+                        if not ready:
+                            break
+                        try:
+                            pending.extend(os.read(fd, 8192))
+                        except OSError:
+                            break
+                    self.fail(
+                        "The slow LIST was not reached; "
+                        f"vcli status={child.poll()}; PTY tail={bytes(pending)[-1200:]!r}"
+                    )
                 # Signal the PTY's foreground process group as in the editor tests.
                 os.killpg(child.pid, signal.SIGINT)
                 interrupted = read_until(fd, b" >", timeout=10)
