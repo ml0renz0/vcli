@@ -943,10 +943,18 @@ class InteractiveShellTests(unittest.TestCase):
             })
             try:
                 self.send(fd, f"getallcertexpiration kv1/{prefix}\n".encode(), pace=0.003)
-                deadline = time.monotonic() + 5
+                # The macOS byte-at-a-time editor needs more time to process
+                # the long command than Linux. The five-second notice timer
+                # starts only after parsing, not while the user types.
+                # Synchronise with the real curl LIST entry, never a fixed
+                # delay after sending keystrokes.
+                deadline = time.monotonic() + 18
                 while not marker.exists() and time.monotonic() < deadline:
+                    if child.poll() is not None:
+                        break
                     time.sleep(0.05)
-                self.assertTrue(marker.exists(), "The slow LIST was not reached")
+                self.assertTrue(marker.exists(),
+                                f"The slow LIST was not reached; vcli status={child.poll()}")
                 # Signal the PTY's foreground process group as in the editor tests.
                 os.killpg(child.pid, signal.SIGINT)
                 interrupted = read_until(fd, b" >", timeout=10)
