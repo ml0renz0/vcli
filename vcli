@@ -2648,7 +2648,7 @@ function _getallcertexpiration(){
     [[ ${2:-} == -o* ]] && option="$2"
     # The notification runs independently of LIST/GET latency; no added
     # delay on fast operations or alteration of recorded benchmark timing.
-    ( sleep 5; printf 'vcli: scanning certificates under %s; large trees may take time...\n' "$root" >&2 ) &
+    ( sleep 5 || exit 0; printf 'vcli: scanning certificates under %s; large trees may take time...\n' "$root" >&2 ) &
     local notice_pid=$!
     if ! leaves=$(_vcli_leaves "$root"); then
         result=1
