@@ -935,23 +935,23 @@ class InteractiveShellTests(unittest.TestCase):
                 'exec "$VCLI_ACC09_REAL_CURL" "$@"\n', encoding="utf-8",
             )
             wrapper.chmod(0o755)
-            home, fd, child = self.session(extra_env={
-                "VAULT_TOKEN": ROOT_TOKEN,
-                "PATH": str(base) + os.pathsep + os.environ["PATH"],
-                "VCLI_ACC09_REAL_CURL": original_curl,
-                "VCLI_ACC09_SLOW_ROOT": prefix,
-                "VCLI_ACC09_LIST_MARKER": str(marker),
-            })
+            # The keyboard editor itself has separate PTY coverage. Load
+            # this long scan command as genuine REPL history and use Up+Enter,
+            # which is portable and avoids macOS dropping bursty input.
+            home, fd, child = self.session(
+                history=f"getallcertexpiration kv1/{prefix}\n",
+                extra_env={
+                    "VAULT_TOKEN": ROOT_TOKEN,
+                    "PATH": str(base) + os.pathsep + os.environ["PATH"],
+                    "VCLI_ACC09_REAL_CURL": original_curl,
+                    "VCLI_ACC09_SLOW_ROOT": prefix,
+                    "VCLI_ACC09_LIST_MARKER": str(marker),
+                },
+            )
             try:
-                # On macOS the editor invokes terminfo during each keypress;
-                # bursty input can race its raw-mode key reader and lose ENTER.
-                # Use the same deliberate rate as the proven editor PTY tests.
-                self.send(fd, f"getallcertexpiration kv1/{prefix}\n".encode(), pace=0.035)
-                # The macOS byte-at-a-time editor needs more time to process
-                # the long command than Linux. The five-second notice timer
-                # starts only after parsing, not while the user types.
-                # Synchronise with the real curl LIST entry, never a fixed
-                # delay after sending keystrokes.
+                self.send(fd, b"\x1b[A\n", pace=0.08)
+                # Synchronise with the real curl LIST entry before Ctrl+C.
+                # The deadline is a test startup guard, NOT the 5s notice timer.
                 deadline = time.monotonic() + 18
                 while not marker.exists() and time.monotonic() < deadline:
                     if child.poll() is not None:
