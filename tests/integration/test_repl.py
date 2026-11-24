@@ -949,7 +949,13 @@ class InteractiveShellTests(unittest.TestCase):
                 },
             )
             try:
-                self.send(fd, b"\x1b[A\n", pace=0.08)
+                # Finish Up-arrow redraw before pressing Enter: on native
+                # Darwin the redraw still uses subprocess-backed terminfo.
+                self.send(fd, b"\x1b[A", pace=0.08)
+                recalled = f"getallcertexpiration kv1/{prefix}".encode()
+                read_until(fd, recalled, timeout=10)
+                time.sleep(0.35)
+                self.send(fd, b"\n", pace=0.08)
                 # Synchronise with the real curl LIST entry before Ctrl+C.
                 # The deadline is a test startup guard, NOT the 5s notice timer.
                 deadline = time.monotonic() + 18
