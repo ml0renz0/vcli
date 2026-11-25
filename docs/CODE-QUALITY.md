@@ -1,0 +1,912 @@
+# Fase 04-Q — Calidad, refactorización y eficiencia
+
+**Estado: en ejecución incremental; A/B y auditoría S-01–S-04 documentadas,
+cierre pendiente.** Hito obligatorio antes de la auditoría y RC v0.7.
+Los cambios funcionales ya implementados se enumeran con sus pruebas y
+limitaciones; no se considera completada la revisión de calidad.
+
+## Balance de la auditoría de seguridad (PR #25)
+
+| ID | Prioridad | Riesgo corregido | Protección / evidencia |
+|---|---|---|---|
+| S-01 | Alta | Payload KV v2 temporal abandonado tras error | Limpieza explícita de `_put` y regresiones de 403/transportes; CI verde |
+| S-02 | Alta | Temporales sensibles mezclados con artefactos persistentes | Directorio por sesión 0700, señales y aislamiento de procesos; CI verde |
+| S-03 | Alta | Credenciales AppRole visibles en argv de `jq` | Descriptores anónimos, preflight mTLS y regresiones de señales; CI verde |
+| S-04a | Alta | Sobrescritura o symlink en backup | Archivo privado y publicación exclusiva mediante `ln -T`; CI verde |
+| S-04b | Alta | Debug sobre rutas inseguras y carrera de directorio en historial | Descriptor validado para logs, `mv -T` e historial leído por FD; CI verde |
+
+**Evidencia del estado consolidado:** [CI completo #44044728301](https://github.com/ml0renz0/vcli/actions/runs/44044728301)
+(estado SUCCESS: static, playground TLS, cuatro versiones de Vault,
+Alpine, Debian y required gate). Las pruebas aisladas complementan, pero
+no reemplazan, los contratos E2E con Vault real. El backend Raft del
+benchmark sigue siendo opcional y no equivale a una topología productiva.
+
+### Riesgos y trabajos abiertos antes del RC
+
+- **Concurrencia:** el historial entre dos sesiones conserva semántica de
+  último escritor; no hay reconciliación de cambios concurrentes.
+- **Portabilidad:** `ln -T`, `mv -T`, `stat -L -c`, `/dev/fd` y algunos
+  comportamientos de `mktemp` dependen de GNU/Linux. Sin compatibilidad
+  nativa macOS/BSD acreditada.
+- **Señales y persistencia:** `SIGKILL`, pérdida de alimentación y
+  fallos del host pueden dejar temporales. Backups y exportaciones
+  solicitados por el usuario permanecen deliberadamente en disco.
+- **Alcance del auditor:** revisar caminos raros de error, permisos de
+  directorios padre, REPL con Unicode/redimensionamiento y el playground
+  exploratorio. Mantener el tratamiento de escrituras HTTP con resultado
+  ambiguo y las limitaciones de atomicidad de Vault.
+- **Rendimiento:** más muestras y recuento de procesos/llamadas HTTP antes
+  de inferir efectos generales o establecer límites cuantitativos.
+
+**Decisión:** S-01–S-04 se consideran implementadas y verificadas en la
+matriz obligatoria, pero **04-Q no está cerrada**. No iniciar el RC v0.7
+sin resolver o aceptar explícitamente los riesgos bloqueantes y pasar la
+fase 05 con el candidato congelado.
+
+## Alcance
+
+Revisar `vcli` (Bash de producción), `scripts/playground*.sh`,
+`tests/` y documentación. Mantener `vcli` autocontenido en Bash;
+`vcli.orig.sh` permanece idéntico al original. Python puede seguir
+usándose únicamente como herramienta de pruebas y medición.
+
+### 1. Inventario y calidad estructural
+
+- Enumerar funciones, dependencias entre módulos lógicos, estado global,
+  parámetros implícitos, efectos secundarios, manejo de errores y rutas de
+  limpieza; priorizar funciones extensas, bucles anidados y código duplicado.
+- Revisar quoting/word splitting, `set -e` y subshells, salidas de `curl`,
+  permisos/umask, carreras de ficheros y llamadas no idempotentes.
+- Clasificar hallazgos en **seguridad / corrección / mantenibilidad /
+  rendimiento / portabilidad**, con severidad y pruebas que los reproduzcan.
+- Mantener trazabilidad mediante un inventario antes/después y commits
+  pequeños agrupados por responsabilidad, no una reescritura masiva.
+
+### 2. Identificar código reutilizable (candidatos observados)
+
+| Área | Candidatos para estudiar | Riesgo que no debe perderse |
+|---|---|---|
+| Rutas KV v1/v2 | `vcli_is_kv2_path`, `vcli_kv2_metadata_path`, `vcli_kv_path`, lógica de montajes dentro de `_curl` y `_cptree` | Montajes anidados, elección de versión, CAS y API paths |
+| Recorridos de árboles | `_vcli_absolute_path`, `_vcli_children`, `_vcli_leaves` y consumidores como `_replace`, `_cptree`, `_rmtree`, `_backup` | Orden de lectura/escritura, parcialidad, ACL, límites del subárbol |
+| PKI y Kerberos | `_vcli_pki_json`, `_vcli_cert_pairs`, `_vcli_krb_pairs`, listados, exportación y caducidad | Validación criptográfica, permisos 0600, exclusión de symlinks |
+| HTTP y temporales | `_curl`, manejo de payload/respuesta, creación y limpieza de ficheros | No filtrar tokens; evitar reintentos ciegos y preservar errores |
+| REPL y terminal | Parseo de teclas, redibujado, historial, autocompletado | Ctrl+C, paste, Unicode/anchura de cursor y TERM mínimo |
+| Playground/CI | Bootstrap, datos sintéticos, helpers Bash y scripts de aceptación | Independencia del laboratorio y limpieza de credenciales |
+
+Estas son **hipótesis de refactorización** basadas en el código actual.
+Solo se extraerán helpers si mejoran legibilidad, corrección o rendimiento
+sin acoplamiento innecesario. No se introducirá una biblioteca externa
+obligatoria para ejecutar `vcli`.
+
+### 3. Eficiencia medible
+
+- Establecer una **línea base reproducible**, comparando en el mismo runner,
+  versión de Vault y catálogo de datos, antes y después de cada cambio.
+- Medir mediana/p95, procesos externos, llamadas HTTP, bytes procesados y
+  memoria/CPU cuando se pueda instrumentar sin comprometer secretos.
+- Escenarios: `--version`, `cat` KV v1/v2, `ls`, recorridos de 10/100/1000
+  secretos sintéticos, `find`, `cptree`, `backup/restore`, listados PKI
+  y sesiones REPL de uso habitual. Los tamaños 100/1000 son propuestas
+  de carga, no prestaciones actualmente demostradas.
+- Investigar llamadas repetidas a `jq`, `curl`, `openssl`, `date` y
+  pipelines por elemento; amortizar transformaciones o agrupar resultados
+  solo cuando Vault y los contratos permitan hacerlo con seguridad.
+- No fijar umbrales de regresión arbitrarios: conservar la línea base y
+  acordar límites razonables tras varias muestras. Documentar condiciones,
+  dispersión y cualquier cambio de metodología.
+
+### 4. Refactorización incremental y protección
+
+1. Capturar el comportamiento actual con pruebas de contrato o nuevas
+   regresiones antes de modificar una ruta crítica.
+2. Cambiar **una responsabilidad por commit**, sin reorganización cosmética
+   de miles de líneas ni alterar contratos, códigos de salida o trazas
+   sensibles incidentalmente.
+3. Repetir `bash -n`, ShellCheck, tests CLI, suites E2E de Vault 1.20.4 /
+   1.21.4 / 2.0.4 / 2.1.1, Alpine/Debian y aceptación del playground.
+4. Contrastar salidas, estado real por API, archivos exportados y métricas
+   **antes/después**; conservar o revertir según evidencia.
+5. Documentar límites de atomicidad, portabilidad y concurrencia que
+   persistan tras los cambios. No relajar gates, saltar tests ni depender
+   de mocks para declarar corrección de las operaciones reales.
+
+### 5. Comentarios breves y documentación mínima
+
+- Escribir comentarios **cortos que expliquen el porqué**, invariantes,
+  efectos secundarios, precondiciones y decisiones de seguridad; no repetir
+  lo evidente del código.
+- Documentar entradas/salidas y errores solo en helpers no triviales; usar
+  nombres autoexplicativos antes de aumentar comentarios.
+- Comentar especialmente las partes delicadas: KV v2/CAS, rollback parcial,
+  material criptográfico, ficheros privados, traps y compatibilidad de TTY.
+- Revisar `README.md`, `docs/CI-CD.md`, `docs/CLI-CONTRACT.md`,
+  `docs/REVIVAL.md` y `playground/README.md`: eliminar descripciones
+  obsoletas, diferenciar **histórico / implementado / pendiente** y comprobar
+  enlaces, comandos y versiones. Usar una única identidad de proyecto,
+  `vcli`; las futuras capacidades YAML/declarativas son **roadmap** y no
+  forman parte del candidato actual.
+
+## Criterios de aceptación
+
+- Informe breve de hallazgos priorizados, duplicidades corregidas o
+  justificadamente conservadas y mapa de responsabilidades de helpers.
+- Todas las suites obligatorias pasan con el mismo candidato Bash y no hay
+  degradación funcional ni de seguridad conocida.
+- Comparativa de rendimiento reproducible antes/después; mejoras
+  cuantificadas o justificación explícita si se prioriza mantenibilidad.
+- Sin secretos en stdout, historial, temporales persistentes, trazas ni
+  scripts de prueba; sin escritura/despliegue contra Vault externo.
+- Código documentado solo donde añade información, con Markdown coherentes
+  y ejemplos comprobados. `vcli.orig.sh` no se modifica.
+- La **auditoría final y el RC v0.7 quedan bloqueados** hasta completar y
+  revisar esta fase. El playground y la matriz E2E continúan como gates.
+
+## Secuencia en el plan
+
+Fases 00–03 (contratos y funcionalidad) → fase 04 (robustez, portabilidad,
+playground) → **04-Q (calidad y eficiencia)** → fase 05 (auditoría final y
+release candidate v0.7) → evolución funcional declarativa posterior.
+
+## Avance medible: recorridos recursivos
+
+- `_vcli_children` combina validación de `data.keys` y extracción en **una**
+  invocación de `jq` en lugar de dos por listado. Los contratos aislados
+  comprueban listados correctos, vacíos, error HTTP y respuesta inválida.
+- El benchmark aísla cada cardinalidad en `tree-size-N`, alterna el orden
+  referencia/candidato por muestra y verifica que `tree` enumera exactamente
+  N secretos. `tests/cli/test_recursive_benchmark.py` protege la metodología
+  sin levantar Vault ni consumir los minutos de integración.
+- Benchmark **opt-in** `tests/integration/bench_recursive.py`: mide
+  `tree`, `find`, `cptree` y `backup` contra el Vault HTTPS desechable,
+  verificando el resultado de cada operación. Los datos de origen se guardan
+  en un montaje temporal y se eliminan desmontándolo incluso si hay errores.
+- Ejecución manual desde la raíz:
+  ```bash
+  VCLI_TEST_VAULT_TAG=2.1.1 VCLI_BENCH_RECURSIVE=1 \\
+    VCLI_BENCH_SIZES=10,100 VCLI_BENCH_REPEATS=3 \\
+    bash tests/integration/run.sh
+  ```
+  El runner primero ejecuta las suites completas de integración; el
+  benchmark solo se lanza al solicitarlo. Para incluir 1000 secretos,
+  establecer `VCLI_BENCH_SIZES=10,100,1000`, aumentar
+  `VCLI_BENCH_TIMEOUT` si fuese necesario y reservar tiempo suficiente.
+  Para comparar dos commits con **un solo Vault TLS** y omitir la matriz
+  E2E durante la medición, ejecutar desde la raíz:
+  ```bash
+  bash scripts/bench-compare.sh 4f96cf2091be1d6c70a5e3df3bf214d6dfb4c67e 10,100 4
+  ```
+  Se puede utilizar GitHub Actions → **VCLI trunk validation** → **Run
+  workflow**, seleccionar la rama de la PR y activar
+  `recursive_benchmark`. Los inputs `baseline_ref`, `sizes` y
+  `repeats` controlan el experimento. Ese despacho deja fuera
+  `integration`, `minimal`, `playground` y `gate`; ejecuta la
+  validación estática y un job independiente de benchmark con un único Vault
+  desechable. El CI normal de PR y push mantiene los siete Vault. La acción
+  manual requiere que GitHub permita despachar el workflow desde la rama
+  seleccionada; no se ha ejecutado todavía una comparativa de rendimiento.
+  Una comparativa por parejas admite `VCLI_BENCH_BASELINE=/ruta/vcli-anterior`
+  junto con `VCLI_BENCH_CANDIDATE=/ruta/vcli-candidato`. Ambos deben ser
+  ejecutables Bash que acepten `-n`. Las métricas p50/p95 no constituyen
+  todavía una comparación publicada ni un objetivo de regresión.
+
+## Almacenamiento integrado: perfiles Raft opcionales
+
+El CI funcional sigue utilizando **siete Vault de desarrollo TLS efímeros**
+sobre `inmem`. Los perfiles Raft están restringidos al benchmark manual;
+**no son una simulación de latencia de producción**, ya que los nodos del
+perfil HA comparten la misma máquina Docker, y las medidas de disco/red de
+GitHub Actions no representan discos ni zonas de disponibilidad reales.
+
+| Perfil | Instancias | Objetivo |
+| --- | ---: | --- |
+| `inmem` | 1 | Aislar el coste del cliente y los procesos |
+| `raft-1` | 1 | Persistencia integrada en disco, sin replicación |
+| `raft-3` | 3 | Consenso Raft con quórum 2/3 y replicación local |
+
+`tests/integration/run-raft.sh` crea una red y certificados TLS privados
+de vida corta, configura una ruta de datos independiente por nodo, inicializa
+Vault con Shamir (una participación por ser un entorno efímero), une y
+desprecinta los seguidores y **verifica los votantes y un solo líder** antes
+de medir. Se elimina el clúster completo al salir. No conserva datos,
+credenciales o llaves tras la prueba. Requiere Docker local y se niega
+a usar un daemon remoto. El perfil no es una receta de configuración segura
+de Vault para producción.
+
+Desde GitHub Actions → **VCLI trunk validation** → **Run workflow**:
+activar `recursive_benchmark`, seleccionar la rama de la PR y elegir
+`storage_backend=inmem`, `raft-1` o `raft-3`. Los tres perfiles utilizan el mismo benchmark; con un commit de referencia
+se comparan dos CLI (A/B) y con `none` se mide exclusivamente el candidato. Para probar localmente:
+
+```bash
+VCLI_BENCH_STORAGE=raft-1 bash scripts/bench-compare.sh 4f96cf2091be1d6c70a5e3df3bf214d6dfb4c67e 10,100 4
+VCLI_BENCH_STORAGE=raft-3 bash scripts/bench-compare.sh 4f96cf2091be1d6c70a5e3df3bf214d6dfb4c67e 10,100 4
+```
+
+**Validación funcional real completada:** [inmem #43138509881](https://github.com/ml0renz0/vcli/actions/runs/43138509881),
+[raft-1 #43137292992](https://github.com/ml0renz0/vcli/actions/runs/43137292992) y
+[raft-3 #43138179058](https://github.com/ml0renz0/vcli/actions/runs/43138179058).
+En Raft-3 el runner verificó un líder y **tres votantes**, y el bootstrap
+Shamir/TLS terminó correctamente. Los resultados de cada operación se
+contrastaron con el estado de Vault, no solo con el exit code de vcli.
+
+## Flags de benchmark en pull requests
+
+Las etiquetas de repositorio `bench:inmem`, `bench:raft-1` y `bench:raft-3`
+seleccionan respectivamente un Vault de desarrollo, Raft en disco con un nodo
+y Raft HA con tres votantes. `.github/workflows/benchmark-labels.yml`
+crea las etiquetas ausentes cuando se abre o actualiza una PR del propio
+repositorio, **sin aplicarlas**. Añadir manualmente una etiqueta a una PR
+lanza únicamente el benchmark seleccionado; cambiar archivos, abrir la PR
+o añadir otras etiquetas **no** dispara ese benchmark. La ejecución por etiqueta
+se mantiene separada del CI obligatorio y del lanzamiento manual existente.
+
+Las tres etiquetas de perfil miden **solo el candidato actual** (sin baseline
+histórica). Además, `bench:ab-inmem` ejecuta una comparativa por parejas
+contra el commit verde fijado en `.github/workflows/benchmark-labels.yml`
+(actualmente `0b69ae8`); actualizar ese commit para medir un cambio posterior.
+Todas usan cargas `10,100` y cuatro muestras por operación. Cada etiqueta
+desencadena una prueba cuando se añade,
+no en cada commit posterior. Para repetir la misma prueba, retirar la etiqueta
+y volver a aplicarla. La creación de etiquetas necesita que Actions tenga
+permiso `issues: write` en el job de aprovisionamiento, no en el job de
+benchmark. Por motivos de seguridad, el flujo por etiqueta solo ejecuta PR
+cuyo repositorio de origen coincide con el de destino (no forks).
+
+## Resultados reales: perfiles inmem / Raft, 2026-11-12
+
+Los tres workflows etiquetados usan **Vault 2.1.1**, TLS verificado,
+el mismo `vcli` candidato y 4 muestras por combinación de tamaño y
+operación; los resultados se validan funcionalmente. Las cifras están
+redondeadas a una décima de milisegundo y son **medianas**, no percentiles
+p95 ni mejoras de versiones.
+
+| Secretos | Operación | inmem (ms) | raft-1 (ms) | raft-3 (ms) |
+| ---: | --- | ---: | ---: | ---: |
+| 10 | tree | 248,6 | 339,2 | 380,8 |
+| 10 | find | 442,3 | 603,1 | 674,4 |
+| 10 | cptree | 750,1 | 1.063,6 | 1.187,5 |
+| 10 | backup | 470,3 | 630,9 | 729,3 |
+| 100 | tree | 254,2 | 316,3 | 385,1 |
+| 100 | find | 2.247,7 | 2.817,1 | 3.474,6 |
+| 100 | cptree | 5.438,1 | 7.097,7 | 8.614,9 |
+| 100 | backup | 2.424,0 | 3.131,4 | 3.753,6 |
+
+**Interpretación:** estos perfiles se ejecutaron en runners efímeros
+distintos de GitHub Actions. Las diferencias observadas **no aíslan**
+el efecto del backend o del número de nodos porque también pueden reflejar
+variabilidad de CPU, disco, carga y red local de cada runner. Raft-3 usa
+tres contenedores en **un único host**, no tres zonas de disponibilidad.
+Estas medidas tampoco representan la latencia de un despliegue de producción.
+
+**Actualización:** las comparativas A/B verificadas de `tree`, `backup` y
+`cptree` figuran a continuación, con dos revisiones validadas en el mismo
+runner y Vault. Siguen pendientes muestreos mayores e instrumentación
+comparativa de procesos/HTTP para una conclusión estadística más robusta.
+El commit histórico `4f96cf2` fue descartado como baseline porque devolvía
+recorridos incompletos; no se atribuyen mejoras respecto a él.
+
+## Medición A/B de la optimización de `tree` — 2026-11-13
+
+Referencia: commit `c009d45` (matriz TLS completa verde). Candidato: `6d944b4`
+con `_tree` sin la llamada externa a `basename` por directorio y normalización
+robusta de barras finales. [GitHub Actions #43414343529](https://github.com/ml0renz0/vcli/actions/runs/43414343529)
+terminó correctamente contra un **único Vault inmem TLS**, con ambos
+binarios ejecutados en orden alternado sobre los mismos datos y runner,
+cuatro muestras por operación y tamaño. Ambos superaron la validación
+funcional; no son tiempos de despliegue productivo.
+
+| Secretos | Operación | Base p50 (ms) | Candidato p50 (ms) | Cambio |
+| ---: | --- | ---: | ---: | ---: |
+| 10 | `tree` | 280,8 | 265,7 | −5,4 % |
+| 10 | `find` | 480,3 | 484,2 | +0,8 % |
+| 10 | `cptree` | 818,6 | 816,0 | −0,3 % |
+| 10 | `backup` | 522,5 | 519,3 | −0,6 % |
+| 100 | `tree` | 289,1 | 275,4 | −4,7 % |
+| 100 | `find` | 2.563,5 | 2.496,2 | −2,6 % |
+| 100 | `cptree` | 6.550,2 | 6.496,1 | −0,8 % |
+| 100 | `backup` | 2.658,4 | 2.793,1 | +5,1 % |
+
+**Interpretación:** observamos una reducción pequeña y consistente de la
+mediana de `tree` para estos dos casos; el cambio elimina exactamente
+una invocación de `basename` por directorio visitado. Con solo cuatro
+muestras no puede afirmarse una ganancia estadísticamente estable, ni
+atribuir a esta optimización las diferencias de otras operaciones. El
+p95 con cuatro muestras coincide con el máximo; para una conclusión
+más sólida harían falta más repeticiones y perfiles Raft A/B. No
+se introducen gates de rendimiento por porcentajes arbitrarios.
+
+## Optimización de backup: menos procesos por secreto
+
+En `_backup`, `dirname` se sustituye por expansión nativa Bash y
+`mkdir -p` solo se llama si falta el directorio destino. Esto evita
+un proceso por hoja y llamadas redundantes a `mkdir` para hermanos
+del mismo directorio. El contrato aislado comprueba seis ficheros de dos
+carpetas, una con espacios, verifica el tarball y el número de llamadas
+a `mkdir` sin utilizar Vault.
+
+La comparación A/B posterior confirmó una reducción de mediana en `backup`
+para los casos de 10 y 100 secretos; véase la tabla inmediatamente siguiente.
+Las cuatro muestras disponibles no demuestran significación estadística.
+
+
+### Medición A/B de `backup` — 2026-11-15
+
+Referencia: `cdf1c8c` (último CI verde anterior al cambio).
+Candidato: optimización de `_backup` sin `dirname` por secreto y sin
+`mkdir -p` para padres que ya existan. [GitHub Actions
+#43718675927](https://github.com/ml0renz0/vcli/actions/runs/43718675927)
+ha terminado **verde**, comparando ambas versiones en orden alternado
+contra el mismo Vault 2.1.1 `inmem` TLS, sobre el mismo runner, con
+cuatro muestras y validación funcional de cada operación.
+
+| Secretos | Operación | Base p50 (ms) | Candidato p50 (ms) | Cambio |
+| ---: | --- | ---: | ---: | ---: |
+| 10 | `tree` | 350,5 | 350,5 | ~0,0 % |
+| 10 | `find` | 661,9 | 659,7 | −0,3 % |
+| 10 | `cptree` | 1.143,3 | 1.150,5 | +0,6 % |
+| 10 | `backup` | 720,6 | 702,8 | **−2,5 %** |
+| 100 | `tree` | 365,4 | 365,1 | −0,1 % |
+| 100 | `find` | 3.401,5 | 3.382,5 | −0,6 % |
+| 100 | `cptree` | 8.157,6 | 8.189,7 | +0,4 % |
+| 100 | `backup` | 3.629,5 | 3.373,9 | **−7,0 %** |
+
+La mejora coincide con el efecto esperado de eliminar un `dirname`
+externo por secreto y reducir preparaciones de directorios a los padres
+distintos. Los controles no muestran una variación comparable. Con solo
+cuatro muestras no se declara significación estadística ni se extrapola
+el resultado a Vault Raft o a sistemas productivos. La reducción de
+procesos por hoja sí queda protegida por el contrato aislado.
+
+## Optimización cptree: clasificación reutilizada
+
+El preflight conserva las consultas de metadata KV v2 (incluidos secretos
+soft-deleted) y la validación de todos los destinos antes de escribir.
+Ahora almacena una clasificación KV1/KV2 por hoja, construye metadata con
+el montaje de prefijo más específico y evita repetir la consulta del tipo
+de montaje al escribir. La longitud del array evita una pasada de recuento.
+Los tests aislados protegen montajes solapados, espacios en rutas, CAS=0,
+orden del preflight y la prohibición de escritura ante HTTP 403.
+La matriz TLS real conserva las pruebas de colisiones y fallos parciales.
+El A/B contra `0b69ae8` [terminó verde](https://github.com/ml0renz0/vcli/actions/runs/43776893780):
+`cptree` pasó de 1.014,4 a 1.011,5 ms con 10 secretos (−0,3 %) y de
+7.436,8 a 7.334,6 ms con 100 (−1,4 %), sin mejora estadística fuerte
+demostrada con cuatro muestras.
+
+## Auditoría S-01: limpieza de temporales sensibles en `_put`
+
+**Prioridad alta.** Un error temprano de metadata KV v2 o una salida
+prematura de `_curl` podía abandonar un fichero `.put.*` con contenido
+de un secreto. Ahora `_put` usa variables locales y elimina el payload
+en las ramas de error y después de cualquier respuesta de `_curl`, incluso
+si el transporte falló sin consumir el fichero. La expansión fallida con
+`envsubst` también aborta la escritura. Tests aislados verifican 403,
+metadata inválida, fallo de ruta de metadata, error de transporte y éxito.
+La protección frente a señales y fallos asíncronos requiere auditoría
+separada del ciclo global de `TMP`.
+
+## A/B de `cptree` validado
+
+[CI #43776834258](https://github.com/ml0renz0/vcli/actions/runs/43776834258)
+y [A/B #43776893780](https://github.com/ml0renz0/vcli/actions/runs/43776893780)
+verdes. Medianas sobre un mismo Vault TLS y runner, cuatro muestras:
+10 secretos, 1.014,4 → 1.011,5 ms (−0,3 %); 100 secretos,
+7.436,8 → 7.334,6 ms (−1,4 %). Mejoras pequeñas y no concluyentes
+estadísticamente.
+
+## Auditoría S-02: aislamiento de temporales y señales
+
+El cliente conserva `TMPDIR` para artefactos **solicitados por el usuario**
+(backups `.tgz`, certificados, claves y keytabs), pero ahora crea al
+iniciar una sesión válida un directorio aleatorio privado con modo
+`0700` para las respuestas/payloads HTTP, el material transitorio de
+AppRole/KV, el backup antes de comprimirlo y las exportaciones en staging.
+El directorio se elimina en `EXIT`, y `SIGTERM`/`SIGINT` provocan
+salida con estado 143/130 en modo batch. El editor REPL mantiene su
+comportamiento propio de Ctrl+C sin abandonar la sesión.
+
+La limpieza comprueba el identificador `BASHPID` del propietario para
+evitar que un subshell suprima los datos transitorios del proceso
+padre. Se añaden contratos aislados para salida normal, TERM, INT,
+propiedad en subshell, permisos `0700`, un `_put` interrumpido y
+supervivencia de artefactos externos a la sesión.
+
+**Límites:** ninguna implementación puede garantizar limpieza ante
+`SIGKILL`, fallos del kernel, cortes de alimentación u otros cierres
+forzosos; mientras el REPL siga activo después de una interrupción,
+los temporales residuales privados se eliminan al salir. Los archivos
+de backup/exportación **no se eliminan** automáticamente.
+
+## S-03: AppRole, argumentos y temprana limpieza HTTP
+
+`_vcli_login_approle` ya no pasa `secret_id` por `jq --arg` (visible en argv).
+En su lugar `jq --rawfile` recibe credenciales desde descriptores anónimos;
+se preservan comillas y saltos de línea. Se rechaza mTLS incompleto
+antes de crear archivos de credenciales, y `_curl` elimina la respuesta
+si falla el `mktemp` del payload KV2. La prueba aislada inspecciona
+los argumentos reales de jq, JSON, rechazo mTLS antes de EXIT e
+interrupción TERM durante autenticación, además de conservar artefactos.
+
+## S-04 (parte 1): publicación exclusiva de backups
+
+**Hallazgo:** `_backup` generaba un nombre con resolución de un segundo y
+ejecutaba `tar -czf` directamente sobre `TMPDIR`: dos backups del mismo
+árbol podían sobrescribirse y un atacante con capacidad de crear un symlink
+en el destino podía conseguir que se truncara su objetivo.
+
+**Corrección:** se crea el fichero `.tgz` entero dentro del directorio
+privado de sesión, con permisos 0600; el nombre final lleva una parte
+aleatoria de `mktemp`. Se publica mediante `ln -T` exclusivamente
+(en el mismo sistema de archivos). Si el destino existe o es un symlink,
+la publicación falla sin reemplazarlo ni modificarlo. Ningún archivo
+incompleto se publica antes de terminar `tar`. Solo se elimina el staging,
+no los ficheros ajenos ni los backups publicados.
+
+Las regresiones simulan una creación concurrente de symlink y de archivo
+justo antes de publicar, validan ausencia de truncado, dos backups en un
+mismo segundo, permisos 0600 y error de compresión sin salida parcial.
+El mecanismo requiere `ln -T` GNU, ya requerido por las exportaciones
+atómicas. Pendiente de S-04: endurecer el log de depuración y revisar
+carreras del historial; las comprobaciones de rutas por nombre no bastan
+para prometer ausencia de TOCTOU en todos los sistemas de archivos.
+
+## S-04 (parte 2): logs e historial ante carreras de rutas
+
+El log de depuración se crea de forma exclusiva con un fichero temporal
+0600 y `ln -T`, o se abre para añadir texto si ya existe. El descriptor
+real se verifica ANTES de la primera escritura: archivo regular, propio,
+permisos 0600, un único enlace y coincidencia de inode con la ruta.
+Se rechazan symlinks, hardlinks y logs con permisos inseguros. Las
+escrituras posteriores reutilizan el descriptor validado, por lo que
+un cambio de pathname no redirige las escrituras a un fichero ajeno.
+Al desactivar el modo debug se cierra el descriptor.
+
+En historial, `mv -T -f` evita que una carrera convierta el destino
+en un directorio capaz de recibir el archivo de historial temporal.
+La lectura ahora fija un descriptor y verifica la ruta antes de cargar.
+Pruebas aisladas: nombre con espacios, append privado, links y
+permisos inseguros, reemplazo de ruta tras apertura, historia con
+symlink y sustitución del destino por directorio.
+
+**Límites:** el historial entre sesiones simultáneas conserva una
+política de último escritor; no se ofrece mezcla transaccional de
+comandos concurrentes. Estas comprobaciones no protegen contra
+actores con control completo de directorios padres. `ln -T`,
+`mv -T`, `/dev/fd` y `stat -L -c` son dependencias GNU/Linux
+que requieren adaptación en la futura fase de portabilidad macOS/BSD.
+
+## P-01: comprobación macOS con Bash y GNU coreutils
+
+Primer paso de portabilidad: `macos-15` ejecuta nativamente las
+pruebas de CLI y seguridad offline bajo Bash de Homebrew con herramientas
+GNU. El gate obligatorio impide que se publique un candidato con esa
+compatibilidad básica rota. Los cambios de código S-01–S-04 se conservan.
+El resultado **no acredita** soporte BSD nativo, REPL/PTY completo ni
+Vault TLS real desde macOS; esas comprobaciones continúan pendientes.
+
+## P-02 — diferencias de macOS verificadas
+
+El primer runner macOS 15 con Bash 5.3 y GNU coreutils falló cuatro
+contratos offline. El diagnóstico mostró que `mktemp -p ... -t ...`
+generaba un fichero bajo el TMPDIR general en lugar del directorio
+privado: se emplean ahora plantillas de ruta explícitas. Además, la
+comparación Bash `-ef` contra `/dev/fd/N` devolvía falso pese a que
+GNU stat veía el mismo inodo: macOS expone un dispositivo sintético
+para ese descriptor. En macOS se verifica la identidad mediante inodo,
+propietario, permisos y número de enlaces; en Linux se mantiene `-ef`
+adicionalmente. Ambos sistemas rechazan enlaces inseguros y modos
+públicos. El código supone un directorio padre de confianza: las
+comprobaciones de identidad por inodo no proporcionan aislamiento
+absoluto ante un atacante con control de directorios o sistema de
+archivos. Esta corrección requiere otra ejecución verde del job Mac.
+
+## P-03 — Vault real bajo macOS sin Docker
+
+Sobre `macos-15` y Bash/GNU Homebrew se incorpora Vault **2.1.1 ARM64**
+nativo con TLS generado por Vault, binario oficial validado con SHA-256
+fijado, escucha exclusivamente en loopback y catálogo KV v1/v2/anidado,
+ACL/AppRole y token de prueba. Un trap elimina el proceso y sus archivos
+sensibles. Se reutilizan suites E2E de KV, TLS, autenticación,
+operaciones y parte de PKI/Kerberos con comprobación independiente API.
+**Verificado:** [CI P-03 #44214734566](https://github.com/ml0renz0/vcli/actions/runs/44214734566)
+completó el E2E TLS nativo; P-04b amplió después la cobertura. No acredita
+uso exclusivo de utilidades BSD nativas.
+
+## P-04a — paridad E2E macOS (KV2, CAS y errores)
+
+Se amplía el job nativo Mac con cuatro suites compartidas de Linux:
+KV v2 avanzado, CAS/concurrencia, inyección de fallos HTTPS y operaciones
+parcialmente aplicadas. Se conserva el backend Vault 2.1.1 con TLS real,
+la verificación independiente vía REST y el Required CI gate. Todavía
+no se declara paridad E2E total hasta pasar TLS avanzado, PTY y PKI/Kerberos
+completos, además de validar estos cuatro módulos en macOS.
+
+## P-04b — suite E2E completa en macOS
+
+P-04a pasó 111 pruebas sobre Vault TLS real nativo en macOS. P-04b exige
+los mismos 13 módulos de Ubuntu/Alpine/Debian, con TLS avanzado,
+PKI/Kerberos (incluidas carreras adversariales) y REPL PTY (38 casos).
+La lista se comprueba automáticamente frente a la matriz Linux para
+impedir saltos silenciosos. **Verificado:** [CI #44508003815](https://github.com/ml0renz0/vcli/actions/runs/44508003815)
+terminó con macOS, los 13 módulos E2E compartidos y el gate obligatorio
+verdes en `8b14905` (187 casos E2E en el inventario de `docs/REVIVAL.md`).
+La paridad con utilidades BSD puras sigue pendiente: P-05a–P-05d
+solo eliminan dependencias GNU puntuales.
+
+## P-05a — expiración X.509 con date GNU y BSD nativo
+
+Se elimina la dependencia exclusiva de `date -d` para los comandos
+de vencimiento de certificados. El helper `vcli_cert_expiry_epoch`
+valida el formato `notAfter=... GMT` de OpenSSL y usa
+`/bin/date -u -j -f` de macOS, incluso con GNU coreutils en PATH,
+o `date -u -d` en Linux. `LC_ALL=C` fuerza una interpretación
+estable de los nombres de meses. Tests offline con épocas UTC conocidas
+y rechazo de cadenas arbitrarias/inyección, ejecutados en Linux y
+macOS. Las pruebas E2E `getcertexpiration` y `getallcertexpiration`
+continúan en los 13 módulos nativos de macOS y Linux.
+
+No implica soporte BSD completo: `ln -T`, `mv -T`, `stat -c`,
+`mktemp -p`, `base64 --decode` y `timeout` aún necesitan revisión
+sin reducir las garantías de seguridad.
+
+## P-05b — Base64 de binarios Kerberos GNU/BSD
+
+La exportación y lectura de keytabs usaban `base64 --decode` (opción
+larga de GNU). Se cambia a `base64 -d`, aceptada tanto por GNU
+coreutils como por la implementación BSD que incluye macOS. El flujo
+se mantiene binario, preservando bytes NUL y datos no UTF-8; la
+validación posterior con `klist` y los controles de ficheros existentes
+no se alteran. Los tests cubren ambas rutas en el código Bash y
+comparan bytes de salida, además de ejecutar explícitamente
+`/usr/bin/base64 -d` en el runner macOS, sin Homebrew.
+
+La adaptación P-05 no implica aún que `vcli` funcione con todas las
+herramientas BSD; las operaciones `ln -T`, `mv -T` y `stat -c`
+requieren trabajo adicional.
+
+## P-05c — mktemp con plantillas explícitas GNU/BSD
+
+Se eliminan las llamadas de `vcli` a `mktemp -p` y `mktemp -d -p`
+para los temporales internos: cada creación pasa una plantilla de ruta
+completa dentro del directorio privado de sesión 0700, en vez de depender
+de una opción GNU o del orden de prioridad de TMPDIR. La prueba estática
+exige que ningún temporal sensible vuelva a usar `-p`. En el runner
+macOS se verifica explícitamente la creación mediante
+`/usr/bin/mktemp` BSD nativo, sin tomar el mktemp de Homebrew.
+
+Los tests S-01/S-02/S-03, operaciones KV y la matriz E2E siguen siendo
+obligatorios. Este paso no declara portabilidad BSD total: `ln -T`,
+`mv -T`, `stat -c` y otras utilidades GNU todavía se requieren.
+
+## P-05d — validación de inode con stat BSD real
+
+Se introduce `vcli_stat_identity` para comparar inodo, propietario,
+permisos 0600 y enlaces de debug/historial. macOS ejecuta
+`/usr/bin/stat -L -f '%i:%u:%OLp:%l'` nativo, evitando la
+implementación GNU de Homebrew; Linux sigue con `stat -L -c`.
+Las pruebas comparan un archivo y su descriptor abierto, sus permisos
+y el resultado de `/usr/bin/stat` en Mac. Se preservan las comprobaciones
+de enlaces simbólicos/duros y la exigencia de `-ef` adicional en Linux.
+Esto no elimina todavía las dependencias GNU de `ln -T` y `mv -T`.
+
+## P-05e — resultado de la exploración de `link(1)` en macOS
+
+Se evaluó el comando `link(1)` como posible sustituto de `ln -T`
+para publicación exclusiva y rechazo de destinos preexistentes. En
+Linux pasó sus contratos, pero el runner macOS 15 **no dispone de
+`/usr/bin/link`**. La hipótesis de disponibilidad del binario BSD
+no se sostuvo y la prueba experimental se ha retirado del gate.
+El código de producción permanece con `ln -T` de GNU coreutils,
+porque cambiarlo por `ln` o `mv` sin garantías equivalentes permitiría
+carreras con directorios. La portabilidad GNU-free de publicación
+segura sigue **pendiente**, no implementada.
+
+## P-05f — publicación exacta mediante syscalls nativas en macOS
+
+El CLI conserva `ln -T` y `mv -T` en Linux. macOS usa `link(2)` y
+`rename(2)` mediante `/usr/bin/perl`, sin dependencias de GNU coreutils
+para estas dos operaciones. La capa Bash `vcli_link_exclusive` crea
+hardlinks solo si el destino no existe; `vcli_replace_exact` reemplaza
+el historial por ruta exacta, sin introducir el temporal en un directorio
+que aparezca en una carrera. La dependencia del Perl del sistema macOS
+es **explícita**, se verifica en CI y falla cerrada si no está instalado;
+no se ha introducido Python en producción ni un binario compilado.
+
+Los consumidores son debug, backup, publicación de certificados/keytabs e
+historial. `tests/cli/test_fs_publication.py` contrasta creación, colisiones
+de ficheros/directorios, symlinks y no sobrescritura de víctimas, invocando
+las syscalls de Darwin incluso en Linux para comprobar sus invariantes;
+los tests previos de inyección de carreras siguen operativos. Las suites
+E2E con Vault real y el playground permanecen obligatorias.
+
+**Validado:** [CI #44515726584](https://github.com/ml0renz0/vcli/actions/runs/44515726584)
+terminó con los contratos offline, las 13 suites TLS nativas macOS, las
+cuatro versiones Linux y el gate obligatorio verdes. No equivale a
+portabilidad BSD completa: otras utilidades y el runtime Bash moderno
+siguen pendientes o dependen de Homebrew. Tampoco protege ante atacantes que controlen
+directorios padres confiados o puedan ejecutar código con el mismo usuario.
+
+## P-05g — probe HTTP/TLS sin GNU timeout (CI validada)
+
+El arranque deja de exigir `timeout` y de crear un segundo transporte
+TCP mediante `bash -c '</dev/tcp/...'`. `check_connectivity` reutiliza
+`_curl -i -_disable_-f_- /sys/health`, de solo lectura, que ya aplica
+`VCLI_CONNECT_TIMEOUT`, `VCLI_HTTP_TIMEOUT`, `VAULT_CACERT`,
+`VAULT_CAPATH`, mTLS y el override TLS explícito, siempre con URL
+construida a partir de la configuración de Vault.
+
+Los estados HTTP no 2xx (p. ej. un Vault sealed o un ACL 403) indican
+conectividad de transporte y no se confunden con un error TLS o de red:
+curl no recibe `--fail`; un fallo de curl corta el arranque con exit code
+distinto de cero. Se conserva la separación entre conectividad y
+autorización (cada comando comprueba sus permisos).
+
+La regresión aislada prueba llamada exacta al transporte y propagación
+de errores. La E2E con Vault TLS real prueba un PATH con `timeout`
+adulterado y el rechazo de una CA no confiable incluso con batch vacío.
+**No se declaran mejoras de latencia sin benchmark A/B**.
+
+## P-05h — ayuda de comandos sin pipelines repetidos (CI validada)
+
+`commands_help` reemplaza `tr | sort | tr`, un `IFS` global temporal y
+hasta una llamada recursiva por comando por **un solo `sort`** sobre
+los nombres del registro y acceso directo a la descripción en el array
+asociativo de Bash. La consulta de un comando conocido no ordena ni
+crea procesos externos; el listado completo mantiene el orden alfabético
+y el error de comando desconocido conserva su código de salida.
+
+`tests/cli/test_help_efficiency.py` exige lista alfabética, salida de ayuda
+equivalente, un único ordenado para el listado, cero ordenados para un
+comando conocido y que `IFS` no cambie. Se ejecuta tanto en Ubuntu como
+en macOS; la suite PTY E2E sigue comprobando el comando `help` real.
+No se han alterado operaciones HTTP, autenticación ni gestión de secretos.
+
+## 04-Q HTTP-01 — transporte TLS común entre AppRole y _curl
+
+Se extrae `vcli_curl_transport_args` para configurar timeout, CA, mTLS y
+namespace en un array local del llamador. AppRole mantiene la autenticación
+sin token y `_curl` envía el token mediante stdin; no se mezclan secretos.
+La configuración mTLS incompleta falla antes de generar temporales.
+El contrato aislado nuevo verifica defaults, rutas con espacios, opt-in de
+`--insecure` y rechazo de pares mTLS incompletos. Continúan obligatorios
+los E2E de Vault TLS, AppRole y manejo de errores. **Validado por la matriz CI**.
+
+## 04-Q HTTP-02 — respuesta JSON y limpieza unificadas (CI validada)
+
+`vcli_emit_http_response` valida y formatea el cuerpo HTTP sin gestionar
+el fichero temporal. `_curl` concentra la limpieza de la respuesta en
+una única ruta tras el transporte, conservando resultados de conexión,
+respuestas HTTP, validación JSON, transformación KV v2 y listado raíz.
+Se mantiene la advertencia de escritura de resultado desconocido sin
+reintentos automáticos.
+
+`tests/cli/test_http_response_render.py` valida GET/LIST, JSON inválido,
+errores HTTP, KV v2/raw, listados y la ruta de limpieza. Los contratos
+aislados son obligatorios en Ubuntu/macOS y no sustituyen E2E Vault TLS.
+No se afirma un ahorro de tiempo sin medición.
+
+## 04-Q HTTP-03 — propiedad explícita de los payloads (CI validada)
+
+`_curl` deja de borrar el fichero `data` recibido del llamador: el
+transporte no puede asumir la propiedad de una ruta externa. Solo
+elimina los temporales que crea (`.vcli.payload.*` KV2 y la respuesta
+`.vcli.response.*`). Los productores `_mount`, `_renew_token`, `_mv` y
+`_rm` limpian ahora sus propios ficheros también en los fallos de
+transporte; `_put` ya realizaba esa limpieza.
+
+Los contratos `tests/cli/test_http_payload_ownership.py` comprueban
+KV1 y KV2, éxito y fallo de red, supervivencia exacta del fichero
+externo, eliminación de wrappers y `OUTCOME_UNKNOWN`, además del
+ciclo de vida de los temporales de montaje, renovación y borrado.
+Se ejecutan en Linux/macOS y no sustituyen las suites Vault TLS.
+El objetivo es corrección y seguridad, sin mejora de latencia asumida.
+
+## 04-Q HTTP-04 — limpieza común del login AppRole (CI validada)
+
+El login AppRole conserva la construcción de credenciales con `jq --rawfile`,
+de modo que role_id y secret_id no aparecen en la línea de comandos.
+Después de crear sus dos ficheros, una única salida libera respuesta y
+payload tanto ante fallo de preparación JSON, transporte, HTTP, parseo
+del token y éxito. La validación mTLS y los fallos de `mktemp` se
+mantienen antes de esa ruta y sin dejar archivos pendientes.
+
+Se amplían los contratos aislados AppRole para inyectar fallo del segundo
+`mktemp`, fallo de `jq`, red fallida, HTTP 403, respuesta sin token y JSON
+malformado. Se comprueba limpieza previa al trap de sesión, ausencia
+de secretos en salida y argumentos y errores diferenciados.
+Siguen siendo obligatorios los E2E de Vault TLS y AppRole real.
+
+## 04-Q HTTP-05 — una ejecución de jq para GET/LIST (CI validada)
+
+El renderer de respuestas HTTP combina la validación de un único
+documento JSON de tipo objeto con el formateo en **una sola ejecución
+de `jq -s`**. El filtro valida la totalidad del cuerpo antes de emitir
+salida, evitando respuestas parciales y el segundo proceso jq anterior.
+Se conservan el desenrollado KV2, el modo raw y los listados raíz.
+Los HTTP no exitosos mantienen su comportamiento previo.
+
+Los nuevos contratos de `test_http_response_render.py` exigen una
+única ejecución de jq por lectura exitosa y rechazan respuestas con
+varios documentos, tipos distintos de objeto, vacías o malformadas
+sin filtrar cuerpos inválidos a stdout. Se mantiene la matriz E2E TLS
+y la comprobación del gate. No se afirma una ganancia cuantificada
+hasta medir un benchmark A/B.
+
+## 04-Q HTTP-06 — ls: transporte y temporales sin duplicación (CI validada)
+
+La operación de listado `_ls` realiza ahora una sola petición HTTP
+y utiliza un solo temporal privado tanto en el modo con color como
+en el modo sin color. La ruta de fallo de `_curl` aborta antes de
+ejecutar `jq`; la salida de `jq` y de la tubería de color se comprueba
+antes de retornar, y el temporal se libera también ante fallos.
+Se mantienen los listados raíz, el formato de salida y la flag interna
+`-i`.
+
+Los contratos aislados de `test_recursive_listing.py` cubren ambos
+modos, errores HTTP, JSON inválido, fallo de `mktemp` y ausencia de
+temporales residuales. Se conserva la matriz Linux/macOS/Vault TLS;
+no se atribuye una ganancia de rendimiento sin benchmark A/B.
+
+## 04-Q NAV-01 — cd: rutas canónicas y errores LIST no silenciados (CI validada)
+
+`_cd` conserva ahora el invariante de directorio de trabajo: raíz vacía,
+y rutas no raíz con barra final. Esto evita que una ruta absoluta sin
+barra final rompa una lectura/escritura relativa posterior. Se eliminan
+el uso de `grep -q` para verificar directorios y la aceptación implícita
+de fallos de LIST; errores HTTP y de permisos no alteran `current_pwd`
+y regresan con estado no cero. La navegación padre y raíz no añade
+consultas HTTP, y los segmentos de ruta `/./` y `/../` se rechazan.
+
+Los contratos offline en `tests/cli/test_navigation.py` verifican
+rutas absolutas/relativas, retroceso, raíz, directorio no existente,
+LIST fallido, no mutación de estado y ausencia de peticiones superfluas.
+Se ejecutan en los jobs de Ubuntu y macOS. Tres contratos E2E en
+`tests/integration/test_operations.py` ejercitan el CLI real contra
+Vault TLS, incluidos `cd /ruta` seguido de `cat relativo`.
+No se atribuyen ahorros de rendimiento sin benchmark.
+
+## 04-Q NAV-02 — ls y tree con rutas canónicas (CI validada)
+
+`ls` y `tree` normalizan las rutas relativas a rutas absolutas y
+eliminan separadores duplicados con expansión nativa de Bash. NAV-01
+estableció `current_pwd` con barra final, pero `ls` aún podía
+añadir otra y enviar `//` al endpoint Vault; `tree` conservaba
+en algunos casos rutas relativas sin barra inicial. Los LIST mantienen
+barra final y `tree` visita directorios sin ella (excepto raíz).
+
+Contratos offline comprueban endpoints de `ls` y rutas de `tree`
+con cwd anidado y desde raíz. Un contrato E2E nuevo valida la
+secuencia `cd` absoluto, `ls` relativo, `tree` relativo y
+`cat` relativo sobre Vault TLS. Se conserva el gate de Ubuntu,
+macOS, Alpine, Debian y las cuatro versiones de Vault.
+
+## 04-Q NAV-03 — helper Bash de resolución de rutas (CI validada)
+
+`_vcli_resolve_path` centraliza la normalización de rutas usadas por
+`cd`, `ls`, `tree` y `_vcli_absolute_path`, mediante variable
+de salida por referencia sin crear un subshell ni procesos externos
+por cada nivel del árbol. Se preservan las rutas absolutas y relativas,
+la reducción de barras repetidas y el rechazo de segmentos `.` y `..`.
+
+La ruta raíz sigue siendo `/`; antes el recorte en
+`_vcli_absolute_path` podía producir una cadena vacía. `current_pwd`
+sigue usando raíz vacía o barra final fuera de raíz. Tests aislados
+verifican la raíz, rutas anidadas, rechazo de segmentos y no mutación
+del resultado ante fallos. Las suites E2E de Vault TLS siguen siendo
+obligatorias; no se atribuye aún un cambio de rendimiento.
+
+## 04-Q ADMIN-01 — lecturas administrativas sin temporales redundantes (CI validada)
+
+Los comandos `lsrole`, `showrole`, `lspol` y `showpol` consumen la respuesta
+de `_curl` directamente sin un fichero temporal adicional.
+Se propagan fallos HTTP, de transporte y de `jq`; los listados comprueban
+arrays de cadenas antes de imprimir cualquier elemento. `showrole` preserva
+el prefijo `policies: `, pero no lo imprime ante errores. Faltas de argumento
+obligatorio devuelven ahora un estado distinto de cero.
+
+Los contratos aislados en `tests/cli/test_admin_read.py` ejercitan las cuatro
+funciones reales y sus endpoints, salidas, rechazos y ausencia de temporales.
+Los E2E `test_vault.py` verifican Vault TLS con recursos inexistentes y
+tokens inválidos. No se afirma ninguna mejora temporal sin benchmark A/B.
+
+## 04-Q ADMIN-02 — nombres administrativos y autorización (CI validada)
+
+`showrole` y `showpol` verifican los nombres con un helper Bash reutilizable
+antes de llamar a `_curl`: rechaza cadenas vacías (con error específico),
+`.` y `..`, separadores de ruta, separadores de consulta/fragmento, espacios
+y controles, sin imponer un alfabeto excesivamente restrictivo a nombres
+válidos. `_curl` sigue siendo el único responsable del percent-encoding.
+
+Los tests aislados prueban los argumentos contra las funciones reales,
+incluyendo rutas de escape y ausencia completa de peticiones ante entradas
+inválidas. La matriz E2E añade prohibiciones sobre tokens KV de solo lectura
+y rechazo local de nombres peligrosos. Los fallos 403/404 siguen propagándose
+desde el transporte sin tratarse como un resultado vacío.
+No se crea una nueva dependencia ni se modifica el parser general del CLI.
+
+## 04-Q ADMIN-03 — lecturas y errores administrativos coherentes (CI validada)
+
+Las cuatro operaciones de lectura administrativa pasan por
+`vcli_admin_read_response`, que mantiene una única petición HTTP y
+devuelve un diagnóstico homogéneo por stderr cuando Vault rechaza
+la operación, sin imprimir una respuesta parcial en stdout.
+
+`lsrole` y `lspol` reutilizan `vcli_admin_list_keys`, que valida
+el documento JSON completo antes de emitir nombres, sin procesos de
+`jq` adicionales. Las consultas de detalle validan también que haya
+exactamente un objeto JSON; `showpol` rechaza documentos de política
+vacíos. Se conservan los endpoints y el formato de las salidas válidas.
+
+Los contratos offline cubren listados vacíos, documentos JSON
+múltiples, política vacía y diagnóstico ante transporte fallido.
+Los E2E obligatorios en Vault TLS comprueban mensajes de error de
+403/404 y no filtración de tokens. No se atribuye un incremento
+de rendimiento sin medición A/B.
+
+## 04-Q ADMIN-04 — parser JSON administrativo único (CI validada)
+
+`vcli_admin_extract` unifica la validación del documento y la selección
+de campos para listados/detalles de AppRole y ACL. Sustituye al helper de
+listados anterior y elimina la duplicación de dos filtros `jq -sr` en
+`showrole` y `showpol`, sin añadir procesos ni ficheros temporales.
+
+Se mantiene una sola ejecución de `jq` para cada lectura, con exactamente
+un objeto JSON obligatorio, validación previa a emitir cualquier salida
+y compatibilidad de los endpoints y formatos vigentes. Los contratos
+aislados incluyen conteo real de `jq`, tipos malformados, políticas
+multilínea y esquema ACL legado; los E2E sobre Vault TLS permanecen
+obligatorios. La limpieza general de documentación 04-Q se reservará
+para el cierre de la auditoría, después de validar esta tanda.
+
+## 04-Q FINAL — auditoría transversal y fallos de lectura (pendiente CI)
+
+Inventario estático de 95 funciones Bash con nombre: no se encontraron
+definiciones duplicadas ni funciones con una sola aparición literal en `vcli`.
+Las referencias dinámicas (traps, dispatch y callbacks) impiden afirmar
+que una función esté muerta basándose únicamente en búsquedas de texto;
+no se eliminó código sin evidencia funcional.
+
+Se corrigieron dos fallos reproducibles:
+
+- `_cat` almacenaba el flag interno para ignorar ciertos códigos HTTP en
+  una variable global, y un probe de `sys/health` podía alterar lecturas
+  posteriores. Los flags ahora son locales y por invocación.
+- `_cp` usaba un pipe entre `_cat` y `jq` que podía ocultar el error de
+  lectura. Ahora comprueba el HTTP antes de validar la estructura JSON
+  y no escribe el destino si falta o falla el origen.
+
+Los contratos offline `test_cat_copy_safety.py` comprueban no filtración
+de flags, código de error, no escritura tras fallo, payload KV1/KV2,
+CAS=0 y ausencia de duplicados. `test_vault.py` añade una verificación
+contra Vault TLS real de que copiar un origen inexistente no crea destino.
+Queda validar la nueva matriz Linux/macOS/Vault; el benchmark A/B de
+recursión permanece opt-in y la RC v0.7 no se publica en esta fase.
+
+### Criterios de salida 04-Q
+
+- Suite obligatoria real TLS en las cuatro versiones de Vault, Alpine,
+  Debian y macOS: ver Required CI gate de la PR #25.
+- Sin pérdida de datos ante fallos de lectura; códigos de salida no cero.
+- No publicar release ni fusionar a `master` antes de aceptar la RC.
+- Sin declarar mejora de latencia que no se haya medido.
+
+## 04-Q PKI-01 — lecturas recursivas sin refetch (2026-11-22)
+
+Los comandos `getallcertlist`, `getallkrblist` y `getallcertexpiration`
+hacían dos lecturas Vault para cada secreto coincidente: comprobar sus campos
+y después obtenerlo de nuevo para procesarlo. Ahora un helper reutiliza el
+mismo objeto KV, de modo que cada hoja origina una sola petición GET; las
+consultas LIST necesarias para descubrir hojas se mantienen. Se conservan
+las validaciones X.509, Kerberos, códigos de salida y filtros de vencimiento.
+Los comandos individuales comparten el mismo procesador de datos.
+
+`tests.cli.test_recursive_pki_reads` verifica recuento de lecturas,
+paridad de resultados y errores, y corre en la CI obligatoria Linux/macOS.
+Las suites E2E reales de PKI/Kerberos contra Vault TLS siguen intactas.
+**Pendiente:** CI del commit y benchmark A/B antes de cuantificar mejoras.
+
+## 04-Q — KV2-01: preparación común de versiones y rutas (2026-11-23)
+
+- `vcli_kv2_prepare_versions` centraliza la validación de CSV de versiones (enteros decimales positivos dentro del rango exacto de JSON, sin repetidos), la resolución de la ruta **lógica** y la obtención del endpoint `metadata/` del montaje KV2. Se elimina la duplicación de estas operaciones entre `undelete` y `destroy`.
+- Se mantienen independientes las reglas operativas: `undelete` exige versiones soft-deleted, `destroy` exige versiones aún no destruidas; `destroy` conserva la confirmación `DESTROY` o `--yes` y ambos verifican metadata tras el POST. No hay reintentos de escrituras ni modificación del transporte.
+- Nuevo contrato aislado `tests.cli.test_kv2_version_validation` prueba ambos consumidores, montajes anidados, carpetas literales reservadas, entradas inválidas, límite numérico, repetidos, rutas inseguras y fallo del metadata helper. Incorporado a los jobs estáticos de Ubuntu y macOS, además de la matriz E2E Vault TLS inalterada.
+- **Estado:** refactorización candidata pendiente de aceptación CI; no declarar cerrada ni fusionar hasta resultado global verde.

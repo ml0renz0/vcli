@@ -1,0 +1,264 @@
+# Playground VCLI: Vault real con datos sintéticos
+
+Este laboratorio inicia HashiCorp Vault 2.1.1 en modo dev, con TLS **nativo**
+y CA generada automáticamente. Publica únicamente un puerto efímero de
+127.0.0.1. El cliente siempre es el verdadero ejecutable Bash **./vcli**.
+
+Inspirado en el ciclo de vida y las precauciones del playground de
+[Secretwright](https://github.com/ml0renz0/secretwright), pero **independiente
+de Python y Go**. El contenedor no está endurecido para producción.
+
+## Arranque
+
+Requiere Linux, Docker local con Compose v2, Bash, curl, jq, openssl,
+klist (MIT Kerberos), base64 y GNU coreutils. El usuario debe tener permisos
+sobre el socket Docker local (equivalente a una cuenta privilegiada).
+
+    scripts/playground.sh up
+    scripts/playground.sh status
+    scripts/playground.sh smoke
+    scripts/playground.sh shell
+
+`smoke` realiza una validación breve contra el Vault real: comprueba
+KV v1/v2, CA TLS, permisos ACL/AppRole, exportaciones de X.509 y keytabs
+sintéticos y rechazos de datos malformados. **No** ejecuta los 170 tests
+E2E; estos viven en la matriz del CI. El comando utiliza datos de prueba
+y limpia los artefactos generados sin borrar tu catálogo.
+
+Para lanzar el CLI directamente:
+
+    source .playground/env.sh
+    ./vcli
+
+Para abrirlo con privilegios limitados:
+
+    scripts/playground.sh shell readonly
+
+## Catálogo de secretos precargados
+
+Todos los valores son **ficticios** y se escriben en el Vault real.
+
+| Tipo | Ruta de Vault | Pruebas de VCLI |
+| --- | --- | --- |
+| KV v1, usuario/password | kv1/demo/app | cat, ls, put, addsecret, delsecret |
+| KV v1, JSON anidado, booleanos y arrays | kv1/demo/nested/config | cat, tree, find, cp |
+| KV v2, dos versiones de credencial ficticia | kv2/demo/payments/database | cat, put, ls, rm, backup |
+| KV v2, clave API de mentira | kv2/demo/catalog/api | cat, cptree |
+| KV v2, montaje independiente y anidado | team/config/demo/payments | cat, put |
+| X.509 RSA: certificado, SAN y clave PEM | kv1/demo/pki/web | certinfo, getsan, getcert, getcertlist |
+| X.509: certificado que vence en tres días | kv1/demo/pki/nested/service | getcertexpiration, getallcertlist |
+| MIT Kerberos v2 AES256, principal HTTP | kv1/demo/kerberos/http | krbinfo, getprinc, getkrb, getkrblist |
+| MIT Kerberos, estructura recursiva | kv1/demo/kerberos/nested/http | getallkrblist |
+| X.509 inválido, clave no coincidente, par ausente | kv1/negative/pki/* | rechazo de getcert y certinfo |
+| Kerberos Base64 inválido, principal inseguro | kv1/negative/kerberos/* | rechazo de getkrb |
+| Política de solo lectura | vcli-playground-read | lspol, showpol y escritura denegada |
+| AppRole lector | vcli-playground-reader | lsrole, showrole, auth AppRole |
+
+### Ruta de ejemplo para una sesión interactiva
+
+    ls kv1/demo/
+    tree kv1/demo/
+    cat kv1/demo/app
+    cat kv2/demo/payments/database
+    cat team/config/demo/payments
+    certinfo kv1/demo/pki/web
+    getsan kv1/demo/pki/web
+    getallcertlist kv1/demo/pki
+    getcertexpiration kv1/demo/pki/nested/service
+    krbinfo kv1/demo/kerberos/http
+    getprinc kv1/demo/kerberos/http
+    getallkrblist kv1/demo/kerberos
+    getcert kv1/demo/pki/web
+    getkrb kv1/demo/kerberos/http
+
+Los comandos getcert/getkrb exportan a .playground/work/ usando permisos
+0600 y sin sobrescribir ficheros existentes. Los originales generados
+están en .playground/fixtures/ (privados y excluidos de Git).
+
+**Límite Kerberos:** el keytab contiene una entrada MIT v2 válida para
+klist, pero su clave es pública, fija y sintética. **No hay KDC** y
+no puede usarse para demostrar autenticación Kerberos con kinit.
+
+Los formatos cubiertos son los de **vcli OG**, el CLI Bash original. Los
+blueprints YAML, la reconciliación declarativa y la rotación pertenecen
+a **Secretwright**, un proyecto independiente. La fase 04-Q está validada
+en CI, pero `smoke` no sustituye las suites E2E completas.
+
+## Flavours de regresión reutilizables (todos los perfiles)
+
+`kv1/flavours/pki/valid/` contiene cuatro certificados X.509 reales (90, 20,
+3 días y caducado desde 2020) y un objeto con dos pares. `pki/invalid/`
+contiene PEM inválido, clave no coincidente, clave ausente y clave sobrante.
+`kv1/flavours/kerberos/` contiene keytabs MIT válidos, múltiples pares,
+base64 inválido, binario corrupto, principal distinto o prefijo, nombre
+inseguro, pareja ausente/sobrante y metacaracteres. No hay KDC: se valida
+la estructura y coincidencia exacta del principal, no autenticación remota.
+`kv1/flavours/json/` cubre tipos, objetos y espacios exactos; `collision/`
+permite probar preflight. En `kv2/flavours/lifecycle/` y
+`team/config/flavours/lifecycle/` hay dos versiones con CAS obligatorio,
+borrado lógico y destrucción intencional de una versión. Se separan los
+secretos no legibles de los subárboles usados por backups de aceptación.
+Las carreras, revocaciones temporizadas, fallos TLS y archivos TAR hostiles
+requieren el harness de integración, no son sabores de secreto persistente.
+
+## ACL y AppRole
+
+    scripts/playground.sh shell readonly
+    printf 'cat kv1/demo/app\n' | scripts/playground.sh batch readonly
+    printf 'put kv1/demo/app {"x":"denied"}\n' | scripts/playground.sh batch readonly
+
+El último comando debe fallar. Se generan archivos privados readonly-token,
+role-id y secret-id para experimentar también con AppRole.
+
+## Conservación, reinicio y borrado
+
+    scripts/playground.sh up       # repetible; conserva los cambios
+    scripts/playground.sh smoke    # TLS, KV, ACL, PKI y keytab por API/CLI real
+    scripts/playground.sh reset    # DESTRUCTIVO: destruye y recrea el catálogo
+    scripts/playground.sh down     # contenedor, red, CA, tokens y datos
+
+El archivo .playground/env.sh no guarda tokens en claro: al cargarlo en Bash
+lee el token del archivo privado. Desactiva los VAULT_* de playground antes
+de cambiar a cualquier otro entorno.
+
+El directorio .playground/ (0700) y sus archivos (0600) se ignoran por Git.
+El launcher comprueba el propietario del directorio, una etiqueta aleatoria
+del contenedor y el proyecto Compose antes de actuar. No acepta daemons
+Docker remotos. Nunca se conecta a un Vault externo.
+
+Si Docker falla durante el borrado, los archivos de propiedad se conservan
+para permitir reintentar down. No borres manualmente .playground/ mientras
+haya un contenedor asociado.
+
+
+## Catálogo empresarial adicional
+
+| Montaje | Jerarquía | Secretos adicionales |
+|---|---|---:|
+| `kv2` | `enterprise/{development,staging,production}/{payments,identity,catalog}/{database,api,messaging}/...` | 27 |
+| `team/config` | `enterprise/{development,staging,production}/{platform,observability}/...` | 6 |
+| `kv1` | `enterprise/pki/<entorno>/payments/ingress` | 3 |
+| `kv1` | `enterprise/kerberos/<entorno>/shared/http` | 3 |
+| `kv1` | `enterprise/legacy/<equipo>/<región>/<servicio>` | 6 |
+
+Son 45 secretos adicionales, además del catálogo de regresión original.
+Los certificados son distintos, de 90/20/3 días al generar el laboratorio;
+las copias de keytab representan el mismo principal compartido de ejemplo.
+En la demo se copian los seis secretos legacy y se rotan únicamente cuatro
+objetos JSON idénticos; los otros dos son centinelas que no deben cambiar.
+El original no se modifica. El nombre del subárbol de trabajo es único.
+
+## Contratos de integración del catálogo empresarial
+
+La CI ejecuta `tests/playground/test_enterprise.py` antes de grabar,
+independientemente de que se solicite un asciicast. Comprueba los 45 secretos
+con REST TLS, backup de los tres montajes y contenido exacto del TAR, copia
+recursiva cruzada KV1/KV2, preflight de colisión, búsqueda y reemplazo de
+cuatro coincidencias con centinelas, borrado KV1 y lógico KV2, restauración
+completa de 45 hojas y ausencia de mutaciones del catálogo original.
+
+La suite usa un prefijo único y artefactos privados en un laboratorio
+desechable. El backup representa los valores vigentes, no todo el historial
+de revisiones de KV2. No ejecutarla contra producción.
+
+## Perfil adicional `saas` — gran catálogo multi-tenant
+
+El perfil estándar conserva **todos** los fixtures originales y las 45 hojas
+del catálogo empresarial. El nuevo perfil suma **8.640 secretos vigentes**
+y 1.728 revisiones históricas de KV2, sin reemplazar ninguno de esos datos.
+Los 32 tenants, tres entornos, tres regiones y seis microservicios generan
+270 hojas por tenant. Los datos son sintéticos, los dominios `.example.test`
+y las claves/contraseñas son ficticias.
+
+| Montaje | Datos adicionales | Hojas |
+|---|---|---:|
+| `kv2` | PostgreSQL primario, API gateway y Kafka con SASL/TLS | 5.184 |
+| `kv1` | Credenciales legacy, PEM X.509 y keytabs MIT | 1.728 |
+| `team/config` | Configuración de despliegue, flags y límites | 1.728 |
+| Total | 32 tenants × 3 entornos × 3 regiones × 6 servicios × 5 | **8.640** |
+
+Hay 576 credenciales legacy idénticas para rotación y búsqueda exacta,
+288 pares X.509 (cuatro certificados de laboratorio compartidos por estado:
+128 OK, 64 WARNING, 64 CRITICAL y 32 EXPIRED) y 288 keytabs sintéticos
+estructuralmente válidos con principales diferentes por tenant/entorno/región.
+Se generan también 32 políticas ACL y AppRoles de solo lectura separados.
+El perfil no requiere licencia Enterprise ni namespaces de Vault.
+
+```bash
+VCLI_PLAYGROUND_PROFILE=saas scripts/playground.sh up
+scripts/playground.sh shell
+# En VCLI: tree kv2/saas/tenant-001/production/eu-west
+# Prueba de escala (puede tardar mucho):
+python3 tests/playground/test_saas.py
+scripts/playground.sh down
+```
+
+Si ya existe un laboratorio de otro perfil, no se modifica ni se destruye
+automáticamente: hay que ejecutar `down` explícitamente y crear uno nuevo.
+Solo se necesita Python 3 para el generador/test, no para el CLI Bash.
+
+El workflow reutilizable `playground-saas.yml` ejecuta una única aceptación
+interactiva, con grabación opcional, sobre Vault TLS real. No tiene triggers
+`push` ni `pull_request`: se invoca desde `saas_release` al validar
+un tag candidato `v0.7.*` y también admite `workflow_dispatch` manual.
+`package_candidate` depende de esta aceptación y del CI principal,
+de modo que no se construye un artefacto de release sin ambos resultados verdes.
+En PR y en `master` se mantienen el playground estándar con Vault TLS
+y la validación aislada del catálogo SaaS de 8.640 registros. Compara los
+8.640 valores y las 1.728 revisiones históricas mediante REST, valida los
+backups de los tres montajes, entra con el AppRole del tenant y verifica
+el aislamiento, migra y rota un tenant de 270 hojas, recupera ese tenant,
+y restaura además las 8.640 hojas en prefijos nuevos del montaje original.
+La recuperación integral remapea explícitamente los nombres de los miembros
+TAR sin modificar sus datos; no sobrescribe el catálogo original ni sus
+versiones. Los archivos privados y los prefijos recuperados quedan
+disponibles hasta ejecutar `down`. Usa un laboratorio recién creado.
+La misma aceptación se ejecuta sin asciinema con `python3 tests/playground/test_saas.py`.
+Cada comando registra su duración desde Enter hasta el prompt (sin tiempo
+de tecleo), y la ejecución produce JSON con SHA, Vault, casos y cardinalidades.
+No se repite la suite SaaS en modo batch.
+
+## Demo asciinema SaaS (adicional)
+
+Con `VCLI_PLAYGROUND_PROFILE=saas scripts/playground.sh up`, el grabador
+selecciona automáticamente `vcli-playground-saas.cast`. El workflow de escala
+adjunta `vcli-playground-saas-asciinema` solo después de superar la aceptación
+completa y validar la ausencia de credenciales. Una sola terminal real cubre
+todos los comandos públicos, los tres roles, los cuatro estados X.509, keytabs sintéticos,
+fallos esperados, migración/rotación de 270 hojas y restauración de 8.640.
+El mismo recorrido funciona sin grabación. Las pruebas de regresión estándar
+se mantienen separadas, no se repiten dentro del SaaS.
+
+## Demo asciinema
+
+El job de playground de la CI genera la grabación auténtica vcli-playground.cast
+como artefacto **vcli-playground-asciinema**, con retención de 7 días.
+Usa Vault TLS real y datos ficticios; no publica la grabación en asciinema.org.
+Una sola terminal Bash interactiva conduce las sesiones `shell readonly` y
+`shell admin`, con sus correspondientes `exit` visibles. Se capturan los prompts
+y respuestas reales de VCLI sin cortes ni límite de inactividad. La automatización
+de teclas requiere Python 3 solo para la demo; no es un runtime de VCLI.
+
+El recorrido de extremo a extremo cubre **todos los comandos públicos**
+del ejecutable. Explora un catálogo empresarial con development, staging y
+production, tres aplicaciones, credenciales compartidas, PKI con caducidades
+escalonadas y keytabs sintéticos. Realiza una rotación masiva sobre una copia,
+migración KV1/KV2, backup, borrado y restauración, exportación de ficheros
+y verificación de permisos. La CI rechaza cualquier comando público omitido.
+Los interruptores de debug se prueban sin tráfico autenticado ni volcado de secretos.
+
+**Para grabar localmente, usa un playground recién creado, solo con datos
+sintéticos.** No hagas reset automático de un laboratorio con trabajo propio.
+
+Para reproducir: `asciinema play vcli-playground.cast`.
+
+Para regenerarla localmente:
+
+```bash
+scripts/playground.sh up
+scripts/record-playground-demo.sh ./vcli-playground.cast
+asciinema play ./vcli-playground.cast
+scripts/playground.sh down
+```
+El guion real es `scripts/playground-demo.sh`. Solo muestra datos sintéticos,
+y comprueba que un token readonly no puede escribir.
